@@ -1,0 +1,127 @@
+{
+  "entities": {
+    "FoundationMember": {
+      "title": "FoundationMember",
+      "description": "Member profile, daily progress, health profile, morning streak, avatar, and penalties",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "role": { "type": "string", "enum": ["manager", "staff", "chef", "tutor", "kid"] },
+        "nickname": { "type": "string", "maxLength": 64 },
+        "fullName": { "type": "string", "maxLength": 140 },
+        "gender": { "type": "string", "enum": ["M", "F"] },
+        "pin": { "type": "string", "maxLength": 8 },
+        "emoji": { "type": "string", "maxLength": 16 },
+        "stars": { "type": "number" },
+        "group": { "type": "number" },
+        "personalDriveUrl": { "type": "string", "maxLength": 500 },
+        "restrictedDocsUrl": { "type": "string", "maxLength": 500 },
+        "activeCoverStage": { "type": "number" },
+        "unlockedCoverStages": { "type": "array" },
+        "collectedSceneItems": { "type": "array" },
+        "ownedShopItemIds": { "type": "array" },
+        "avatar": { "type": "object" },
+        "pet": { "type": "object" },
+        "mySpace": { "type": "object" },
+        "healthProfile": { "type": "object" },
+        "streak": { "type": "object" },
+        "customHouseChore": { "type": "string", "maxLength": 160 },
+        "allowance": { "type": "object" },
+        "penalty": { "type": "object" },
+        "kitchenDuty": { "type": "object" },
+        "daily": { "type": "object" },
+        "starHistory": { "type": "array" },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "sharedEmails": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "role", "nickname", "fullName", "gender", "pin", "emoji", "stars", "ownerUid", "sharedEmails", "updatedAt"]
+    },
+    "FoundationRecord": {
+      "title": "FoundationRecord",
+      "description": "Unified operational record for announcements, polls, trips, private messages, sick alerts, bills, kitchen logs, lost & found, supply requests, kindness cards, deed redemptions, and shop items",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "recordType": {
+          "type": "string",
+          "enum": [
+            "announcement",
+            "poll",
+            "trip",
+            "private_message",
+            "sick_report",
+            "snack_bill",
+            "kitchen_log",
+            "lost_found",
+            "supply_request",
+            "kindness_card",
+            "deed_redemption",
+            "shop_item",
+            "friend_visit",
+            "golden_pool_log",
+            "staff_leave"
+          ]
+        },
+        "payload": { "type": "object" },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "sharedEmails": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "recordType", "payload", "ownerUid", "sharedEmails", "updatedAt"]
+    },
+    "FoundationConfig": {
+      "title": "FoundationConfig",
+      "description": "Global Barnhem settings including sync URL, Drive folder, holiday toggle, and authorized staff emails",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "syncWebhookUrl": { "type": "string", "maxLength": 500 },
+        "returnHomeDriveUrl": { "type": "string", "maxLength": 500 },
+        "creatorPins": { "type": "array" },
+        "isPublicHolidayToday": { "type": "boolean" },
+        "simulatedTimeIso": { "type": "string", "maxLength": 64 },
+        "tutorMaxStarsPerKidPerDay": { "type": "number" },
+        "activeFestivalOverride": { "type": "string", "maxLength": 40 },
+        "dailyAllowanceThb": { "type": "number" },
+        "schoolDaysPerWeek": { "type": "number" },
+        "early15MinBonusStars": { "type": "number" },
+        "starToCoinStars": { "type": "number" },
+        "starToCoinThb": { "type": "number" },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "sharedEmails": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "creatorPins", "isPublicHolidayToday", "ownerUid", "sharedEmails", "updatedAt"]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized admin user record",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 200 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/members/{memberId}": {
+      "schema": { "$ref": "#/entities/FoundationMember" },
+      "description": "Foundation members (kids, staff, chefs, managers) synced across Barnhem devices"
+    },
+    "/records/{recordId}": {
+      "schema": { "$ref": "#/entities/FoundationRecord" },
+      "description": "Typed operational records (announcements, polls, trips, DMs, sick reports, bills, kitchen logs, lost & found, supply requests, kindness cards, deed redemptions, shop items)"
+    },
+    "/config/{configId}": {
+      "schema": { "$ref": "#/entities/FoundationConfig" },
+      "description": "Foundation-wide settings and device sync configuration"
+    },
+    "/admins/{uid}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Bootstrapped and delegated admin UIDs"
+    }
+  }
+}

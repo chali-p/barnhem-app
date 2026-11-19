@@ -1,0 +1,157 @@
+import { useEffect, useState } from 'react';
+import { Language, Member } from '../types/barnhem';
+
+export const MAX_PIN_ATTEMPTS = 5;
+export const LOCKOUT_DURATION_MS = 30_000;
+
+interface PinGuardRecord {
+  failures: number;
+  lockedUntilMs: number;
+}
+
+const STORAGE_PREFIX = 'barnhem_pin_guard_v1_';
+
+function readRecord(scopeKey: string): PinGuardRecord {
+  try {
+    const raw = sessionStorage.getItem(`${STORAGE_PREFIX}${scopeKey}`);
+    if (!raw) return { failures: 0, lockedUntilMs: 0 };
+    const parsed = JSON.parse(raw) as Partial<PinGuardRecord>;
+    return {
+      failures: typeof parsed.failures === 'number' ? parsed.failures : 0,
+      lockedUntilMs: typeof parsed.lockedUntilMs === 'number' ? parsed.lockedUntilMs : 0,
+    };
+  } catch {
+    return { failures: 0, lockedUntilMs: 0 };
+  }
+}
+
+function writeRecord(scopeKey: string, rec: PinGuardRecord): void {
+  try {
+    sessionStorage.setItem(`${STORAGE_PREFIX}${scopeKey}`, JSON.stringify(rec));
+  } catch {
+    // Ignore storage quota / private mode failures
+  }
+}
+
+export function usePinGuard(scopeKey: string) {
+  const [record, setRecord] = useState<PinGuardRecord>(() => readRecord(scopeKey));
+  const [tickNowMs, setTickNowMs] = useState<number>(() => Date.now());
+
+  const remainingMs = Math.max(0, record.lockedUntilMs - tickNowMs);
+  const isLocked = remainingMs > 0;
+  const remainingSec = Math.ceil(remainingMs / 1000);
+  const attemptsLeft = Math.max(0, MAX_PIN_ATTEMPTS - record.failures);
+
+  useEffect(() => {
+    if (record.lockedUntilMs <= Date.now()) return;
+    const id = window.setInterval(() => {
+      const now = Date.now();
+      setTickNowMs(now);
+      if (now >= record.lockedUntilMs) {
+        const reset: PinGuardRecord = { failures: 0, lockedUntilMs: 0 };
+        writeRecord(scopeKey, reset);
+        setRecord(reset);
+      }
+    }, 500);
+    return () => window.clearInterval(id);
+  }, [record.lockedUntilMs, scopeKey]);
+
+  const recordFailure = (): { lockedNow: boolean; lockSec: number; attemptsRemaining: number } => {
+    const now = Date.now();
+    const current = readRecord(scopeKey);
+    if (current.lockedUntilMs > now) {
+      setRecord(current);
+      setTickNowMs(now);
+      return {
+        lockedNow: true,
+        lockSec: Math.ceil((current.lockedUntilMs - now) / 1000),
+        attemptsRemaining: 0,
+      };
+    }
+    const nextFailures = current.failures + 1;
+    if (nextFailures >= MAX_PIN_ATTEMPTS) {
+      const lockedUntilMs = now + LOCKOUT_DURATION_MS;
+      const next: PinGuardRecord = { failures: MAX_PIN_ATTEMPTS, lockedUntilMs };
+      writeRecord(scopeKey, next);
+      setRecord(next);
+      setTickNowMs(now);
+      return {
+        lockedNow: true,
+        lockSec: Math.ceil(LOCKOUT_DURATION_MS / 1000),
+        attemptsRemaining: 0,
+      };
+    }
+    const next: PinGuardRecord = { failures: nextFailures, lockedUntilMs: 0 };
+    writeRecord(scopeKey, next);
+    setRecord(next);
+    setTickNowMs(now);
+    return {
+      lockedNow: false,
+      lockSec: 0,
+      attemptsRemaining: Math.max(0, MAX_PIN_ATTEMPTS - nextFailures),
+    };
+  };
+
+  const recordSuccess = () => {
+    const reset: PinGuardRecord = { failures: 0, lockedUntilMs: 0 };
+    writeRecord(scopeKey, reset);
+    setRecord(reset);
+  };
+
+  return {
+    isLocked,
+    remainingSec,
+    attemptsLeft,
+    recordFailure,
+    recordSuccess,
+  };
+}
+
+export function formatPinLockoutMessage(remainingSec: number, lang: Language): string {
+  return lang === 'th'
+    ? `กรอกรหัส PIN ผิดครบ ${MAX_PIN_ATTEMPTS} ครั้ง ระบบล็อกชั่วคราว ${remainingSec} วินาที เพื่อป้องกันการเดารหัสค่ะ`
+    : `Too many incorrect PIN attempts (${MAX_PIN_ATTEMPTS}). Locked for ${remainingSec}s to prevent guessing.`;
+}
+
+export function formatPinAttemptsHint(attemptsRemaining: number, lang: Language): string {
+  return lang === 'th'
+    ? `เหลือโอกาสลองได้อีก ${attemptsRemaining} ครั้ง ก่อนระบบล็อกชั่วคราว 30 วินาที`
+    : `${attemptsRemaining} attempt(s) remaining before a 30-second cooldown.`;
+}
+
+export interface PinConflictResult {
+  conflict: boolean;
+  conflictOwnerLabel?: string;
+}
+
+/**
+ * Ensures 4-digit PINs never collide between kids, staff, chefs, tutors, managers, or creator master PINs.
+ */
+export function findPinConflict(
+  pin: string,
+  members: Member[],
+  creatorPins: string[],
+  excludeMemberId?: string
+): PinConflictResult {
+  const clean = pin.trim();
+  if (!/^\d{4}$/.test(clean)) return { conflict: false };
+
+  if (creatorPins.includes(clean)) {
+    return {
+      conflict: true,
+      conflictOwnerLabel: 'โหมดผู้สร้างสูงสุด (Creator PIN)',
+    };
+  }
+
+  const dupMember = members.find(
+    (m) => m.id !== excludeMemberId && m.pin.trim() === clean
+  );
+  if (dupMember) {
+    return {
+      conflict: true,
+      conflictOwnerLabel: `${dupMember.emoji} ${dupMember.nickname} (${dupMember.id})`,
+    };
+  }
+
+  return { conflict: false };
+}
