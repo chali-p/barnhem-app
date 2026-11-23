@@ -3,6 +3,11 @@ import {
   formatLeaveSpanTh,
   getShiftCoverageAtDateTime,
 } from '../data/staffSchedule';
+import {
+  getWeekendCleaningForKid,
+  getWeekendCleaningRosterForMonth,
+  resolveCleaningDayType,
+} from '../data/weekendCleaningRoster';
 import { AppState, Language, Member, MorningStreakState } from '../types/barnhem';
 import { getDateKey } from './timeRules';
 import { getTrashDutyInfoForDate } from './trashDuty';
@@ -70,7 +75,8 @@ export const HOUSE_CHORES_POOL: HouseChoreInfo[] = [
 export function getDailyHouseChoreForKid(
   kid: Member,
   allKids: Member[],
-  now: Date
+  now: Date,
+  isPublicHolidayToday = false
 ): HouseChoreInfo {
   if (kid.customHouseChore && kid.customHouseChore.trim()) {
     return {
@@ -82,6 +88,29 @@ export function getDailyHouseChoreForKid(
       detailEn: 'Special daily house chore assigned by Staff',
     };
   }
+
+  const cleaningDay = resolveCleaningDayType(now, isPublicHolidayToday);
+  if (cleaningDay.dayType) {
+    const summary = getWeekendCleaningForKid(
+      kid.nickname,
+      now,
+      isPublicHolidayToday
+    );
+    if (summary.todayZones.length > 0) {
+      const titlesTh = summary.todayZones.map((z) => z.zoneTh).join(' + ');
+      const titlesEn = summary.todayZones.map((z) => z.zoneEn).join(' + ');
+      const primaryEmoji = summary.todayZones[0].emoji;
+      return {
+        id: `weekend_${summary.month.col.key}_${cleaningDay.dayType}`,
+        emoji: primaryEmoji,
+        titleTh: `เวรวันหยุด: ${titlesTh}`,
+        titleEn: `Weekend Zone: ${titlesEn}`,
+        detailTh: `${cleaningDay.reasonTh} · เดือน ${summary.month.col.labelTh}`,
+        detailEn: `${cleaningDay.reasonEn} · ${summary.month.col.labelEn}`,
+      };
+    }
+  }
+
   const idx = Math.max(
     0,
     allKids.findIndex((k) => k.id === kid.id)
@@ -215,6 +244,15 @@ export function buildExecutiveLineDigest(
           .join('\n')
       : '  - ไม่มีพี่เลี้ยงลาวันนี้ (เข้าเวรครบ)';
 
+  const weekendSummarySample = getWeekendCleaningForKid(
+    kids[0]?.nickname ?? 'แน็ก',
+    now,
+    state.settings.isPublicHolidayToday
+  );
+  const weekendDigestLine = weekendSummarySample.dayContext.dayType
+    ? `🌸 เวรทำความสะอาดประจำวันหยุด (${weekendSummarySample.dayContext.reasonTh}, เดือน ${weekendSummarySample.month.col.labelTh}): เปิดใช้งานครบ 14 โซน (${getWeekendCleaningRosterForMonth(weekendSummarySample.month.col.key).length} เขตบริเวณ)`
+    : null;
+
   return [
     `📊 สรุปรายงานบ้าน Barnhem (${dateDisplay})`,
     `👧👦 จำนวนน้องทั้งหมด: ${kids.length} คน`,
@@ -239,6 +277,7 @@ export function buildExecutiveLineDigest(
         : ''
     }`,
     `🧹 เวรทำเขตบริเวณเช้าวันนี้: เสร็จแล้ว ${houseChoresDone}/${kids.length} คน`,
+    ...(weekendDigestLine ? [weekendDigestLine] : []),
     `🗑️ เวรทิ้งขยะสัปดาห์ที่ ${trashInfo.weekNumber} (พุธ/อาทิตย์): ชาย ${trashInfo.boyAssignee.displayNameTh} | หญิง ${trashInfo.girlAssignee.displayNameTh}`,
     `🍳 เวรห้องครัวที่แม่ครัวยืนยันวันนี้: ${kitchenVerifiedToday} ครั้ง`,
     `💰 ค่าปรับสายสะสมรวมทั้งบ้าน: ฿${totalFines.toLocaleString()}`,

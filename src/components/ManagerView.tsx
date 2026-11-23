@@ -33,6 +33,7 @@ import { getDateKey } from '../utils/timeRules';
 import { CareCommunityPanel } from './CareCommunityPanel';
 import { PinPadModal } from './CenteredAlertModal';
 import { CloudSyncBanner } from './CloudSyncBanner';
+import { KidDutySchedulesPanel } from './KidDutySchedulesPanel';
 import { StaffLeavePanel } from './StaffLeavePanel';
 import { StaffRosterPanel } from './StaffRosterPanel';
 
@@ -861,6 +862,15 @@ export const ManagerView: React.FC<ManagerViewProps> = ({
           lang={lang}
           isPublicHolidayToday={state.settings.isPublicHolidayToday}
           staffLeaves={staffLeaves}
+        />
+      </section>
+
+      <section className="rounded-[28px] border-2 border-[#F2B8CB] bg-[#FFFDF9] p-5 pastel-shadow">
+        <KidDutySchedulesPanel
+          kids={kids}
+          now={now}
+          lang={lang}
+          isPublicHolidayToday={state.settings.isPublicHolidayToday}
         />
       </section>
 

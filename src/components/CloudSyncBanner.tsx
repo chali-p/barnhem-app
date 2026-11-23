@@ -97,19 +97,25 @@ export const CloudSyncBanner: React.FC<CloudSyncBannerProps> = ({
     }
   };
 
+  const useOwnStorage = Boolean(state.settings.useOwnStorageOnly);
+
   return (
     <div className="no-print rounded-[28px] border-2 border-[#DCEEF8] bg-[#FFFDF9] p-4 flex flex-wrap items-center justify-between gap-3 pastel-shadow">
       <div className="flex items-center gap-3 min-w-0">
         <div
           className={`h-11 w-11 shrink-0 rounded-2xl flex items-center justify-center text-xl ${
-            cloudUser ? 'bg-[#D4F0F0]' : 'bg-[#FFF5BA]'
+            useOwnStorage ? 'bg-[#E8FAF6]' : cloudUser ? 'bg-[#D4F0F0]' : 'bg-[#FFF5BA]'
           }`}
         >
-          {cloudUser ? '☁️' : '📲'}
+          {useOwnStorage ? '💾' : cloudUser ? '☁️' : '📲'}
         </div>
         <div className="min-w-0">
           <div className="text-sm font-bold text-[#3D322C] truncate">
-            {cloudUser
+            {useOwnStorage
+              ? lang === 'th'
+                ? 'โหมดเก็บข้อมูลองค์กรเอง (ไม่ใช้พื้นที่คลาวด์กลาง 0 KB)'
+                : 'Own Organization Storage Mode (0 KB Central Cloud)'
+              : cloudUser
               ? lang === 'th'
                 ? `ซิงค์ออนไลน์เรียลไทม์ทำงานอยู่ (${cloudUser.email})`
                 : `Live Cloud Sync Active (${cloudUser.email})`
@@ -118,16 +124,24 @@ export const CloudSyncBanner: React.FC<CloudSyncBannerProps> = ({
               : 'Local Device Storage (Sign in with Google for Multi-Device Real-Time Sync)'}
           </div>
           <div className="text-xs text-[#6E5C52]">
-            {cloudSyncing
+            {useOwnStorage
+              ? state.settings.syncWebhookUrl?.trim()
+                ? lang === 'th'
+                  ? 'บันทึกบนเครื่องนี้ + ส่งข้อมูลอัตโนมัติไปยัง Google Sheet ขององค์กรคุณเอง'
+                  : 'Stored locally + auto-synced to your organization Google Sheet'
+                : lang === 'th'
+                ? 'บันทึกบนเครื่องนี้ 100% (ตั้งค่าลิงก์ Google Sheet ด้านบนเพื่อสำรองข้อมูลอัตโนมัติ)'
+                : 'Stored 100% locally (add your Google Sheet URL above for external backup)'
+              : cloudSyncing
               ? lang === 'th'
                 ? 'กำลังอัปเดตข้อมูลกับฐานข้อมูลคลาวด์...'
                 : 'Syncing with cloud database...'
               : cloudUser
               ? lang === 'th'
-                ? 'เครื่องที่ล็อกอินบัญชีเดียวกันจะเห็นยอดดาว เช็คอิน Kiosk และประกาศตรงกันทันที'
-                : 'All devices signed in to this account stay synchronized in real time'
+                ? 'ซิงค์ข้ามเครื่องแบบเรียลไทม์ (ระบบตัดประวัติบนคลาวด์เกิน 7-14 วันอัตโนมัติเพื่อประหยัดพื้นที่ฟรี)'
+                : 'Real-time multi-device sync (cloud logs auto-trimmed to recent 7-14 days)'
               : lang === 'th'
-              ? 'แนะนำให้ล็อกอินบัญชีบ้าน Barnhem บนเครื่อง Kiosk และมือถือผู้ดูแล'
+              ? 'แนะนำให้ล็อกอินบัญชีผู้ดูแลบนเครื่อง Kiosk และมือถือผู้ดูแล'
               : 'Sign in on Kiosk tablets & staff phones to share live state'}
           </div>
         </div>
@@ -161,14 +175,16 @@ export const CloudSyncBanner: React.FC<CloudSyncBannerProps> = ({
               </button>
             ) : (
               <>
-                <button
-                  type="button"
-                  disabled={cloudSyncing}
-                  onClick={() => void onForceSeedCloud()}
-                  className="min-h-[42px] rounded-2xl bg-[#D4F0F0] hover:bg-[#B8E5E1] px-3.5 py-2 text-xs font-bold text-[#214F4B] cursor-pointer whitespace-nowrap"
-                >
-                  🔄 {lang === 'th' ? 'อัปโหลดข้อมูลเครื่องนี้ขึ้นคลาวด์' : 'Push Local to Cloud'}
-                </button>
+                {!useOwnStorage && (
+                  <button
+                    type="button"
+                    disabled={cloudSyncing}
+                    onClick={() => void onForceSeedCloud()}
+                    className="min-h-[42px] rounded-2xl bg-[#D4F0F0] hover:bg-[#B8E5E1] px-3.5 py-2 text-xs font-bold text-[#214F4B] cursor-pointer whitespace-nowrap"
+                  >
+                    🔄 {lang === 'th' ? 'อัปโหลดข้อมูลเครื่องนี้ขึ้นคลาวด์' : 'Push Local to Cloud'}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => void signOutCloud()}

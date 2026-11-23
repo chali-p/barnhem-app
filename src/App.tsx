@@ -6,16 +6,23 @@ import { CreatorView } from './components/CreatorView';
 import { KidHubView } from './components/KidHubView';
 import { MagicDoorView } from './components/MagicDoorView';
 import { ManagerView } from './components/ManagerView';
+import { PlatformPortalView } from './components/PlatformPortalView';
 import { StaffView } from './components/StaffView';
 import { TutorView } from './components/TutorView';
 import { createEmptyDaily } from './data/initialData';
-import { auth } from './firebase';
+import { auth, signOutCloud } from './firebase';
 import {
+  DEFAULT_ORG_ID,
+  MASTER_ADMIN_EMAIL,
   seedCloudIfEmpty,
   subscribeFoundationCloud,
+  subscribeLinkedKidCloud,
+  syncLinkedKidSelfToCloud,
   syncStateDiffToCloud,
 } from './services/firestoreSync';
+import { subscribeMyRegistration } from './services/platformRegistrations';
 import {
+  ActiveTenantContext,
   Announcement,
   AppMode,
   AppState,
@@ -24,6 +31,7 @@ import {
   GoldenPoolLog,
   KindnessCard,
   Language,
+  LinkedKidSession,
   LostFoundItem,
   Member,
   ModalAlertPayload,
@@ -37,10 +45,16 @@ import {
   SnackBill,
   StaffLeaveRecord,
   SupplyRequest,
+  WeeklyActivityLog,
+  WeeklyActivityStatus,
 } from './types/barnhem';
 import {
   evaluateExpressKioskScan,
   evaluateOneTapGoToSchool,
+  evaluateOneTapHomeAction,
+  HOME_QUICK_ACTIONS,
+  HomeQuickActionId,
+  isHomeActionDoneForKid,
   playKioskChime,
 } from './utils/expressKiosk';
 import {
@@ -55,6 +69,10 @@ import {
   postSyncToDriveOrSheet,
   saveAppStateLocal,
 } from './utils/syncStorage';
+import {
+  loadTenantAppState,
+  saveTenantAppStateLocal,
+} from './utils/tenantTemplate';
 import { getDateKey, getEffectiveNow } from './utils/timeRules';
 
 const THEME_OPTIONS: { id: PastelTheme; swatch: string; labelTh: string; labelEn: string }[] = [
@@ -66,8 +84,33 @@ const THEME_OPTIONS: { id: PastelTheme; swatch: string; labelTh: string; labelEn
   { id: 'peach', swatch: '#F5C4A8', labelTh: 'ส้มพีช', labelEn: 'Soft Peach' },
 ];
 
+const ACTIVE_TENANT_STORAGE_KEY = 'barnhem_active_tenant_v1';
+
 export default function App() {
-  const [state, setState] = useState<AppState>(() => loadAppState());
+  const [activeTenant, setActiveTenant] = useState<ActiveTenantContext | null>(() => {
+    try {
+      const raw = sessionStorage.getItem(ACTIVE_TENANT_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as ActiveTenantContext;
+      return parsed?.orgId ? parsed : null;
+    } catch {
+      return null;
+    }
+  });
+  const [state, setState] = useState<AppState>(() => {
+    try {
+      const raw = sessionStorage.getItem(ACTIVE_TENANT_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as ActiveTenantContext;
+        if (parsed?.orgId) {
+          return loadTenantAppState(parsed.orgId, parsed.orgName, parsed.ownerName);
+        }
+      }
+    } catch {
+      // fallback to default home state
+    }
+    return loadAppState();
+  });
   const [lang, setLang] = useState<Language>('th');
   const [pastelTheme, setPastelTheme] = useState<PastelTheme>(() => {
     const saved = localStorage.getItem('barnhem_pastel_theme');
@@ -96,18 +139,81 @@ export default function App() {
   const [alertPayload, setAlertPayload] = useState<ModalAlertPayload | null>(null);
   const [cloudUser, setCloudUser] = useState<User | null>(null);
   const [cloudSyncing, setCloudSyncing] = useState(false);
+  const [linkedKidSession, setLinkedKidSession] = useState<LinkedKidSession | null>(null);
 
   const stateRef = useRef<AppState>(state);
   stateRef.current = state;
   const cloudUserRef = useRef<User | null>(cloudUser);
   cloudUserRef.current = cloudUser;
+  const activeTenantRef = useRef<ActiveTenantContext | null>(activeTenant);
+  activeTenantRef.current = activeTenant;
+  const linkedKidSessionRef = useRef<LinkedKidSession | null>(linkedKidSession);
+  linkedKidSessionRef.current = linkedKidSession;
+  const manualLeftTenantRef = useRef(false);
+  const claimedBonusDocIdsRef = useRef<Set<string>>(new Set());
+  const langRef = useRef<Language>(lang);
+  langRef.current = lang;
+
+  const persistActiveStateLocal = useCallback((nextState: AppState, tenant: ActiveTenantContext | null) => {
+    if (linkedKidSessionRef.current) {
+      return;
+    }
+    if (tenant) {
+      saveTenantAppStateLocal(tenant.orgId, nextState);
+    } else {
+      saveAppStateLocal(nextState);
+    }
+  }, []);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-pastel-theme', pastelTheme);
     localStorage.setItem('barnhem_pastel_theme', pastelTheme);
   }, [pastelTheme]);
 
-  // Firebase Auth & Real-Time Firestore Multi-Device Sync
+  // Auto-activate approved external foundation workspace when signed in
+  useEffect(() => {
+    if (!cloudUser || cloudUser.email === MASTER_ADMIN_EMAIL) return;
+    if (activeTenant || manualLeftTenantRef.current) return;
+
+    const unsub = subscribeMyRegistration(cloudUser.uid, (reg) => {
+      if (
+        reg &&
+        reg.status === 'approved' &&
+        reg.applicationType === 'open_organization' &&
+        !manualLeftTenantRef.current &&
+        !activeTenantRef.current
+      ) {
+        const ctx: ActiveTenantContext = {
+          orgId: reg.assignedOrgId,
+          orgName: reg.organizationName,
+          ownerName: reg.nickname || reg.applicantName,
+          ownerUid: reg.uid,
+          ownerEmail: reg.email,
+        };
+        sessionStorage.setItem(ACTIVE_TENANT_STORAGE_KEY, JSON.stringify(ctx));
+        activeTenantRef.current = ctx;
+        setActiveTenant(ctx);
+        const tenantState = loadTenantAppState(
+          ctx.orgId,
+          ctx.orgName,
+          ctx.ownerName,
+          reg.organizationPreset,
+          reg.automationAddons
+        );
+        stateRef.current = tenantState;
+        setState(tenantState);
+        setSelectedKidId(null);
+        setLoggedInStaff(null);
+        setLoggedInChef(null);
+        setLoggedInTutor(null);
+        setLoggedInManager(null);
+        setCreatorUnlocked(false);
+      }
+    });
+    return () => unsub();
+  }, [cloudUser, activeTenant]);
+
+  // Firebase Auth & Tenant-Scoped Real-Time Firestore Sync
   useEffect(() => {
     let unsubCloud: (() => void) | null = null;
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
@@ -118,12 +224,153 @@ export default function App() {
         unsubCloud = null;
       }
       if (!user) {
+        manualLeftTenantRef.current = false;
+        if (linkedKidSessionRef.current) {
+          linkedKidSessionRef.current = null;
+          setLinkedKidSession(null);
+          setSelectedKidId(null);
+          const restored = loadAppState();
+          stateRef.current = restored;
+          setState(restored);
+        }
+        if (activeTenantRef.current) {
+          sessionStorage.removeItem(ACTIVE_TENANT_STORAGE_KEY);
+          activeTenantRef.current = null;
+          setActiveTenant(null);
+          const mainState = loadAppState();
+          stateRef.current = mainState;
+          setState(mainState);
+        }
         setCloudSyncing(false);
         return;
       }
+
+      const tenant = activeTenantRef.current;
+      const isMaster = user.email === MASTER_ADMIN_EMAIL;
+      const canSyncTenant = Boolean(tenant && tenant.ownerUid === user.uid);
+      const canSyncMain = !tenant && isMaster;
+
+      // If user is neither org owner nor master admin, check if they are a linked kid logging in on their own device
+      if (!canSyncTenant && !canSyncMain) {
+        setCloudSyncing(true);
+        unsubCloud = subscribeLinkedKidCloud(
+          user,
+          ({ member, session }) => {
+            if (activeTenantRef.current) return;
+            let effectiveMember = member;
+            const normalizedSessionEmail = session.email.trim().toLowerCase();
+            const normalizedMemberEmail = (member.linkedEmail ?? '').trim().toLowerCase();
+            if (
+              normalizedMemberEmail &&
+              normalizedMemberEmail === normalizedSessionEmail &&
+              !member.emailLoginBonusClaimed &&
+              !claimedBonusDocIdsRef.current.has(session.memberDocId)
+            ) {
+              claimedBonusDocIdsRef.current.add(session.memberDocId);
+              const nowIso = new Date().toISOString();
+              const rewardedMember: Member = {
+                ...member,
+                stars: (member.stars ?? 0) + 1000,
+                emailLoginBonusClaimed: true,
+                starHistory: [
+                  {
+                    id: `tx_email_bonus_${Date.now()}`,
+                    timestamp: nowIso,
+                    reason: '🎁 โบนัสล็อกอินอีเมลครั้งแรก (+1,000 ⭐)',
+                    amount: 1000,
+                  },
+                  ...(member.starHistory ?? []),
+                ].slice(0, 60),
+              };
+              effectiveMember = rewardedMember;
+              void syncLinkedKidSelfToCloud(member, rewardedMember, session, user);
+              setAlertPayload({
+                icon: '🎉⭐',
+                title:
+                  langRef.current === 'th'
+                    ? 'ปลดล็อกตัวการ์ตูน + รับโบนัส 1,000 ดวง!'
+                    : 'Cartoon Unlocked + 1,000 ⭐ Bonus!',
+                message:
+                  langRef.current === 'th'
+                    ? `ยินดีต้อนรับ น้อง${member.nickname} (${session.email})! ภาพตัวการ์ตูนสีสดใสปลดล็อกแล้ว และรับโบนัสล็อกอินอีเมลครั้งแรก +1,000 ⭐ เข้ากระเป๋าเรียบร้อยค่ะ`
+                    : `Welcome ${member.nickname}! Your full-color cartoon is unlocked and +1,000 ⭐ bonus stars have been added!`,
+                tone: 'yellow',
+              });
+            }
+            const isInitialKidActivation =
+              !linkedKidSessionRef.current ||
+              linkedKidSessionRef.current.memberDocId !== session.memberDocId;
+            linkedKidSessionRef.current = session;
+            setLinkedKidSession(session);
+            setState((prev) => {
+              const next: AppState = {
+                ...prev,
+                members: [effectiveMember],
+                lastSyncedAt: new Date().toISOString(),
+              };
+              stateRef.current = next;
+              return next;
+            });
+            if (isInitialKidActivation) {
+              setMode('magic_door');
+              setSelectedKidId(effectiveMember.id);
+            }
+            setCloudSyncing(false);
+          },
+          () => {
+            if (linkedKidSessionRef.current) {
+              linkedKidSessionRef.current = null;
+              setLinkedKidSession(null);
+              setSelectedKidId(null);
+              const restored = loadAppState();
+              stateRef.current = restored;
+              setState(restored);
+            }
+            setCloudSyncing(false);
+          },
+          (patch) => {
+            if (!linkedKidSessionRef.current) return;
+            setState((prev) => {
+              const next: AppState = {
+                ...prev,
+                ...patch,
+                lastSyncedAt: new Date().toISOString(),
+              };
+              stateRef.current = next;
+              return next;
+            });
+          },
+          (settings) => {
+            if (!linkedKidSessionRef.current) return;
+            setState((prev) => {
+              const next: AppState = {
+                ...prev,
+                settings,
+                lastSyncedAt: new Date().toISOString(),
+              };
+              stateRef.current = next;
+              return next;
+            });
+          }
+        );
+        return;
+      }
+
+      if (linkedKidSessionRef.current) {
+        linkedKidSessionRef.current = null;
+        setLinkedKidSession(null);
+      }
+
+      // Skip central Firestore writes/subscriptions when external org uses its own local + Sheet/Drive storage
+      if (canSyncTenant && stateRef.current.settings.useOwnStorageOnly) {
+        setCloudSyncing(false);
+        return;
+      }
+
+      const orgId = canSyncTenant && tenant ? tenant.orgId : DEFAULT_ORG_ID;
       setCloudSyncing(true);
       try {
-        await seedCloudIfEmpty(stateRef.current, user);
+        await seedCloudIfEmpty(stateRef.current, user, orgId);
         unsubCloud = subscribeFoundationCloud(
           user,
           (members) => {
@@ -134,7 +381,7 @@ export default function App() {
                 lastSyncedAt: new Date().toISOString(),
               };
               stateRef.current = next;
-              saveAppStateLocal(next);
+              persistActiveStateLocal(next, activeTenantRef.current);
               return next;
             });
           },
@@ -146,7 +393,7 @@ export default function App() {
                 lastSyncedAt: new Date().toISOString(),
               };
               stateRef.current = next;
-              saveAppStateLocal(next);
+              persistActiveStateLocal(next, activeTenantRef.current);
               return next;
             });
           },
@@ -158,10 +405,11 @@ export default function App() {
                 lastSyncedAt: new Date().toISOString(),
               };
               stateRef.current = next;
-              saveAppStateLocal(next);
+              persistActiveStateLocal(next, activeTenantRef.current);
               return next;
             });
-          }
+          },
+          orgId
         );
       } catch (err) {
         console.error('Cloud sync initialization error:', err);
@@ -174,7 +422,7 @@ export default function App() {
       unsubAuth();
       if (unsubCloud) unsubCloud();
     };
-  }, []);
+  }, [activeTenant?.orgId, state.settings.useOwnStorageOnly, persistActiveStateLocal]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -203,12 +451,12 @@ export default function App() {
           }),
         };
         stateRef.current = next;
-        saveAppStateLocal(next);
+        persistActiveStateLocal(next, activeTenantRef.current);
         return next;
       });
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [state.settings.simulatedTimeIso]);
+  }, [state.settings.simulatedTimeIso, persistActiveStateLocal]);
 
   const commitStateChange = useCallback(
     (updater: (prev: AppState) => AppState, eventLabel: string) => {
@@ -218,20 +466,44 @@ export default function App() {
         ...next,
         lastSyncedAt: new Date().toISOString(),
       };
+      const tenant = activeTenantRef.current;
+      const kidSession = linkedKidSessionRef.current;
       stateRef.current = withSyncMeta;
       setState(withSyncMeta);
-      saveAppStateLocal(withSyncMeta);
+      persistActiveStateLocal(withSyncMeta, tenant);
+      const user = cloudUserRef.current;
+      if (kidSession && user) {
+        const prevKid = prev.members.find((m) => m.id === kidSession.memberId);
+        const nextKid = withSyncMeta.members.find((m) => m.id === kidSession.memberId);
+        if (prevKid && nextKid) {
+          void syncLinkedKidSelfToCloud(prevKid, nextKid, kidSession, user);
+        }
+        return;
+      }
       void postSyncToDriveOrSheet(withSyncMeta, eventLabel);
-      if (cloudUserRef.current) {
-        void syncStateDiffToCloud(prev, withSyncMeta, cloudUserRef.current);
+      if (user) {
+        const canSyncTenant = Boolean(tenant && tenant.ownerUid === user.uid);
+        const canSyncMain = !tenant && user.email === MASTER_ADMIN_EMAIL;
+        if (canSyncTenant && tenant && !withSyncMeta.settings.useOwnStorageOnly) {
+          void syncStateDiffToCloud(prev, withSyncMeta, user, tenant.orgId);
+        } else if (canSyncMain) {
+          void syncStateDiffToCloud(prev, withSyncMeta, user, DEFAULT_ORG_ID);
+        }
       }
     },
-    []
+    [persistActiveStateLocal]
   );
 
   const handleForceSeedCloud = useCallback(async () => {
     const user = cloudUserRef.current;
     if (!user) return;
+    const tenant = activeTenantRef.current;
+    const canSyncTenant = Boolean(tenant && tenant.ownerUid === user.uid);
+    const canSyncMain = !tenant && user.email === MASTER_ADMIN_EMAIL;
+    if (!canSyncTenant && !canSyncMain) return;
+    if (canSyncTenant && stateRef.current.settings.useOwnStorageOnly) return;
+    const orgId = canSyncTenant && tenant ? tenant.orgId : DEFAULT_ORG_ID;
+
     setCloudSyncing(true);
     try {
       const emptyPrev: AppState = {
@@ -253,7 +525,7 @@ export default function App() {
         goldenPoolLogs: [],
         staffLeaves: [],
       };
-      await syncStateDiffToCloud(emptyPrev, stateRef.current, user);
+      await syncStateDiffToCloud(emptyPrev, stateRef.current, user, orgId);
     } finally {
       setCloudSyncing(false);
     }
@@ -263,30 +535,123 @@ export default function App() {
     setAlertPayload(payload);
   }, []);
 
+  const makeWeeklyLog = useCallback(
+    (
+      kid: Member,
+      actionLabel: string,
+      status: WeeklyActivityStatus,
+      recordedBy: string,
+      note?: string
+    ): WeeklyActivityLog => {
+      const timeText = now.toLocaleTimeString('th-TH', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+      return {
+        id: `wal_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        kidId: kid.id,
+        kidNickname: kid.nickname,
+        kidEmoji: kid.emoji,
+        kidGroup: kid.group,
+        dateKey: getDateKey(now),
+        timeText: `${timeText} น.`,
+        actionLabel,
+        status,
+        ...(note ? { note } : {}),
+        recordedBy,
+        createdAt: now.toISOString(),
+      };
+    },
+    [now]
+  );
+
   const handleUpdateKid = useCallback(
     (kidId: string, updater: (prev: Member) => Member, eventLabel: string) => {
-      commitStateChange(
-        (prev) => ({
+      commitStateChange((prev) => {
+        const prevKid = prev.members.find((m) => m.id === kidId);
+        if (!prevKid) return prev;
+        const nextKid = updater(prevKid);
+        let extraLogs: WeeklyActivityLog[] = [];
+
+        if (prevKid.role === 'kid') {
+          const prevFine = prevKid.penalty?.lateFineThb ?? 0;
+          const nextFine = nextKid.penalty?.lateFineThb ?? 0;
+          const prevAway = prevKid.allowance?.awayUntilDateKey ?? '';
+          const nextAway = nextKid.allowance?.awayUntilDateKey ?? '';
+          const dailyChanged = JSON.stringify(prevKid.daily) !== JSON.stringify(nextKid.daily);
+          const isLateLabel =
+            eventLabel.toLowerCase().includes('late') || eventLabel.includes('สาย');
+
+          if (nextAway && nextAway !== prevAway) {
+            extraLogs = [
+              makeWeeklyLog(
+                nextKid,
+                'ลา / กลับบ้าน / ไม่อยู่',
+                'sick_leave',
+                'ระบบเช็คชื่อ',
+                nextKid.allowance?.awayReason
+              ),
+            ];
+          } else if (nextFine > prevFine || isLateLabel) {
+            extraLogs = [
+              makeWeeklyLog(nextKid, eventLabel || 'ทำรายการสาย', 'late', 'ระบบเช็คชื่อ'),
+            ];
+          } else if (dailyChanged) {
+            extraLogs = [
+              makeWeeklyLog(nextKid, eventLabel || 'ใช้งาน / เช็คอินประจำวัน', 'on_time', 'น้องกดเช็คอิน'),
+            ];
+          }
+        }
+
+        return {
           ...prev,
-          members: prev.members.map((m) => (m.id === kidId ? updater(m) : m)),
-        }),
-        eventLabel
-      );
+          members: prev.members.map((m) => (m.id === kidId ? nextKid : m)),
+          ...(extraLogs.length > 0
+            ? {
+                weeklyActivityLogs: [...extraLogs, ...(prev.weeklyActivityLogs ?? [])].slice(
+                  0,
+                  300
+                ),
+              }
+            : {}),
+        };
+      }, eventLabel);
     },
-    [commitStateChange]
+    [commitStateChange, makeWeeklyLog]
   );
 
   const handleAddSickReport = useCallback(
     (report: SickReport) => {
       commitStateChange(
-        (prev) => ({
-          ...prev,
-          sickReports: [report, ...prev.sickReports],
-        }),
+        (prev) => {
+          const targetKid = prev.members.find((m) => m.id === report.kidId);
+          const logEntry = targetKid
+            ? makeWeeklyLog(
+                targetKid,
+                'แจ้งป่วย / พักรักษาตัว',
+                'sick_leave',
+                report.kidNickname,
+                report.symptoms
+              )
+            : null;
+          return {
+            ...prev,
+            sickReports: [report, ...prev.sickReports],
+            ...(logEntry
+              ? {
+                  weeklyActivityLogs: [logEntry, ...(prev.weeklyActivityLogs ?? [])].slice(
+                    0,
+                    300
+                  ),
+                }
+              : {}),
+          };
+        },
         'Add Sick Report'
       );
     },
-    [commitStateChange]
+    [commitStateChange, makeWeeklyLog]
   );
 
   const handleAddSnackBill = useCallback(
@@ -797,9 +1162,17 @@ export default function App() {
           now,
           prev.settings
         );
+        const weeklyEntry = makeWeeklyLog(
+          baseMember,
+          reason || 'มาสาย / ผิดกฎ',
+          'late',
+          recordedBy,
+          amountThb > 0 ? `หัก ${amountThb} ฿` : undefined
+        );
         return {
           ...prev,
           goldenPoolLogs: [poolLog, ...(prev.goldenPoolLogs ?? [])].slice(0, 120),
+          weeklyActivityLogs: [weeklyEntry, ...(prev.weeklyActivityLogs ?? [])].slice(0, 300),
           members: prev.members.map((m) =>
             m.id === kidId
               ? {
@@ -811,7 +1184,7 @@ export default function App() {
         };
       }, `Rule Penalty -> Golden Pool (${reason})`);
     },
-    [commitStateChange, now]
+    [commitStateChange, makeWeeklyLog, now]
   );
 
   const handleSimulateNextSchoolDay = useCallback(
@@ -998,17 +1371,26 @@ export default function App() {
       playKioskChime(result.success);
       if (result.updatedKid) {
         const updated = result.updatedKid;
+        const isLateScan = Boolean(result.fineThb && result.fineThb > 0) || result.bannerTitle.includes('สาย');
+        const scanLog = makeWeeklyLog(
+          updated,
+          result.bannerTitle,
+          isLateScan ? 'late' : 'on_time',
+          'QR Kiosk',
+          result.fineReason
+        );
         commitStateChange(
           (prev) => ({
             ...prev,
             members: prev.members.map((m) => (m.id === updated.id ? updated : m)),
+            weeklyActivityLogs: [scanLog, ...(prev.weeklyActivityLogs ?? [])].slice(0, 300),
           }),
           `Express Kiosk Scan: ${updated.nickname}`
         );
       }
       return result;
     },
-    [commitStateChange, lang, now]
+    [commitStateChange, lang, makeWeeklyLog, now]
   );
 
   const handleOneTapGoToSchool = useCallback(
@@ -1035,6 +1417,14 @@ export default function App() {
           const freshRes = evaluateOneTapGoToSchool(freshKid, now, lang, prev.settings, freshSick);
           const updated = freshRes.updatedKid;
           if (!updated) return prev;
+          const isLate = Boolean(freshRes.fineThb && freshRes.fineThb > 0);
+          const logEntry = makeWeeklyLog(
+            updated,
+            'ไปโรงเรียน (ปุ่มด่วน)',
+            isLate ? 'late' : 'on_time',
+            'ปุ่มด่วนหน้าแรก',
+            freshRes.fineReason
+          );
           if (freshRes.fineThb && freshRes.fineThb > 0) {
             const { nextAllowance, poolLog } = applyRulePenaltyToKidAndPool(
               updated,
@@ -1047,6 +1437,7 @@ export default function App() {
             return {
               ...prev,
               goldenPoolLogs: [poolLog, ...(prev.goldenPoolLogs ?? [])].slice(0, 120),
+              weeklyActivityLogs: [logEntry, ...(prev.weeklyActivityLogs ?? [])].slice(0, 300),
               members: prev.members.map((m) =>
                 m.id === updated.id ? { ...updated, allowance: nextAllowance } : m
               ),
@@ -1054,14 +1445,126 @@ export default function App() {
           }
           return {
             ...prev,
+            weeklyActivityLogs: [logEntry, ...(prev.weeklyActivityLogs ?? [])].slice(0, 300),
             members: prev.members.map((m) => (m.id === updated.id ? updated : m)),
           };
         }, `One-Tap Go To School: ${kid.nickname}`);
       }
       return result;
     },
-    [commitStateChange, lang, now]
+    [commitStateChange, lang, makeWeeklyLog, now]
   );
+
+  const handleOneTapHomeAction = useCallback(
+    (actionId: HomeQuickActionId, kidId: string) => {
+      if (actionId === 'morning_school') {
+        return handleOneTapGoToSchool(kidId);
+      }
+      const currentState = stateRef.current;
+      const kid = currentState.members.find((m) => m.role === 'kid' && m.id === kidId);
+      if (!kid) {
+        playKioskChime(false);
+        return null;
+      }
+      const todayKey = getDateKey(now);
+      const isSickToday = currentState.sickReports.some(
+        (r) => r.kidId === kid.id && r.dateKey === todayKey && !r.resolved
+      );
+      const result = evaluateOneTapHomeAction(
+        actionId,
+        kid,
+        now,
+        lang,
+        currentState.settings,
+        isSickToday
+      );
+      playKioskChime(result.success);
+      if (result.updatedKid) {
+        const actionMeta = HOME_QUICK_ACTIONS.find((a) => a.id === actionId);
+        commitStateChange((prev) => {
+          const freshKid = prev.members.find((m) => m.id === kidId && m.role === 'kid');
+          if (!freshKid) return prev;
+          if (isHomeActionDoneForKid(actionId, freshKid)) return prev;
+          const freshSick = prev.sickReports.some(
+            (r) => r.kidId === freshKid.id && r.dateKey === todayKey && !r.resolved
+          );
+          const freshRes = evaluateOneTapHomeAction(
+            actionId,
+            freshKid,
+            now,
+            lang,
+            prev.settings,
+            freshSick
+          );
+          const updated = freshRes.updatedKid;
+          if (!updated) return prev;
+          const logEntry = makeWeeklyLog(
+            updated,
+            actionMeta?.titleTh ?? actionId,
+            'on_time',
+            'ปุ่มด่วนหน้าแรก'
+          );
+          return {
+            ...prev,
+            weeklyActivityLogs: [logEntry, ...(prev.weeklyActivityLogs ?? [])].slice(0, 300),
+            members: prev.members.map((m) => (m.id === updated.id ? updated : m)),
+          };
+        }, `One-Tap Home Action (${actionId}): ${kid.nickname}`);
+      }
+      return result;
+    },
+    [commitStateChange, handleOneTapGoToSchool, lang, makeWeeklyLog, now]
+  );
+
+  const handleAddWeeklyActivityLog = useCallback(
+    (entry: WeeklyActivityLog) => {
+      commitStateChange(
+        (prev) => ({
+          ...prev,
+          weeklyActivityLogs: [entry, ...(prev.weeklyActivityLogs ?? [])].slice(0, 300),
+        }),
+        `Weekly Log (${entry.status}): ${entry.kidNickname}`
+      );
+    },
+    [commitStateChange]
+  );
+
+  const handleDeleteWeeklyActivityLog = useCallback(
+    (logId: string) => {
+      commitStateChange(
+        (prev) => ({
+          ...prev,
+          weeklyActivityLogs: (prev.weeklyActivityLogs ?? []).filter((l) => l.id !== logId),
+        }),
+        'Delete Weekly Activity Log'
+      );
+    },
+    [commitStateChange]
+  );
+
+  const handleClearWeeklyActivityLogs = useCallback(() => {
+    const clearedAt = now.toISOString();
+    commitStateChange(
+      (prev) => ({
+        ...prev,
+        weeklyActivityLogs: [],
+        settings: {
+          ...prev.settings,
+          lastWeeklyClearedAt: clearedAt,
+        },
+      }),
+      'Clear Weekly Activity Logs (Sunday Reset)'
+    );
+    showAlert({
+      icon: '🧹',
+      title: lang === 'th' ? 'ล้างประวัติสัปดาห์นี้เรียบร้อยแล้ว!' : 'Weekly Logs Cleared!',
+      message:
+        lang === 'th'
+          ? 'เริ่มต้นเก็บบันทึกสัปดาห์ใหม่เรียบร้อยค่ะ'
+          : 'Ready to record logs for the new week.',
+      tone: 'mint',
+    });
+  }, [commitStateChange, lang, now, showAlert]);
 
   const handleSendManagerGift = useCallback(
     (params: {
@@ -1201,9 +1704,18 @@ export default function App() {
             verifiedAt: now.toISOString(),
           };
 
+          const weeklyEntry = makeWeeklyLog(
+            targetKid,
+            slotLabel,
+            'on_time',
+            `แม่ครัว (${chef.nickname})`,
+            `+${starsAwarded} ⭐`
+          );
+
           return {
             ...prev,
             kitchenLogs: [logEntry, ...prev.kitchenLogs],
+            weeklyActivityLogs: [weeklyEntry, ...(prev.weeklyActivityLogs ?? [])].slice(0, 300),
             members: prev.members.map((m) => {
               if (m.id !== kidId) return m;
               return {
@@ -1232,7 +1744,7 @@ export default function App() {
         `Chef Verify Kitchen ${slot}`
       );
     },
-    [commitStateChange, now]
+    [commitStateChange, makeWeeklyLog, now]
   );
 
   const handleAwardStudyStars = useCallback(
@@ -1325,22 +1837,53 @@ export default function App() {
           style={{ borderColor: 'var(--theme-border-alt)' }}
         >
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2 text-sm sm:text-base font-extrabold text-[#3D322C]">
+            <div className="flex items-center gap-2 text-sm sm:text-base font-extrabold text-[#3D322C] truncate">
               <span>🏡</span>
-              <span>Barnhem Care &amp; Kids</span>
+              <span className="truncate">
+                {activeTenant ? activeTenant.orgName : 'Barnhem Care & Kids'}
+              </span>
             </div>
-            <button
-              type="button"
-              onClick={() => setLang((prev) => (prev === 'th' ? 'en' : 'th'))}
-              className="text-xs font-semibold text-[#7B695F] hover:text-[#3D322C] cursor-pointer"
-            >
-              {lang === 'th' ? '🇬🇧 EN' : '🇹🇭 ไทย'}
-            </button>
+            <div className="flex items-center gap-3 shrink-0">
+              {linkedKidSession ? (
+                <button
+                  type="button"
+                  onClick={() => void signOutCloud()}
+                  className="min-h-[36px] rounded-xl border border-[#F3B7C0] bg-[#FFF0F3] hover:bg-[#FFE0E7] px-3 py-1.5 text-xs font-extrabold text-[#8B1D36] whitespace-nowrap cursor-pointer transition-colors"
+                >
+                  🚪 {lang === 'th' ? 'ออกจากระบบน้อง' : 'Sign Out Kid'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setMode('portal')}
+                  className="min-h-[36px] rounded-xl border border-[#8FD4C6] bg-[#E8FAF6] hover:bg-[#D5F4EE] px-3 py-1.5 text-xs font-extrabold text-[#114A42] whitespace-nowrap cursor-pointer transition-colors"
+                >
+                  {activeTenant
+                    ? lang === 'th'
+                      ? '🏛️ พื้นที่มูลนิธิของฉัน'
+                      : '🏛️ My Foundation Portal'
+                    : cloudUser?.email === MASTER_ADMIN_EMAIL
+                    ? lang === 'th'
+                      ? '🛡️ เปิดสิทธิ์มูลนิธิอื่น'
+                      : '🛡️ Org Approvals'
+                    : lang === 'th'
+                    ? '🏛️ สำหรับมูลนิธิอื่น: ขอเปิดใช้งานฟรี'
+                    : '🏛️ For Other Foundations (Free)'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setLang((prev) => (prev === 'th' ? 'en' : 'th'))}
+                className="text-xs font-semibold text-[#7B695F] hover:text-[#3D322C] cursor-pointer whitespace-nowrap"
+              >
+                {lang === 'th' ? '🇬🇧 EN' : '🇹🇭 ไทย'}
+              </button>
+            </div>
           </div>
         </header>
       )}
 
-      {/* Compact top bar inside Staff/Chef/Manager/Creator modes */}
+      {/* Compact top bar inside Staff/Chef/Manager/Creator/Portal modes */}
       {!isCleanHomeScreen && mode !== 'magic_door' && (
         <header className="no-print sticky top-0 z-30 border-b border-[#EBD8C3] bg-[#FFFDF9]/90 backdrop-blur-md">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
@@ -1362,6 +1905,7 @@ export default function App() {
               {mode === 'tutor' && (lang === 'th' ? '📚 โหมดคุณครูสอนพิเศษ' : '📚 Tutor Study Mode')}
               {mode === 'manager' && (lang === 'th' ? '📊 โหมดผู้จัดการ' : '📊 Manager Dashboard')}
               {mode === 'creator' && (lang === 'th' ? '👑 โหมดผู้สร้างสูงสุด' : '👑 Creator Admin')}
+              {mode === 'portal' && (lang === 'th' ? '🌐 พอร์ทัลสมัครใช้งานระบบ' : '🌐 Platform Portal')}
             </span>
 
             <button
@@ -1397,7 +1941,21 @@ export default function App() {
             onAutoLoginRole={handleAutoLoginRole}
             onExpressKioskScan={handleExpressKioskScan}
             onQuickGoToSchool={handleOneTapGoToSchool}
+            onQuickHomeAction={handleOneTapHomeAction}
             onShowAlert={showAlert}
+            organizationName={activeTenant?.orgName}
+            linkedKidSession={linkedKidSession}
+            linkedKidMember={
+              linkedKidSession
+                ? state.members.find((m) => m.id === linkedKidSession.memberId) ?? null
+                : null
+            }
+            onOpenLinkedKid={() => {
+              if (linkedKidSession) {
+                setSelectedKidId(linkedKidSession.memberId);
+              }
+            }}
+            onSignOutLinkedKid={() => void signOutCloud()}
           />
         )}
 
@@ -1428,6 +1986,9 @@ export default function App() {
             activeFestivalOverride={state.settings.activeFestivalOverride ?? 'auto'}
             lang={lang}
             openedFromManager={returnToManagerAfterKid}
+            linkedKidSession={linkedKidSession}
+            cloudUserEmail={cloudUser?.email ?? null}
+            onSignOutLinkedKid={() => void signOutCloud()}
             onBack={() => {
               setSelectedKidId(null);
               if (returnToManagerAfterKid && loggedInManager) {
@@ -1556,6 +2117,10 @@ export default function App() {
             onAcknowledgeLeave={handleAcknowledgeStaffLeave}
             onCancelLeave={handleCancelStaffLeave}
             onShowAlert={showAlert}
+            orgName={activeTenant?.orgName ?? 'Barnhem Care & Kids'}
+            onAddWeeklyActivityLog={handleAddWeeklyActivityLog}
+            onDeleteWeeklyActivityLog={handleDeleteWeeklyActivityLog}
+            onClearWeeklyActivityLogs={handleClearWeeklyActivityLogs}
           />
         )}
 
@@ -1736,6 +2301,71 @@ export default function App() {
             onUpdateLeaveSubstitute={handleUpdateStaffLeaveSubstitute}
             onAcknowledgeLeave={handleAcknowledgeStaffLeave}
             onCancelLeave={handleCancelStaffLeave}
+            onShowAlert={showAlert}
+            isExternalTenant={Boolean(activeTenant)}
+          />
+        )}
+
+        {mode === 'portal' && (
+          <PlatformPortalView
+            cloudUser={cloudUser}
+            lang={lang}
+            activeTenant={activeTenant}
+            appState={state}
+            onUpdateSettings={(partial) =>
+              commitStateChange(
+                (prev) => ({
+                  ...prev,
+                  settings: { ...prev.settings, ...partial },
+                }),
+                'Update Org Storage Settings'
+              )
+            }
+            onEnterTenantWorkspace={(reg) => {
+              manualLeftTenantRef.current = false;
+              const ctx: ActiveTenantContext = {
+                orgId: reg.assignedOrgId,
+                orgName: reg.organizationName,
+                ownerName: reg.nickname || reg.applicantName,
+                ownerUid: reg.uid,
+                ownerEmail: reg.email,
+              };
+              sessionStorage.setItem(ACTIVE_TENANT_STORAGE_KEY, JSON.stringify(ctx));
+              activeTenantRef.current = ctx;
+              setActiveTenant(ctx);
+              const tenantState = loadTenantAppState(
+                ctx.orgId,
+                ctx.orgName,
+                ctx.ownerName,
+                reg.organizationPreset,
+                reg.automationAddons
+              );
+              stateRef.current = tenantState;
+              setState(tenantState);
+              setSelectedKidId(null);
+              setLoggedInStaff(null);
+              setLoggedInChef(null);
+              setLoggedInTutor(null);
+              setLoggedInManager(null);
+              setCreatorUnlocked(false);
+              setMode('magic_door');
+            }}
+            onLeaveTenantWorkspace={() => {
+              manualLeftTenantRef.current = true;
+              sessionStorage.removeItem(ACTIVE_TENANT_STORAGE_KEY);
+              activeTenantRef.current = null;
+              setActiveTenant(null);
+              const mainState = loadAppState();
+              stateRef.current = mainState;
+              setState(mainState);
+              setSelectedKidId(null);
+              setLoggedInStaff(null);
+              setLoggedInChef(null);
+              setLoggedInTutor(null);
+              setLoggedInManager(null);
+              setCreatorUnlocked(false);
+            }}
+            onBackHome={() => setMode('magic_door')}
             onShowAlert={showAlert}
           />
         )}

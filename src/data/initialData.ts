@@ -1007,8 +1007,9 @@ export const INITIAL_APP_STATE: AppState = {
   friendVisits: [],
   goldenPoolLogs: [],
   staffLeaves: [],
+  weeklyActivityLogs: [],
   settings: {
-    syncWebhookUrl: DEFAULT_SYNC_URL,
+    syncWebhookUrl: "https://script.google.com/macros/s/AKfycbyJlezdsfcbIEFa1YJeT24F35Kuwj78-21q2zPma9IdQTrlx-N6322vwIpNOXoIfTFrBw/exec", 
     returnHomeDriveUrl: RETURN_HOME_DRIVE_URL,
     creatorPins: ['9292', '1629'],
     isPublicHolidayToday: false,
@@ -1020,6 +1021,9 @@ export const INITIAL_APP_STATE: AppState = {
     early15MinBonusStars: 1,
     starToCoinStars: 30,
     starToCoinThb: 5,
+    lastWeeklyClearedAt: null,
+    useOwnStorageOnly: false,
+    enableCoinsAndPiggyBank: false,
   },
   lastSyncedAt: null,
 };

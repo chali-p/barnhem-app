@@ -19,6 +19,7 @@ import {
   SnackBill,
   StaffLeaveRecord,
   SupplyRequest,
+  WeeklyActivityLog,
 } from '../types/barnhem';
 import {
   formatLeaveKindTh,
@@ -51,6 +52,7 @@ import { GoldenPiggySvg, PinkPiggySvg } from './PiggyBankSvg';
 import { KidDutySchedulesPanel } from './KidDutySchedulesPanel';
 import { StaffLeavePanel } from './StaffLeavePanel';
 import { StaffRosterPanel } from './StaffRosterPanel';
+import { WeeklyActivityLogPanel } from './WeeklyActivityLogPanel';
 
 interface StaffViewProps {
   state: AppState;
@@ -112,6 +114,10 @@ interface StaffViewProps {
   onAcknowledgeLeave: (leaveId: string, byName: string) => void;
   onCancelLeave: (leaveId: string) => void;
   onShowAlert: (payload: ModalAlertPayload) => void;
+  orgName?: string;
+  onAddWeeklyActivityLog?: (entry: WeeklyActivityLog) => void;
+  onDeleteWeeklyActivityLog?: (logId: string) => void;
+  onClearWeeklyActivityLogs?: () => void;
 }
 
 export const StaffView: React.FC<StaffViewProps> = ({
@@ -169,6 +175,10 @@ export const StaffView: React.FC<StaffViewProps> = ({
   onAcknowledgeLeave,
   onCancelLeave,
   onShowAlert,
+  orgName = 'Barnhem Care & Kids',
+  onAddWeeklyActivityLog,
+  onDeleteWeeklyActivityLog,
+  onClearWeeklyActivityLogs,
 }) => {
   const [pinInput, setPinInput] = useState('');
   const [pinModalOpen, setPinModalOpen] = useState(false);
@@ -189,6 +199,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
   const [healthDrugAllergy, setHealthDrugAllergy] = useState('ไม่มี');
   const [healthMeds, setHealthMeds] = useState('ไม่มี');
   const [healthCustomChore, setHealthCustomChore] = useState('');
+  const [healthLinkedEmail, setHealthLinkedEmail] = useState('');
 
   // Add Kid Form State
   const [newId, setNewId] = useState('');
@@ -198,6 +209,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
   const [newGroup, setNewGroup] = useState<KidGroup>(1);
   const [newPin, setNewPin] = useState('');
   const [newEmoji, setNewEmoji] = useState('🐣');
+  const [newLinkedEmail, setNewLinkedEmail] = useState('');
   const [newPersonalDrive, setNewPersonalDrive] = useState(DEFAULT_SYNC_URL);
   const [newRestrictedDocs, setNewRestrictedDocs] = useState(DEFAULT_SYNC_URL);
 
@@ -380,6 +392,17 @@ export const StaffView: React.FC<StaffViewProps> = ({
       return;
     }
 
+    const cleanNewEmail = newLinkedEmail.trim().toLowerCase();
+    if (cleanNewEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanNewEmail)) {
+      onShowAlert({
+        icon: '⚠️',
+        title: lang === 'th' ? 'รูปแบบอีเมลไม่ถูกต้อง' : 'Invalid Email Format',
+        message: lang === 'th' ? 'กรุณากรอกอีเมล Google ให้ถูกต้อง หรือเว้นว่างไว้ค่ะ' : 'Please enter a valid email or leave blank.',
+        tone: 'pink',
+      });
+      return;
+    }
+
     const kid: Member = {
       id: idClean,
       role: 'kid',
@@ -390,6 +413,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
       pin: newPin,
       emoji: newEmoji || '🌟',
       stars: 50,
+      linkedEmail: cleanNewEmail || undefined,
       personalDriveUrl: newPersonalDrive.trim() || DEFAULT_SYNC_URL,
       restrictedDocsUrl: newRestrictedDocs.trim() || DEFAULT_SYNC_URL,
       activeCoverStage: 1,
@@ -433,6 +457,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
     setNewNickname('');
     setNewFullName('');
     setNewPin('');
+    setNewLinkedEmail('');
     onShowAlert({
       icon: '🎉',
       title: lang === 'th' ? 'เพิ่มรายชื่อน้องใหม่สำเร็จ' : 'Kid Added Successfully',
@@ -595,6 +620,23 @@ export const StaffView: React.FC<StaffViewProps> = ({
             ))}
           </div>
         </section>
+      )}
+
+      {/* Weekly Attendance, Late/Absent/Leave Log + 1-Tap LINE Send & Sunday Reset */}
+      {onAddWeeklyActivityLog && onDeleteWeeklyActivityLog && onClearWeeklyActivityLogs && (
+        <WeeklyActivityLogPanel
+          orgName={orgName}
+          kids={kids}
+          logs={state.weeklyActivityLogs ?? []}
+          lastWeeklyClearedAt={state.settings.lastWeeklyClearedAt}
+          now={now}
+          lang={lang}
+          staffName={loggedInStaff.nickname}
+          onAddLog={onAddWeeklyActivityLog}
+          onDeleteLog={onDeleteWeeklyActivityLog}
+          onClearWeeklyLogs={onClearWeeklyActivityLogs}
+          onShowAlert={onShowAlert}
+        />
       )}
 
       {/* Staff Control: Tutor Daily Star Ceiling (0-10 ⭐/kid/day) */}
@@ -1739,6 +1781,18 @@ export const StaffView: React.FC<StaffViewProps> = ({
             </div>
 
             <input
+              type="email"
+              value={newLinkedEmail}
+              onChange={(e) => setNewLinkedEmail(e.target.value)}
+              placeholder={
+                lang === 'th'
+                  ? '📧 อีเมล Google ของน้อง (ไม่บังคับ — เพื่อให้น้องล็อกอินดูตัวการ์ตูนซิงค์สด)'
+                  : '📧 Kid Google Email (Optional — for real-time personal device avatar sync)'
+              }
+              className="w-full rounded-xl border border-[#B5E5DC] bg-[#F5FCFA] px-3 py-2"
+            />
+
+            <input
               type="url"
               value={newRestrictedDocs}
               onChange={(e) => setNewRestrictedDocs(e.target.value)}
@@ -1774,13 +1828,14 @@ export const StaffView: React.FC<StaffViewProps> = ({
                 setHealthDrugAllergy(k.healthProfile?.drugAllergies || 'ไม่มี');
                 setHealthMeds(k.healthProfile?.regularMeds || 'ไม่มี');
                 setHealthCustomChore(k.customHouseChore || '');
+                setHealthLinkedEmail(k.linkedEmail || '');
               }
             }}
             className="rounded-xl border border-[#EBD8C3] bg-white px-3 py-2 font-bold"
           >
             <option value="">-- เลือกชื่อน้อง --</option>
             {kids.map((k) => {
-              const chore = getDailyHouseChoreForKid(k, kids, now);
+              const chore = getDailyHouseChoreForKid(k, kids, now, state.settings.isPublicHolidayToday);
               return (
                 <option key={k.id} value={k.id}>
                   {k.emoji} {k.nickname} (เวรวันนี้: {chore.titleTh})
@@ -1824,16 +1879,38 @@ export const StaffView: React.FC<StaffViewProps> = ({
             className="rounded-xl border border-[#EBD8C3] bg-white px-3 py-2"
           />
         </div>
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          <input
+            type="email"
+            value={healthLinkedEmail}
+            onChange={(e) => setHealthLinkedEmail(e.target.value)}
+            placeholder={
+              lang === 'th'
+                ? '📧 อีเมล Google ของน้อง (เพื่อให้น้องล็อกอินดูตัวการ์ตูน Real-time บนมือถือตัวเอง)'
+                : '📧 Kid Google Email (for real-time personal device sync)'
+            }
+            className="flex-1 min-w-[240px] rounded-xl border border-[#B5E5DC] bg-[#F5FCFA] px-3 py-2 text-xs text-[#3D322C]"
+          />
           <button
             type="button"
             onClick={() => {
               const target = kids.find((k) => k.id === editingHealthKidId);
               if (!target) return;
+              const cleanEmail = healthLinkedEmail.trim().toLowerCase();
+              if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+                onShowAlert({
+                  icon: '⚠️',
+                  title: lang === 'th' ? 'รูปแบบอีเมลไม่ถูกต้อง' : 'Invalid Email Format',
+                  message: lang === 'th' ? 'กรุณากรอกอีเมลให้ถูกต้อง หรือเว้นว่างไว้ค่ะ' : 'Please enter a valid email address.',
+                  tone: 'pink',
+                });
+                return;
+              }
               onUpdateKid(
                 target.id,
                 (prev) => ({
                   ...prev,
+                  linkedEmail: cleanEmail || undefined,
                   customHouseChore: healthCustomChore.trim() || undefined,
                   healthProfile: {
                     bloodType: healthBlood.trim() || 'ไม่ระบุ',
@@ -1844,28 +1921,31 @@ export const StaffView: React.FC<StaffViewProps> = ({
                     emergencyNote: prev.healthProfile?.emergencyNote || 'สุขภาพแข็งแรงปกติ',
                   },
                 }),
-                `Staff Update Health & Chore (${target.nickname})`
+                `Staff Update Health, Chore & Email (${target.nickname})`
               );
               onShowAlert({
                 icon: '🩺✅',
-                title: lang === 'th' ? 'อัปเดตข้อมูลสุขภาพและเวรบ้านแล้ว!' : 'Updated Health Card & Chore!',
-                message: `บันทึกข้อมูลให้น้อง${target.nickname} เรียบร้อยแล้ว`,
+                title: lang === 'th' ? 'อัปเดตข้อมูลน้องและอีเมลซิงค์แล้ว!' : 'Updated Kid Profile & Sync Email!',
+                message: cleanEmail
+                  ? `บันทึกข้อมูลและผูกอีเมล ${cleanEmail} ให้น้อง${target.nickname} เรียบร้อยแล้ว`
+                  : `บันทึกข้อมูลให้น้อง${target.nickname} เรียบร้อยแล้ว`,
                 tone: 'mint',
               });
             }}
-            className="min-h-[40px] rounded-xl bg-[#3D322C] text-white px-5 py-2 text-xs font-bold cursor-pointer"
+            className="min-h-[40px] rounded-xl bg-[#3D322C] text-white px-5 py-2 text-xs font-bold cursor-pointer whitespace-nowrap"
           >
-            💾 {lang === 'th' ? 'บันทึกข้อมูลสุขภาพ & เวรบ้าน' : 'Save Health & Chore'}
+            💾 {lang === 'th' ? 'บันทึกข้อมูลสุขภาพ เวรบ้าน & อีเมล' : 'Save Health, Chore & Email'}
           </button>
         </div>
       </section>
 
-      {/* Unified Kid Duty Schedules: Morning Zone, Kitchen Duty & Auto-Calculated Weekly Trash Rotation */}
+      {/* Unified Kid Duty Schedules: Morning Zone, Holiday 14-Zone Cleaning, Kitchen Duty & Weekly Trash */}
       <section className="rounded-[28px] border-2 border-[#B8DEC9] bg-[#FFFDF9] p-5 pastel-shadow">
         <KidDutySchedulesPanel
           kids={kids}
           now={now}
           lang={lang}
+          isPublicHolidayToday={state.settings.isPublicHolidayToday}
           onToggleKitchenSlot={(kidId, slot, checked) => {
             const target = kids.find((k) => k.id === kidId);
             if (!target) return;

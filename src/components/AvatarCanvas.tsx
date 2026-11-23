@@ -51,6 +51,12 @@ interface AvatarCanvasProps {
   onOpenGoldPiggy?: () => void;
   activeGift?: ProfileGift | null;
   onOpenGift?: () => void;
+  emailLocked?: boolean;
+  emailBonusClaimed?: boolean;
+  linkedEmail?: string;
+  emailLoginBusy?: boolean;
+  onOpenLinkEmailModal?: () => void;
+  onSignInKidEmail?: () => void;
 }
 
 const SKIN_MAP: Record<AvatarConfig['skinTone'], string> = {
@@ -91,6 +97,12 @@ export const AvatarCanvas: React.FC<AvatarCanvasProps> = ({
   onOpenGoldPiggy,
   activeGift = null,
   onOpenGift,
+  emailLocked = false,
+  emailBonusClaimed = false,
+  linkedEmail,
+  emailLoginBusy = false,
+  onOpenLinkEmailModal,
+  onSignInKidEmail,
 }) => {
   const scene = COVER_SCENES.find((s) => s.stage === activeStage) ?? COVER_SCENES[0];
   const stageItems = shopItems.filter(
@@ -708,9 +720,16 @@ export const AvatarCanvas: React.FC<AvatarCanvasProps> = ({
   if (panoramic) {
     return (
       <div
-        className="relative overflow-hidden rounded-[32px] border-2 border-[#EBD8C3] p-4 sm:p-6 min-h-[250px] sm:min-h-[275px] flex items-center"
+        className="relative overflow-hidden rounded-[32px] border-2 border-[#EBD8C3] min-h-[265px] sm:min-h-[285px] flex items-center"
         style={{ background: scene.bgGradient }}
       >
+        <div
+          className={`relative w-full min-h-[265px] sm:min-h-[285px] p-4 sm:p-6 flex items-center transition-all duration-300 ${
+            emailLocked
+              ? 'filter grayscale-[82%] blur-[4.5px] opacity-85 pointer-events-none select-none'
+              : ''
+          }`}
+        >
         {/* Full-Width Unobstructed Scenic Panoramic Illustration */}
         <svg
           viewBox="0 0 1200 320"
@@ -1043,6 +1062,94 @@ export const AvatarCanvas: React.FC<AvatarCanvasProps> = ({
             )}
           </div>
         </div>
+        </div>
+
+        {emailLocked && (
+          <div className="absolute inset-0 z-30 flex items-center justify-center p-3 sm:p-5 bg-[#2D2522]/15">
+            <div className="w-full max-w-md rounded-[26px] border-2 border-white/95 bg-[#FFFDF9]/92 backdrop-blur-md px-4 py-3.5 sm:px-6 sm:py-4 text-center shadow-lg space-y-2">
+              <div className="inline-flex items-center gap-1.5 rounded-full bg-[#F2EDE9] border border-[#DFD3C8] px-3 py-1 text-[11px] font-extrabold text-[#4D3E36]">
+                <span>🔒</span>
+                <span>
+                  {lang === 'th'
+                    ? 'ยังไม่ล็อกอินอีเมล · ดาวอยู่ที่ 0 ⭐ (ปลดล็อกเมื่อล็อกอิน)'
+                    : 'Not Signed In · Stars at 0 ⭐ (Unlock on Email Login)'}
+                </span>
+              </div>
+
+              {!emailBonusClaimed && (
+                <div className="rounded-2xl border border-[#F2C36B] bg-gradient-to-r from-[#FFF6D6] via-[#FFF9E6] to-[#FFF2C2] px-3 py-2 text-xs sm:text-sm font-extrabold text-[#6E4500] shadow-2xs">
+                  🎁{' '}
+                  {lang === 'th'
+                    ? 'ล็อกอินอีเมลครั้งแรก รับดาวพิเศษ +1,000 ⭐ ทันที!'
+                    : 'First email login bonus: Get +1,000 ⭐ immediately!'}
+                </div>
+              )}
+
+              <p className="text-[11px] sm:text-xs text-[#5E4E45] leading-relaxed">
+                {lang === 'th'
+                  ? 'สามารถนำดาวมาช็อปปิ้งที่ร้านมินิมาร์ท เพื่อรับของรางวัลมากมาย และอัปเดตข้อมูลได้ก่อนใคร'
+                  : 'Use your stars to shop at the foundation minimart, claim rewards, and get priority updates!'}
+                {linkedEmail ? (
+                  <span className="block mt-0.5 font-bold text-[#114A42]">
+                    📧 {lang === 'th' ? `อีเมลที่ผูกไว้: ${linkedEmail}` : `Linked: ${linkedEmail}`}
+                  </span>
+                ) : null}
+              </p>
+
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-0.5">
+                {!linkedEmail ? (
+                  onOpenLinkEmailModal && (
+                    <button
+                      type="button"
+                      onClick={onOpenLinkEmailModal}
+                      className="min-h-[40px] rounded-2xl bg-[#114A42] hover:bg-[#0D3A34] text-white px-4 py-2 text-xs font-extrabold shadow-sm cursor-pointer transition-colors"
+                    >
+                      📧{' '}
+                      {lang === 'th'
+                        ? !emailBonusClaimed
+                          ? 'เพิ่มอีเมลของหนู (+1,000 ⭐)'
+                          : 'เพิ่มอีเมลของหนู'
+                        : 'Add My Email'}
+                    </button>
+                  )
+                ) : (
+                  <>
+                    {onSignInKidEmail && (
+                      <button
+                        type="button"
+                        disabled={emailLoginBusy}
+                        onClick={onSignInKidEmail}
+                        className="min-h-[40px] rounded-2xl bg-[#114A42] hover:bg-[#0D3A34] text-white px-4 py-2 text-xs font-extrabold shadow-sm cursor-pointer transition-colors disabled:opacity-60"
+                      >
+                        🔑{' '}
+                        {emailLoginBusy
+                          ? lang === 'th'
+                            ? 'กำลังเปิด Google...'
+                            : 'Signing in...'
+                          : !emailBonusClaimed
+                          ? lang === 'th'
+                            ? 'ล็อกอินอีเมลรับ 1,000 ⭐'
+                            : 'Sign In & Claim 1,000 ⭐'
+                          : lang === 'th'
+                          ? 'ล็อกอินด้วยอีเมลน้อง'
+                          : 'Sign In with Kid Email'}
+                      </button>
+                    )}
+                    {onOpenLinkEmailModal && (
+                      <button
+                        type="button"
+                        onClick={onOpenLinkEmailModal}
+                        className="min-h-[40px] rounded-2xl border border-[#D7C8BA] bg-white hover:bg-[#FAF5EF] text-[#4D3E36] px-3.5 py-2 text-xs font-bold cursor-pointer transition-colors"
+                      >
+                        ✏️ {lang === 'th' ? 'แก้ไขอีเมล' : 'Edit Email'}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

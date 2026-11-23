@@ -1,6 +1,17 @@
 import React, { useMemo, useState } from 'react';
+import {
+  CLEANING_MONTH_COLUMNS,
+  getCleaningMonthForDate,
+  getWeekendCleaningForKid,
+  resolveCleaningDayType,
+  WEEKEND_CLEANING_KIDS,
+  WEEKEND_CLEANING_NOTE_EXCUSES,
+  WEEKEND_CLEANING_NOTE_EXCUSES_EN,
+  WEEKEND_CLEANING_NOTE_HOLIDAY,
+  WEEKEND_CLEANING_NOTE_HOLIDAY_EN,
+  WEEKEND_CLEANING_ROSTER,
+} from '../data/weekendCleaningRoster';
 import { KitchenDutyAssignment, Language, Member } from '../types/barnhem';
-import { getDailyHouseChoreForKid, HOUSE_CHORES_POOL } from '../utils/houseChores';
 import {
   generateTrashDutySchedule,
   getKitchenSlotsLabelsForKid,
@@ -10,7 +21,7 @@ import {
   TRASH_DUTY_RULE_TH,
 } from '../utils/trashDuty';
 
-type DutySubTab = 'trash' | 'morning_zone' | 'kitchen';
+type DutySubTab = 'weekend_cleaning' | 'kitchen' | 'trash';
 type TrashZoneFilter = 'boys' | 'girls' | 'both';
 
 interface KidDutySchedulesPanelProps {
@@ -18,6 +29,7 @@ interface KidDutySchedulesPanelProps {
   now: Date;
   lang: Language;
   currentKid?: Member;
+  isPublicHolidayToday?: boolean;
   compactHeader?: boolean;
   onToggleKitchenSlot?: (
     kidId: string,
@@ -31,6 +43,7 @@ export const KidDutySchedulesPanel: React.FC<KidDutySchedulesPanelProps> = ({
   now,
   lang,
   currentKid,
+  isPublicHolidayToday = false,
   compactHeader = false,
   onToggleKitchenSlot,
 }) => {
@@ -41,9 +54,26 @@ export const KidDutySchedulesPanel: React.FC<KidDutySchedulesPanelProps> = ({
       ? 'girls'
       : 'both';
 
-  const [activeTab, setActiveTab] = useState<DutySubTab>('trash');
+  const resolvedCleaningDay = useMemo(
+    () => resolveCleaningDayType(now, isPublicHolidayToday),
+    [now, isPublicHolidayToday]
+  );
+  const resolvedCleaningMonth = useMemo(() => getCleaningMonthForDate(now), [now]);
+
+  const [activeTab, setActiveTab] = useState<DutySubTab>(
+    resolvedCleaningDay.dayType ? 'weekend_cleaning' : 'trash'
+  );
   const [zoneFilter, setZoneFilter] = useState<TrashZoneFilter>(defaultZone);
   const [weeksToShow, setWeeksToShow] = useState<number>(16);
+  const [cleaningShowAllMonths, setCleaningShowAllMonths] = useState<boolean>(true);
+  const [selectedCleaningMonthKey, setSelectedCleaningMonthKey] = useState<string>(
+    resolvedCleaningMonth.col.key
+  );
+  const [selectedCleaningKid, setSelectedCleaningKid] = useState<string>(
+    currentKid && WEEKEND_CLEANING_KIDS.includes(currentKid.nickname)
+      ? currentKid.nickname
+      : ''
+  );
 
   const trashToday = useMemo(() => getTrashDutyInfoForDate(now), [now]);
 
@@ -82,9 +112,40 @@ export const KidDutySchedulesPanel: React.FC<KidDutySchedulesPanelProps> = ({
     });
   }, [kids, currentKid]);
 
-  const myMorningChore = currentKid
-    ? getDailyHouseChoreForKid(currentKid, kids, now)
-    : null;
+  const myWeekendSummary = useMemo(
+    () =>
+      getWeekendCleaningForKid(
+        selectedCleaningKid || currentKid?.nickname || '',
+        now,
+        isPublicHolidayToday,
+        cleaningShowAllMonths ? resolvedCleaningMonth.col.key : selectedCleaningMonthKey
+      ),
+    [
+      selectedCleaningKid,
+      currentKid?.nickname,
+      now,
+      isPublicHolidayToday,
+      cleaningShowAllMonths,
+      resolvedCleaningMonth.col.key,
+      selectedCleaningMonthKey,
+    ]
+  );
+  const orderedFilterKids = useMemo(() => {
+    if (!currentKid || !WEEKEND_CLEANING_KIDS.includes(currentKid.nickname)) {
+      return WEEKEND_CLEANING_KIDS;
+    }
+    return [
+      currentKid.nickname,
+      ...WEEKEND_CLEANING_KIDS.filter((n) => n !== currentKid.nickname),
+    ];
+  }, [currentKid]);
+  const displayedCleaningMonths = useMemo(
+    () =>
+      cleaningShowAllMonths
+        ? CLEANING_MONTH_COLUMNS
+        : CLEANING_MONTH_COLUMNS.filter((c) => c.key === selectedCleaningMonthKey),
+    [cleaningShowAllMonths, selectedCleaningMonthKey]
+  );
   const myKitchenSlots = currentKid
     ? getKitchenSlotsLabelsForKid(currentKid, lang)
     : [];
@@ -97,12 +158,15 @@ export const KidDutySchedulesPanel: React.FC<KidDutySchedulesPanelProps> = ({
       {!compactHeader && (
         <div>
           <h3 className="text-lg font-bold">
-            📋 {lang === 'th' ? 'ช่องตารางเวรต่างๆ ของน้อง (เขตเช้า · ห้องครัว · ทิ้งขยะ)' : 'All Kid Duty Schedules'}
+            📋{' '}
+            {lang === 'th'
+              ? 'ช่องตารางเวรต่างๆ ของน้อง (เวรวันหยุด 14 โซน · ห้องครัว · ทิ้งขยะ)'
+              : 'All Kid Duty Schedules'}
           </h3>
           <p className="text-xs text-[#6E5C52] mt-0.5">
             {lang === 'th'
-              ? 'รวมเวรประจำวันและประจำสัปดาห์ของเด็กๆ ทั้งเวรทำเขตบริเวณตอนเช้า เวรห้องครัว และตารางเวรทิ้งขยะคำนวณอัตโนมัติค่ะ'
-              : 'Complete daily & weekly duties: Morning compound zones, Kitchen shifts, and auto-calculated Trash duty.'}
+              ? 'รวมเวรของเด็กๆ ทั้งเวรทำความสะอาดประจำวันหยุด (14 โซน) เวรห้องครัว และตารางเวรทิ้งขยะค่ะ'
+              : 'Complete duties: 14-zone weekend cleaning, Kitchen shifts, and Trash duty.'}
           </p>
         </div>
       )}
@@ -111,27 +175,35 @@ export const KidDutySchedulesPanel: React.FC<KidDutySchedulesPanelProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
         <button
           type="button"
-          onClick={() => setActiveTab('morning_zone')}
+          onClick={() => setActiveTab('weekend_cleaning')}
           className={`rounded-2xl border p-3 text-left transition-colors cursor-pointer ${
-            activeTab === 'morning_zone'
-              ? 'border-[#7CC6B8] bg-[#ECFBF7]'
-              : 'border-[#DCEEEB] bg-[#F6FCFB] hover:bg-[#ECFBF7]'
+            activeTab === 'weekend_cleaning'
+              ? 'border-[#EE9CB6] bg-[#FFF0F5]'
+              : 'border-[#F5D0DC] bg-[#FFF9FB] hover:bg-[#FFF0F5]'
           }`}
         >
-          <div className="font-extrabold text-[#1D544C] flex items-center justify-between gap-1">
-            <span>🧹 {lang === 'th' ? '1. เวรทำเขตบริเวณตอนเช้า' : '1. Morning Zone'}</span>
-            {currentKid && (
-              <span className="text-[10px] font-bold">
-                {currentKid.daily.houseChoreDone ? '✅' : '⏳'}
+          <div className="font-extrabold text-[#7B2042] flex items-center justify-between gap-1">
+            <span>🌸 {lang === 'th' ? '1. เวรวันหยุด (14 โซน)' : '1. Holiday Cleaning'}</span>
+            {resolvedCleaningDay.dayType && (
+              <span className="text-[10px] font-extrabold text-[#B8295B]">
+                {resolvedCleaningDay.dayType === 'sat'
+                  ? resolvedCleaningDay.reason === 'holiday_uses_saturday'
+                    ? lang === 'th'
+                      ? 'นักขัตฯ (เสาร์)'
+                      : 'Holiday (Sat)'
+                    : lang === 'th'
+                    ? 'เสาร์นี้!'
+                    : 'Sat!'
+                  : lang === 'th'
+                  ? 'อาทิตย์นี้!'
+                  : 'Sun!'}
               </span>
             )}
           </div>
-          <div className="mt-1 text-[11px] font-semibold text-[#2E6A60] truncate">
-            {currentKid && myMorningChore
-              ? `${myMorningChore.emoji} ${lang === 'th' ? myMorningChore.titleTh : myMorningChore.titleEn}`
-              : lang === 'th'
-              ? `เสร็จแล้ววันนี้ ${kids.filter((k) => k.daily.houseChoreDone).length}/${kids.length} คน`
-              : `Done today: ${kids.filter((k) => k.daily.houseChoreDone).length}/${kids.length}`}
+          <div className="mt-1 text-[11px] font-semibold text-[#8E3557] truncate">
+            {lang === 'th'
+              ? `เดือน ${resolvedCleaningMonth.col.labelTh} · พ.ย.69 – พ.ค.70`
+              : `${resolvedCleaningMonth.col.labelEn} · 14 Zones`}
           </div>
         </button>
 
@@ -184,6 +256,325 @@ export const KidDutySchedulesPanel: React.FC<KidDutySchedulesPanelProps> = ({
           </div>
         </button>
       </div>
+
+      {/* ---------------- TAB 2B: HOLIDAY / WEEKEND 14-ZONE CLEANING ROSTER ---------------- */}
+      {activeTab === 'weekend_cleaning' && (
+        <div className="space-y-3.5">
+          {/* Spotlight Banner */}
+          <div className="rounded-2xl border-2 border-[#F5BDD0] bg-[#FFF6FA] p-4 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-sm sm:text-base font-extrabold text-[#6E1A39]">
+                  🌸 🎀 {lang === 'th' ? 'เวรทำความสะอาดประจำวันหยุด (เขตบริเวณ 14 โซน)' : 'Weekend & Holiday Area Cleaning Roster (14 Zones)'} 🐰
+                </div>
+                <div className="text-xs text-[#8A3B58] mt-0.5">
+                  {lang === 'th'
+                    ? `เดือนปัจจุบัน: ${resolvedCleaningMonth.col.labelTh}${
+                        !resolvedCleaningMonth.isExactMonth ? ' (วนรอบต่อเนื่องจากตาราง พ.ย.-69 – พ.ค.-70)' : ''
+                      } · สถานะวันนี้: ${resolvedCleaningDay.reasonTh}`
+                    : `Month: ${resolvedCleaningMonth.col.labelEn} · Status: ${resolvedCleaningDay.reasonEn}`}
+                </div>
+              </div>
+              <span
+                className={`rounded-xl px-3 py-1.5 text-xs font-extrabold border ${
+                  resolvedCleaningDay.dayType
+                    ? 'bg-[#FFF0B8] border-[#E7C253] text-[#5F4100]'
+                    : 'bg-white border-[#F2C6D6] text-[#7D2948]'
+                }`}
+              >
+                {resolvedCleaningDay.dayType === 'sat'
+                  ? resolvedCleaningDay.reason === 'holiday_uses_saturday'
+                    ? lang === 'th'
+                      ? '📅 วันนี้ใช้วันเสาร์ (วันหยุด)'
+                      : '📅 Holiday: Uses Sat'
+                    : lang === 'th'
+                    ? '📅 วันนี้: เวรวันเสาร์'
+                    : '📅 Today: Saturday'
+                  : resolvedCleaningDay.dayType === 'sun'
+                  ? lang === 'th'
+                    ? '📅 วันนี้: เวรวันอาทิตย์'
+                    : '📅 Today: Sunday'
+                  : lang === 'th'
+                  ? '📚 วันเรียนปกติ (ดูคิววันหยุดล่วงหน้า)'
+                  : '📚 School Day (Weekend Preview)'}
+              </span>
+            </div>
+
+            {(selectedCleaningKid || currentKid) && (
+              <div className="rounded-xl bg-white border border-[#F3CCD9] p-3 text-xs space-y-1.5">
+                <div className="font-extrabold text-[#6E1A39]">
+                  📌{' '}
+                  {lang === 'th'
+                    ? `สรุปหน้าที่ของน้อง${selectedCleaningKid || currentKid?.nickname} (เดือน ${myWeekendSummary.month.col.labelTh}):`
+                    : `${selectedCleaningKid || currentKid?.nickname}'s Duties (${myWeekendSummary.month.col.labelEn}):`}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="rounded-lg bg-[#FFF4F8] border border-[#F6D5E1] px-3 py-2">
+                    <div className="text-[11px] font-bold text-[#8E3253]">
+                      {lang === 'th' ? 'วันเสาร์ (และวันหยุดนักขัตฯ/ปิดเทอม):' : 'Saturday (& Public Holidays):'}
+                    </div>
+                    <div className="font-extrabold text-[#4D1227] mt-0.5">
+                      {myWeekendSummary.satZones.length > 0
+                        ? myWeekendSummary.satZones
+                            .map((z) => `${z.order}. ${z.emoji} ${lang === 'th' ? z.zoneTh : z.zoneEn}`)
+                            .join(' | ')
+                        : lang === 'th'
+                        ? '— ไม่มีรายชื่อในวันเสาร์ —'
+                        : '— None on Saturday —'}
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-[#F5F8FF] border border-[#D4E2FA] px-3 py-2">
+                    <div className="text-[11px] font-bold text-[#2E4D85]">
+                      {lang === 'th' ? 'วันอาทิตย์:' : 'Sunday:'}
+                    </div>
+                    <div className="font-extrabold text-[#1A315E] mt-0.5">
+                      {myWeekendSummary.sunZones.length > 0
+                        ? myWeekendSummary.sunZones
+                            .map((z) => `${z.order}. ${z.emoji} ${lang === 'th' ? z.zoneTh : z.zoneEn}`)
+                            .join(' | ')
+                        : lang === 'th'
+                        ? '— ไม่มีรายชื่อในวันอาทิตย์ —'
+                        : '— None on Sunday —'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Month Toggle & Kid Highlight Filter */}
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setCleaningShowAllMonths(true)}
+                  className={`min-h-[36px] rounded-xl px-3 py-1.5 text-xs font-bold border transition-colors cursor-pointer ${
+                    cleaningShowAllMonths
+                      ? 'bg-[#FAD0DF] border-[#E08CA9] text-[#5C152E]'
+                      : 'bg-white border-[#E4DDD5] text-[#5B4D45] hover:bg-[#FFF5F8]'
+                  }`}
+                >
+                  🗓️ {lang === 'th' ? 'ดูครบ 7 เดือน (พ.ย.-69 – พ.ค.-70)' : 'All 7 Months'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCleaningShowAllMonths(false);
+                    setSelectedCleaningMonthKey(resolvedCleaningMonth.col.key);
+                  }}
+                  className={`min-h-[36px] rounded-xl px-3 py-1.5 text-xs font-bold border transition-colors cursor-pointer ${
+                    !cleaningShowAllMonths
+                      ? 'bg-[#FAD0DF] border-[#E08CA9] text-[#5C152E]'
+                      : 'bg-white border-[#E4DDD5] text-[#5B4D45] hover:bg-[#FFF5F8]'
+                  }`}
+                >
+                  🎯 {lang === 'th' ? `โฟกัสทีละเดือน (${resolvedCleaningMonth.col.labelTh})` : 'Single Month'}
+                </button>
+              </div>
+
+              {!cleaningShowAllMonths && (
+                <div className="flex flex-wrap gap-1">
+                  {CLEANING_MONTH_COLUMNS.map((m) => (
+                    <button
+                      key={m.key}
+                      type="button"
+                      onClick={() => setSelectedCleaningMonthKey(m.key)}
+                      className={`rounded-lg px-2.5 py-1 text-[11px] font-bold border cursor-pointer ${
+                        selectedCleaningMonthKey === m.key
+                          ? 'bg-[#3D322C] border-[#3D322C] text-white'
+                          : 'bg-white border-[#E4DDD5] text-[#5B4D45] hover:bg-[#FFF7FA]'
+                      }`}
+                    >
+                      {lang === 'th' ? m.labelTh : m.labelEn}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+              <span className="font-bold text-[#6E5C52] mr-1">
+                🔎 {lang === 'th' ? 'ไฮไลต์ชื่อน้อง:' : 'Highlight Kid:'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedCleaningKid('')}
+                className={`rounded-lg px-2.5 py-1 font-bold border cursor-pointer ${
+                  selectedCleaningKid === ''
+                    ? 'bg-[#3D322C] border-[#3D322C] text-white'
+                    : 'bg-white border-[#E4DDD5] text-[#5B4D45] hover:bg-[#FAF5EF]'
+                }`}
+              >
+                {lang === 'th' ? 'ดูทั้งหมด' : 'All'}
+              </button>
+              {orderedFilterKids.map((nickname) => (
+                <button
+                  key={`filter-clean-${nickname}`}
+                  type="button"
+                  onClick={() =>
+                    setSelectedCleaningKid((prev) => (prev === nickname ? '' : nickname))
+                  }
+                  className={`rounded-lg px-2.5 py-1 font-bold border cursor-pointer ${
+                    selectedCleaningKid === nickname
+                      ? 'bg-[#E66C85] border-[#C94D68] text-white'
+                      : 'bg-white border-[#F0D5DF] text-[#5E283C] hover:bg-[#FFF0F5]'
+                  }`}
+                >
+                  {currentKid?.nickname === nickname ? '⭐ ' : ''}
+                  {nickname}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Pink-Pastel 14-Zone Spreadsheet Matrix */}
+          <div className="rounded-2xl border-2 border-[#F2B8CB] bg-white overflow-hidden">
+            <div className="bg-[#FAD1DF] px-4 py-2.5 text-center font-extrabold text-sm sm:text-base text-[#3D1D29]">
+              🌸 🎀 {lang === 'th' ? 'เวรทำความสะอาดประจำวันหยุด' : 'Weekend & Holiday Cleaning Duty'} 🐰 🌸
+            </div>
+
+            <div className="overflow-x-auto">
+              <table
+                className={`w-full text-xs text-center border-collapse ${
+                  displayedCleaningMonths.length > 1 ? 'min-w-[980px]' : 'min-w-[460px]'
+                }`}
+              >
+                <thead>
+                  <tr className="bg-[#FBD6E3] text-[#2F1921] border-y border-[#E6B2C3]">
+                    <th
+                      rowSpan={2}
+                      className="py-2 px-2.5 font-extrabold border-r border-[#E6B2C3] w-12"
+                    >
+                      {lang === 'th' ? 'ลำดับ' : '#'}
+                    </th>
+                    <th
+                      rowSpan={2}
+                      className="py-2 px-3 font-extrabold text-left border-r border-[#E6B2C3] sticky left-0 bg-[#FBD6E3] z-10 min-w-[205px]"
+                    >
+                      {lang === 'th' ? 'หน้าที่ / โซนรับผิดชอบ' : 'Zone / Responsibility'}
+                    </th>
+                    {displayedCleaningMonths.map((col) => {
+                      const isThisMonth = col.key === resolvedCleaningMonth.col.key;
+                      return (
+                        <th
+                          key={col.key}
+                          colSpan={2}
+                          className={`py-1.5 px-2 font-extrabold border-r border-[#E6B2C3] ${
+                            isThisMonth ? 'bg-[#F8BED2]' : ''
+                          }`}
+                        >
+                          {isThisMonth ? '📍 ' : ''}
+                          {lang === 'th' ? col.labelTh : col.labelEn}
+                        </th>
+                      );
+                    })}
+                  </tr>
+                  <tr className="bg-[#FCE3EC] text-[#3B2029] border-b border-[#E6B2C3]">
+                    {displayedCleaningMonths.map((col) => {
+                      const isThisMonth = col.key === resolvedCleaningMonth.col.key;
+                      const isSatActive = isThisMonth && resolvedCleaningDay.dayType === 'sat';
+                      const isSunActive = isThisMonth && resolvedCleaningDay.dayType === 'sun';
+                      return (
+                        <React.Fragment key={`sub-${col.key}`}>
+                          <th
+                            className={`py-1.5 px-2 font-bold border-r border-[#EED0DC] ${
+                              isSatActive ? 'bg-[#FFE79E] text-[#5C3F00]' : ''
+                            }`}
+                          >
+                            {isSatActive ? '👉 ' : ''}
+                            {lang === 'th' ? 'เสาร์' : 'Sat'}
+                          </th>
+                          <th
+                            className={`py-1.5 px-2 font-bold border-r border-[#E6B2C3] ${
+                              isSunActive ? 'bg-[#FFE79E] text-[#5C3F00]' : ''
+                            }`}
+                          >
+                            {isSunActive ? '👉 ' : ''}
+                            {lang === 'th' ? 'อาทิตย์' : 'Sun'}
+                          </th>
+                        </React.Fragment>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody>
+                  {WEEKEND_CLEANING_ROSTER.map((row, rowIdx) => {
+                    const rowStriped = rowIdx % 2 === 1 ? 'bg-[#FFF9FB]' : 'bg-white';
+                    return (
+                      <tr
+                        key={`clean-row-${row.order}`}
+                        className={`border-b border-[#F3DCE4] ${rowStriped} hover:bg-[#FFF2F6]`}
+                      >
+                        <td className="py-1.5 px-2 font-bold border-r border-[#F3DCE4] tabular-nums">
+                          {row.order}
+                        </td>
+                        <td
+                          className={`py-1.5 px-3 text-left font-bold border-r border-[#F3DCE4] sticky left-0 z-10 ${rowStriped}`}
+                        >
+                          <span className="mr-1">{row.emoji}</span>
+                          {lang === 'th' ? row.zoneTh : row.zoneEn}
+                        </td>
+                        {displayedCleaningMonths.map((col) => {
+                          const pair = row.assignments[col.key];
+                          const isThisMonth = col.key === resolvedCleaningMonth.col.key;
+                          const isSatActive =
+                            isThisMonth && resolvedCleaningDay.dayType === 'sat';
+                          const isSunActive =
+                            isThisMonth && resolvedCleaningDay.dayType === 'sun';
+                          const highlightName = selectedCleaningKid || '';
+                          const satMatched = Boolean(highlightName && pair.sat === highlightName);
+                          const sunMatched = Boolean(highlightName && pair.sun === highlightName);
+
+                          return (
+                            <React.Fragment key={`${row.order}-${col.key}`}>
+                              <td
+                                className={`py-1.5 px-2 whitespace-nowrap border-r border-[#F6E4EA] ${
+                                  satMatched
+                                    ? 'bg-[#FAD2E0] text-[#5C0E2B] font-extrabold'
+                                    : isSatActive
+                                    ? 'bg-[#FFF6CC] text-[#4E3800] font-bold'
+                                    : ''
+                                }`}
+                              >
+                                {satMatched ? '⭐ ' : ''}
+                                {pair.sat}
+                              </td>
+                              <td
+                                className={`py-1.5 px-2 whitespace-nowrap border-r border-[#F0CCD8] ${
+                                  sunMatched
+                                    ? 'bg-[#FAD2E0] text-[#5C0E2B] font-extrabold'
+                                    : isSunActive
+                                    ? 'bg-[#FFF6CC] text-[#4E3800] font-bold'
+                                    : ''
+                                }`}
+                              >
+                                {sunMatched ? '⭐ ' : ''}
+                                {pair.sun}
+                              </td>
+                            </React.Fragment>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Bottom Rules (Verbatim from official sheet) */}
+            <div className="bg-[#FAD1DF] px-4 py-1.5 text-center font-extrabold text-xs sm:text-sm text-[#3D1D29] border-t border-[#E6B2C3]">
+              🎀 {lang === 'th' ? 'หมายเหตุ' : 'Notes'} 🐰
+            </div>
+            <div className="bg-[#FFF4BD] px-4 py-2 text-center text-xs sm:text-sm font-extrabold text-[#3D2E00] border-t border-[#F2E09C]">
+              {lang === 'th' ? WEEKEND_CLEANING_NOTE_HOLIDAY : WEEKEND_CLEANING_NOTE_HOLIDAY_EN}
+            </div>
+            <div className="bg-white px-4 py-2 text-center text-xs sm:text-sm font-extrabold text-[#D01F52] border-t border-[#F5DCE4]">
+              {lang === 'th' ? WEEKEND_CLEANING_NOTE_EXCUSES : WEEKEND_CLEANING_NOTE_EXCUSES_EN}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ---------------- TAB 1: WEEKLY TRASH DUTY ---------------- */}
       {activeTab === 'trash' && (
@@ -457,104 +848,6 @@ export const KidDutySchedulesPanel: React.FC<KidDutySchedulesPanelProps> = ({
               </div>
             </div>
           )}
-        </div>
-      )}
-
-      {/* ---------------- TAB 2: MORNING COMPOUND / HOUSE ZONE DUTY ---------------- */}
-      {activeTab === 'morning_zone' && (
-        <div className="space-y-3">
-          <div className="rounded-2xl border border-[#BCE6DE] bg-[#F2FBF9] px-4 py-3 text-xs text-[#194E46] space-y-1">
-            <div className="font-extrabold text-sm">
-              🧹 {lang === 'th' ? 'ตารางเวรทำเขตบริเวณตอนเช้า (หมุนเวียนประจำวัน)' : 'Morning Compound & House Zone Chores'}
-            </div>
-            <p>
-              {lang === 'th'
-                ? 'น้องๆ ช่วยกันดูแลความสะอาดเขตบริเวณต่างๆ ตอนเช้าตามรายการด้านล่าง ทำเสร็จกดรับ +5 ⭐ ได้ทุกวันค่ะ'
-                : 'Daily rotating compound & house zone assignments (+5 stars upon completion).'}
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-[#E5DDD4] bg-white overflow-x-auto">
-            <table className="w-full text-xs text-left border-collapse min-w-[540px]">
-              <thead>
-                <tr className="bg-[#EEF9F6] border-b border-[#CFECE6] text-[#1B5149]">
-                  <th className="py-2.5 px-3 font-extrabold">{lang === 'th' ? 'น้อง' : 'Kid'}</th>
-                  <th className="py-2.5 px-3 font-extrabold">{lang === 'th' ? 'กลุ่ม' : 'Group'}</th>
-                  <th className="py-2.5 px-3 font-extrabold">{lang === 'th' ? 'เขตบริเวณที่รับผิดชอบวันนี้' : "Today's Assigned Zone"}</th>
-                  <th className="py-2.5 px-3 text-center font-extrabold">{lang === 'th' ? 'สถานะวันนี้' : 'Status'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedKidsForView.map((k) => {
-                  const chore = getDailyHouseChoreForKid(k, kids, now);
-                  const isMe = currentKid?.id === k.id;
-                  return (
-                    <tr
-                      key={k.id}
-                      className={`border-b border-[#F3EEE7] ${
-                        isMe ? 'bg-[#FFFBE8] font-bold' : 'hover:bg-[#FFFDF9]'
-                      }`}
-                    >
-                      <td className="py-2 px-3 whitespace-nowrap font-bold">
-                        {isMe ? '⭐ ' : ''}
-                        {k.emoji} {k.nickname}
-                      </td>
-                      <td className="py-2 px-3 text-[#6E5C52] whitespace-nowrap">
-                        {k.group === 1 ? 'น้องเล็ก' : k.group === 2 ? 'ประถม/มัธยม' : 'พี่ใหญ่'}
-                      </td>
-                      <td className="py-2 px-3">
-                        <div className="font-semibold text-[#2E3836]">
-                          {chore.emoji} {lang === 'th' ? chore.titleTh : chore.titleEn}
-                        </div>
-                        <div className="text-[10px] text-[#75665D]">
-                          {chore.id === 'custom'
-                            ? lang === 'th'
-                              ? '📌 พี่เลี้ยงมอบหมายเขตพิเศษ'
-                              : '📌 Custom Staff Assignment'
-                            : lang === 'th'
-                            ? chore.detailTh
-                            : chore.detailEn}
-                        </div>
-                      </td>
-                      <td className="py-2 px-3 text-center whitespace-nowrap">
-                        <span
-                          className={`inline-block rounded-lg px-2 py-0.5 text-[11px] font-bold ${
-                            k.daily.houseChoreDone
-                              ? 'bg-[#DDF7EF] text-[#175B4B]'
-                              : 'bg-[#FFF3E0] text-[#804C13]'
-                          }`}
-                        >
-                          {k.daily.houseChoreDone
-                            ? lang === 'th'
-                              ? '✅ เสร็จแล้ว'
-                              : '✅ Done'
-                            : lang === 'th'
-                            ? '⏳ รอทำ'
-                            : '⏳ Pending'}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-            {HOUSE_CHORES_POOL.map((zone) => (
-              <div
-                key={zone.id}
-                className="rounded-xl border border-[#EAE1D8] bg-[#FFFDF9] p-2.5 text-xs"
-              >
-                <div className="font-bold text-[#3D322C]">
-                  {zone.emoji} {lang === 'th' ? zone.titleTh : zone.titleEn}
-                </div>
-                <div className="text-[11px] text-[#7B695F] mt-0.5">
-                  {lang === 'th' ? zone.detailTh : zone.detailEn}
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
       )}
 

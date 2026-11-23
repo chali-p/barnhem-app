@@ -1,6 +1,6 @@
 export type Language = 'th' | 'en';
 
-export type AppMode = 'magic_door' | 'staff' | 'chef' | 'tutor' | 'manager' | 'creator';
+export type AppMode = 'magic_door' | 'staff' | 'chef' | 'tutor' | 'manager' | 'creator' | 'portal';
 
 export type MemberRole = 'manager' | 'staff' | 'chef' | 'tutor' | 'kid';
 
@@ -232,6 +232,8 @@ export interface Member {
   kitchenDuty: KitchenDutyAssignment;
   daily: DailyProgress;
   starHistory: StarTransaction[];
+  linkedEmail?: string;
+  emailLoginBonusClaimed?: boolean;
 }
 
 export interface SickReport {
@@ -467,6 +469,28 @@ export interface AppSettings {
   early15MinBonusStars?: number; // Default 1
   starToCoinStars?: number; // Default 30 (editable by creator)
   starToCoinThb?: number; // Default 5 (editable by creator)
+  lastWeeklyClearedAt?: string | null;
+  useOwnStorageOnly?: boolean; // True = store only locally + org's own Google Sheet/Drive (0 bytes on central Firestore)
+  enableCoinsAndPiggyBank?: boolean; // Default false: keep coins & piggy bank off on kid screens until Creator enables it
+  organizationPreset?: OrganizationPresetId;
+  automationAddons?: AutomationAddonId[];
+}
+
+export type WeeklyActivityStatus = 'on_time' | 'late' | 'absent' | 'sick_leave' | 'other';
+
+export interface WeeklyActivityLog {
+  id: string;
+  kidId: string;
+  kidNickname: string;
+  kidEmoji: string;
+  kidGroup?: KidGroup;
+  dateKey: string;
+  timeText: string;
+  actionLabel: string;
+  status: WeeklyActivityStatus;
+  note?: string;
+  recordedBy: string;
+  createdAt: string;
 }
 
 export interface AppState {
@@ -487,6 +511,7 @@ export interface AppState {
   friendVisits: FriendVisitRequest[];
   goldenPoolLogs?: GoldenPoolLog[];
   staffLeaves?: StaffLeaveRecord[];
+  weeklyActivityLogs?: WeeklyActivityLog[];
   settings: AppSettings;
   lastSyncedAt: string | null;
 }
@@ -500,4 +525,58 @@ export interface ModalAlertPayload {
   tone?: 'pink' | 'mint' | 'blue' | 'yellow' | 'lavender' | 'peach';
   confirmLabel?: string;
   onConfirm?: () => void;
+}
+
+export type RegistrationApplicationType = 'open_organization' | 'apply_staff';
+export type RegistrationStatus = 'pending' | 'interview' | 'approved' | 'rejected';
+
+export type OrganizationPresetId =
+  | 'autonomous_minimart'
+  | 'kindergarten_classroom'
+  | 'lean_sme_shop'
+  | 'foundation_care'
+  | 'custom_automation';
+
+export type AutomationAddonId =
+  | 'receipt_door_gate'
+  | 'self_checkout_qr'
+  | 'auto_shift_attendance'
+  | 'star_loyalty_minimart'
+  | 'smart_stock_alerts'
+  | 'auto_sheet_line_report';
+
+export interface PlatformRegistration {
+  uid: string;
+  email: string;
+  applicantName: string;
+  nickname: string;
+  organizationName: string;
+  applicationType: RegistrationApplicationType;
+  organizationPreset?: OrganizationPresetId;
+  automationAddons?: AutomationAddonId[];
+  contactInfo: string;
+  experienceOrSize: string;
+  notes: string;
+  status: RegistrationStatus;
+  assignedOrgId: string;
+  adminNote: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ActiveTenantContext {
+  orgId: string;
+  orgName: string;
+  ownerName: string;
+  ownerUid: string;
+  ownerEmail: string;
+}
+
+export interface LinkedKidSession {
+  orgId: string;
+  memberDocId: string;
+  memberId: string;
+  email: string;
+  ownerUid: string;
+  sharedEmails: string[];
 }

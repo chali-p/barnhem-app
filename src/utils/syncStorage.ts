@@ -100,6 +100,7 @@ export function loadAppState(): AppState {
       friendVisits: Array.isArray(parsed.friendVisits) ? parsed.friendVisits : [],
       goldenPoolLogs: Array.isArray(parsed.goldenPoolLogs) ? parsed.goldenPoolLogs : [],
       staffLeaves: Array.isArray(parsed.staffLeaves) ? parsed.staffLeaves : [],
+      weeklyActivityLogs: Array.isArray(parsed.weeklyActivityLogs) ? parsed.weeklyActivityLogs : [],
       settings: {
         ...INITIAL_APP_STATE.settings,
         ...(parsed.settings ?? {}),
@@ -160,3 +161,54 @@ export function downloadJsonBackup(state: AppState): void {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+export const GOOGLE_APPS_SCRIPT_TEMPLATE = `function doPost(e) {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName('Logs') || ss.insertSheet('Logs');
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow(['เวลาซิงค์', 'เหตุการณ์', 'สมาชิกทั้งหมด', 'จำนวนเด็ก', 'รายงานป่วย', 'ข้อมูลเต็ม (JSON)']);
+    }
+    var body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    var sum = body.summary || {};
+    sheet.appendRow([
+      body.syncedAt || new Date().toISOString(),
+      body.event || 'Sync',
+      sum.totalMembers || 0,
+      sum.totalKids || 0,
+      sum.activeSickCases || 0,
+      JSON.stringify(body.data || {})
+    ]);
+    return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ ok: false, error: String(err) })).setMimeType(ContentService.MimeType.JSON);
+  }
+}`;
+
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+  let copied = false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    }
+  } catch {
+    copied = false;
+  }
+  if (!copied) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      copied = document.execCommand('copy');
+    } catch {
+      copied = false;
+    }
+    document.body.removeChild(textarea);
+  }
+  return copied;
+}
+

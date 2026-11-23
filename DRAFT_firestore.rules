@@ -39,14 +39,25 @@ service cloud.firestore {
       );
     }
 
+    function isExternalOrgDocId(docId) {
+      return docId.matches('^org_.*');
+    }
+
     function isDocSharedWithUser(data) {
       return isVerified() && (
         data.ownerUid == request.auth.uid ||
         (
           data.sharedEmails is list &&
-          data.sharedEmails.size() <= 20 &&
+          data.sharedEmails.size() <= 80 &&
           request.auth.token.email in data.sharedEmails
         )
+      );
+    }
+
+    function canListSharedDoc(data) {
+      return isVerified() && (
+        data.ownerUid == request.auth.uid ||
+        request.auth.token.email in data.sharedEmails
       );
     }
 
@@ -55,7 +66,7 @@ service cloud.firestore {
         data.ownerUid.size() >= 1 &&
         data.ownerUid.size() <= 128 &&
         data.sharedEmails is list &&
-        data.sharedEmails.size() <= 20 &&
+        data.sharedEmails.size() <= 80 &&
         (data.sharedEmails.size() == 0 || data.sharedEmails[0] is string) &&
         data.updatedAt == request.time;
     }
@@ -69,19 +80,19 @@ service cloud.firestore {
         data.keys().hasOnly([
           'id', 'role', 'group', 'nickname', 'fullName', 'gender', 'pin', 'emoji', 'stars',
           'personalDriveUrl', 'restrictedDocsUrl', 'activeCoverStage', 'unlockedCoverStages',
-          'collectedSceneItems', 'ownedShopItemIds', 'avatar', 'mySpace', 'healthProfile',
-          'streak', 'customHouseChore', 'penalty', 'kitchenDuty', 'daily', 'starHistory',
-          'ownerUid', 'sharedEmails', 'updatedAt'
+          'collectedSceneItems', 'ownedShopItemIds', 'avatar', 'pet', 'mySpace', 'healthProfile',
+          'streak', 'customHouseChore', 'allowance', 'penalty', 'kitchenDuty', 'daily', 'starHistory',
+          'linkedEmail', 'emailLoginBonusClaimed', 'ownerUid', 'sharedEmails', 'updatedAt'
         ]) &&
         isValidId(data.id) &&
-        data.role in ['manager', 'staff', 'chef', 'kid'] &&
+        data.role in ['manager', 'staff', 'chef', 'tutor', 'kid'] &&
         data.nickname is string && data.nickname.size() >= 1 && data.nickname.size() <= 64 &&
         data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 140 &&
         data.gender in ['M', 'F'] &&
         data.pin is string && data.pin.size() >= 1 && data.pin.size() <= 8 &&
         data.emoji is string && data.emoji.size() >= 1 && data.emoji.size() <= 16 &&
         data.stars is number && data.stars >= 0 &&
-        (!('group' in data) || (data.group is number && data.group >= 1 && data.group <= 3)) &&
+        (!('group' in data) || data.group == null || (data.group is number && data.group >= 1 && data.group <= 3)) &&
         (!('personalDriveUrl' in data) || (data.personalDriveUrl is string && data.personalDriveUrl.size() <= 500)) &&
         (!('restrictedDocsUrl' in data) || (data.restrictedDocsUrl is string && data.restrictedDocsUrl.size() <= 500)) &&
         (!('activeCoverStage' in data) || (data.activeCoverStage is number && data.activeCoverStage >= 1 && data.activeCoverStage <= 7)) &&
@@ -89,14 +100,18 @@ service cloud.firestore {
         (!('collectedSceneItems' in data) || (data.collectedSceneItems is list && data.collectedSceneItems.size() <= 100)) &&
         (!('ownedShopItemIds' in data) || (data.ownedShopItemIds is list && data.ownedShopItemIds.size() <= 200)) &&
         (!('avatar' in data) || data.avatar is map) &&
+        (!('pet' in data) || data.pet == null || data.pet is map) &&
         (!('mySpace' in data) || data.mySpace is map) &&
         (!('healthProfile' in data) || data.healthProfile is map) &&
         (!('streak' in data) || data.streak is map) &&
-        (!('customHouseChore' in data) || (data.customHouseChore is string && data.customHouseChore.size() <= 160)) &&
+        (!('customHouseChore' in data) || data.customHouseChore == null || (data.customHouseChore is string && data.customHouseChore.size() <= 160)) &&
+        (!('allowance' in data) || data.allowance == null || data.allowance is map) &&
         (!('penalty' in data) || data.penalty is map) &&
         (!('kitchenDuty' in data) || data.kitchenDuty is map) &&
         (!('daily' in data) || data.daily is map) &&
         (!('starHistory' in data) || (data.starHistory is list && data.starHistory.size() <= 120)) &&
+        (!('linkedEmail' in data) || data.linkedEmail == null || (data.linkedEmail is string && data.linkedEmail.size() <= 200)) &&
+        (!('emailLoginBonusClaimed' in data) || data.emailLoginBonusClaimed is bool) &&
         isValidSharedMetadata(data);
     }
 
@@ -116,7 +131,11 @@ service cloud.firestore {
           'supply_request',
           'kindness_card',
           'deed_redemption',
-          'shop_item'
+          'shop_item',
+          'friend_visit',
+          'golden_pool_log',
+          'staff_leave',
+          'weekly_activity_log'
         ] &&
         data.payload is map &&
         data.payload.keys().size() <= 40 &&
@@ -127,7 +146,11 @@ service cloud.firestore {
       return data.keys().hasAll(['id', 'creatorPins', 'isPublicHolidayToday', 'ownerUid', 'sharedEmails', 'updatedAt']) &&
         data.keys().hasOnly([
           'id', 'syncWebhookUrl', 'returnHomeDriveUrl', 'creatorPins',
-          'isPublicHolidayToday', 'simulatedTimeIso', 'ownerUid', 'sharedEmails', 'updatedAt'
+          'isPublicHolidayToday', 'simulatedTimeIso', 'tutorMaxStarsPerKidPerDay',
+          'activeFestivalOverride', 'dailyAllowanceThb', 'schoolDaysPerWeek',
+          'early15MinBonusStars', 'starToCoinStars', 'starToCoinThb', 'lastWeeklyClearedAt',
+          'useOwnStorageOnly', 'enableCoinsAndPiggyBank', 'organizationPreset', 'automationAddons',
+          'ownerUid', 'sharedEmails', 'updatedAt'
         ]) &&
         isValidId(data.id) &&
         (!('syncWebhookUrl' in data) || (data.syncWebhookUrl is string && data.syncWebhookUrl.size() <= 500)) &&
@@ -136,6 +159,18 @@ service cloud.firestore {
         (data.creatorPins.size() == 0 || data.creatorPins[0] is string) &&
         data.isPublicHolidayToday is bool &&
         (!('simulatedTimeIso' in data) || data.simulatedTimeIso == null || (data.simulatedTimeIso is string && data.simulatedTimeIso.size() <= 64)) &&
+        (!('tutorMaxStarsPerKidPerDay' in data) || (data.tutorMaxStarsPerKidPerDay is number && data.tutorMaxStarsPerKidPerDay >= 0 && data.tutorMaxStarsPerKidPerDay <= 10)) &&
+        (!('activeFestivalOverride' in data) || (data.activeFestivalOverride is string && data.activeFestivalOverride.size() <= 40)) &&
+        (!('dailyAllowanceThb' in data) || (data.dailyAllowanceThb is number && data.dailyAllowanceThb >= 10 && data.dailyAllowanceThb <= 500)) &&
+        (!('schoolDaysPerWeek' in data) || (data.schoolDaysPerWeek is number && data.schoolDaysPerWeek >= 1 && data.schoolDaysPerWeek <= 7)) &&
+        (!('early15MinBonusStars' in data) || (data.early15MinBonusStars is number && data.early15MinBonusStars >= 0 && data.early15MinBonusStars <= 20)) &&
+        (!('starToCoinStars' in data) || (data.starToCoinStars is number && data.starToCoinStars >= 1 && data.starToCoinStars <= 500)) &&
+        (!('starToCoinThb' in data) || (data.starToCoinThb is number && data.starToCoinThb >= 1 && data.starToCoinThb <= 200)) &&
+        (!('lastWeeklyClearedAt' in data) || data.lastWeeklyClearedAt == null || (data.lastWeeklyClearedAt is string && data.lastWeeklyClearedAt.size() <= 64)) &&
+        (!('useOwnStorageOnly' in data) || data.useOwnStorageOnly is bool) &&
+        (!('enableCoinsAndPiggyBank' in data) || data.enableCoinsAndPiggyBank is bool) &&
+        (!('organizationPreset' in data) || (data.organizationPreset is string && data.organizationPreset.size() <= 40)) &&
+        (!('automationAddons' in data) || (data.automationAddons is list && data.automationAddons.size() <= 10 && (data.automationAddons.size() == 0 || data.automationAddons[0] is string))) &&
         isValidSharedMetadata(data);
     }
 
@@ -147,43 +182,94 @@ service cloud.firestore {
         data.updatedAt == request.time;
     }
 
+    function isValidRegistration(data) {
+      return data.keys().hasAll([
+          'uid', 'email', 'applicantName', 'nickname', 'organizationName',
+          'applicationType', 'contactInfo', 'experienceOrSize', 'notes',
+          'status', 'assignedOrgId', 'adminNote', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'uid', 'email', 'applicantName', 'nickname', 'organizationName',
+          'applicationType', 'organizationPreset', 'automationAddons',
+          'contactInfo', 'experienceOrSize', 'notes',
+          'status', 'assignedOrgId', 'adminNote', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.uid) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
+        data.applicantName is string && data.applicantName.size() >= 1 && data.applicantName.size() <= 120 &&
+        data.nickname is string && data.nickname.size() >= 1 && data.nickname.size() <= 64 &&
+        data.organizationName is string && data.organizationName.size() >= 1 && data.organizationName.size() <= 140 &&
+        data.applicationType in ['open_organization', 'apply_staff'] &&
+        (!('organizationPreset' in data) || data.organizationPreset in [
+          'autonomous_minimart', 'kindergarten_classroom', 'lean_sme_shop', 'foundation_care', 'custom_automation'
+        ]) &&
+        (!('automationAddons' in data) || (data.automationAddons is list && data.automationAddons.size() <= 10 && (data.automationAddons.size() == 0 || data.automationAddons[0] is string))) &&
+        data.contactInfo is string && data.contactInfo.size() >= 1 && data.contactInfo.size() <= 160 &&
+        data.experienceOrSize is string && data.experienceOrSize.size() <= 240 &&
+        data.notes is string && data.notes.size() <= 600 &&
+        data.status in ['pending', 'interview', 'approved', 'rejected'] &&
+        isValidId(data.assignedOrgId) &&
+        data.adminNote is string && data.adminNote.size() <= 500 &&
+        data.createdAt is timestamp &&
+        data.updatedAt == request.time;
+    }
+
     // 3. Collection Rules
     match /members/{memberId} {
-      allow get: if isValidId(memberId) && (isAdmin() || isDocSharedWithUser(existing()));
-      allow list: if isMasterAdmin() || isDocSharedWithUser(existing());
+      allow get: if isValidId(memberId) && (
+        (!isExternalOrgDocId(memberId) && isAdmin()) ||
+        isDocSharedWithUser(existing())
+      );
+      allow list: if canListSharedDoc(existing());
       allow create: if isValidId(memberId) &&
         isVerified() &&
         isValidMember(incoming()) &&
         incoming().id == memberId &&
-        (isAdmin() || incoming().ownerUid == request.auth.uid);
+        ((!isExternalOrgDocId(memberId) && isAdmin()) || incoming().ownerUid == request.auth.uid);
       allow update: if isValidId(memberId) &&
         isVerified() &&
         isValidMember(incoming()) &&
         incoming().id == existing().id &&
         incoming().ownerUid == existing().ownerUid &&
         (
-          isAdmin() ||
+          (!isExternalOrgDocId(memberId) && isAdmin()) ||
           (
             isDocSharedWithUser(existing()) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'stars', 'activeCoverStage', 'unlockedCoverStages', 'collectedSceneItems',
-              'ownedShopItemIds', 'avatar', 'mySpace', 'healthProfile', 'streak',
-              'customHouseChore', 'penalty', 'kitchenDuty', 'daily', 'starHistory',
-              'pin', 'updatedAt'
+              'ownedShopItemIds', 'avatar', 'pet', 'mySpace', 'healthProfile', 'streak',
+              'customHouseChore', 'allowance', 'penalty', 'kitchenDuty', 'daily', 'starHistory',
+              'pin', 'linkedEmail', 'emailLoginBonusClaimed', 'updatedAt'
+            ])
+          ) ||
+          (
+            existing().ownerUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'nickname', 'fullName', 'group', 'emoji', 'gender',
+              'stars', 'activeCoverStage', 'unlockedCoverStages', 'collectedSceneItems',
+              'ownedShopItemIds', 'avatar', 'pet', 'mySpace', 'healthProfile', 'streak',
+              'customHouseChore', 'allowance', 'penalty', 'kitchenDuty', 'daily', 'starHistory',
+              'pin', 'linkedEmail', 'emailLoginBonusClaimed', 'sharedEmails', 'updatedAt'
             ])
           )
         );
-      allow delete: if isValidId(memberId) && isAdmin();
+      allow delete: if isValidId(memberId) && (
+        (!isExternalOrgDocId(memberId) && isAdmin()) ||
+        (isVerified() && existing().ownerUid == request.auth.uid)
+      );
     }
 
     match /records/{recordId} {
-      allow get: if isValidId(recordId) && (isAdmin() || isDocSharedWithUser(existing()));
-      allow list: if isMasterAdmin() || isDocSharedWithUser(existing());
+      allow get: if isValidId(recordId) && (
+        (!isExternalOrgDocId(recordId) && isAdmin()) ||
+        isDocSharedWithUser(existing())
+      );
+      allow list: if canListSharedDoc(existing());
       allow create: if isValidId(recordId) &&
         isVerified() &&
         isValidRecord(incoming()) &&
         incoming().id == recordId &&
-        (isAdmin() || incoming().ownerUid == request.auth.uid);
+        ((!isExternalOrgDocId(recordId) && isAdmin()) || incoming().ownerUid == request.auth.uid);
       allow update: if isValidId(recordId) &&
         isVerified() &&
         isValidRecord(incoming()) &&
@@ -191,45 +277,95 @@ service cloud.firestore {
         incoming().recordType == existing().recordType &&
         incoming().ownerUid == existing().ownerUid &&
         (
-          isAdmin() ||
+          (!isExternalOrgDocId(recordId) && isAdmin()) ||
           (
             isDocSharedWithUser(existing()) &&
             incoming().diff(existing()).affectedKeys().hasOnly(['payload', 'sharedEmails', 'updatedAt'])
           )
         );
-      allow delete: if isValidId(recordId) && (isAdmin() || isDocSharedWithUser(existing()));
+      allow delete: if isValidId(recordId) && (
+        (!isExternalOrgDocId(recordId) && isAdmin()) ||
+        isDocSharedWithUser(existing())
+      );
     }
 
     match /config/{configId} {
-      allow get: if isValidId(configId) && (isAdmin() || isDocSharedWithUser(existing()));
-      allow list: if isMasterAdmin() || isDocSharedWithUser(existing());
+      allow get: if isValidId(configId) && (
+        (!isExternalOrgDocId(configId) && isAdmin()) ||
+        isDocSharedWithUser(existing())
+      );
+      allow list: if canListSharedDoc(existing());
       allow create: if isValidId(configId) &&
         isVerified() &&
         isValidConfig(incoming()) &&
         incoming().id == configId &&
-        (isAdmin() || incoming().ownerUid == request.auth.uid);
+        ((!isExternalOrgDocId(configId) && isAdmin()) || incoming().ownerUid == request.auth.uid);
       allow update: if isValidId(configId) &&
         isVerified() &&
         isValidConfig(incoming()) &&
         incoming().id == existing().id &&
         incoming().ownerUid == existing().ownerUid &&
         (
-          isAdmin() ||
+          (!isExternalOrgDocId(configId) && isAdmin()) ||
           (
             isDocSharedWithUser(existing()) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'syncWebhookUrl', 'returnHomeDriveUrl', 'creatorPins',
-              'isPublicHolidayToday', 'simulatedTimeIso', 'sharedEmails', 'updatedAt'
+              'isPublicHolidayToday', 'simulatedTimeIso', 'tutorMaxStarsPerKidPerDay',
+              'activeFestivalOverride', 'dailyAllowanceThb', 'schoolDaysPerWeek',
+              'early15MinBonusStars', 'starToCoinStars', 'starToCoinThb', 'lastWeeklyClearedAt',
+              'useOwnStorageOnly', 'enableCoinsAndPiggyBank', 'organizationPreset', 'automationAddons',
+              'sharedEmails', 'updatedAt'
             ])
           )
         );
-      allow delete: if isValidId(configId) && isMasterAdmin();
+      allow delete: if isValidId(configId) && !isExternalOrgDocId(configId) && isMasterAdmin();
     }
 
     match /admins/{uid} {
       allow get: if isValidId(uid) && (isMasterAdmin() || (isVerified() && request.auth.uid == uid));
       allow list: if isMasterAdmin();
       allow create, update: if isValidId(uid) && isMasterAdmin() && isValidAdmin(incoming()) && incoming().uid == uid;
+      allow delete: if isValidId(uid) && isMasterAdmin();
+    }
+
+    match /registrations/{uid} {
+      allow get: if isValidId(uid) && (isMasterAdmin() || (isVerified() && request.auth.uid == uid));
+      allow list: if isMasterAdmin();
+      allow create: if isValidId(uid) &&
+        isVerified() &&
+        isValidRegistration(incoming()) &&
+        incoming().uid == uid &&
+        incoming().uid == request.auth.uid &&
+        incoming().email == request.auth.token.email &&
+        incoming().status == 'pending' &&
+        incoming().adminNote == '' &&
+        incoming().assignedOrgId == 'org_' + uid &&
+        incoming().createdAt == request.time;
+      allow update: if isValidId(uid) &&
+        isVerified() &&
+        isValidRegistration(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().email == existing().email &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          (
+            isMasterAdmin() &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'assignedOrgId', 'adminNote', 'updatedAt'])
+          ) ||
+          (
+            request.auth.uid == uid &&
+            existing().status in ['pending', 'interview'] &&
+            incoming().status == existing().status &&
+            incoming().assignedOrgId == existing().assignedOrgId &&
+            incoming().adminNote == existing().adminNote &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'applicantName', 'nickname', 'organizationName',
+              'applicationType', 'organizationPreset', 'automationAddons',
+              'contactInfo', 'experienceOrSize', 'notes', 'updatedAt'
+            ])
+          )
+        );
       allow delete: if isValidId(uid) && isMasterAdmin();
     }
 

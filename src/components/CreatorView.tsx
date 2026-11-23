@@ -1,5 +1,5 @@
 import { User } from 'firebase/auth';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Announcement,
   AppState,
@@ -30,10 +30,16 @@ import {
   usePinGuard,
 } from '../utils/pinGuard';
 import { getDateKey } from '../utils/timeRules';
-import { downloadJsonBackup } from '../utils/syncStorage';
+import {
+  copyTextToClipboard,
+  downloadJsonBackup,
+  GOOGLE_APPS_SCRIPT_TEMPLATE,
+} from '../utils/syncStorage';
 import { CareCommunityPanel } from './CareCommunityPanel';
 import { PinPadModal } from './CenteredAlertModal';
 import { CloudSyncBanner } from './CloudSyncBanner';
+import { AdminRegistrationsPanel } from './PlatformPortalView';
+import { MASTER_ADMIN_EMAIL } from '../services/firestoreSync';
 import { QrBarcodeSheet } from './QrBarcodeSheet';
 import { StaffLeavePanel } from './StaffLeavePanel';
 import { StaffRosterPanel } from './StaffRosterPanel';
@@ -78,6 +84,7 @@ interface CreatorViewProps {
   onAcknowledgeLeave: (leaveId: string, byName: string) => void;
   onCancelLeave: (leaveId: string) => void;
   onShowAlert: (payload: ModalAlertPayload) => void;
+  isExternalTenant?: boolean;
 }
 
 export const CreatorView: React.FC<CreatorViewProps> = ({
@@ -120,6 +127,7 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
   onAcknowledgeLeave,
   onCancelLeave,
   onShowAlert,
+  isExternalTenant = false,
 }) => {
   const [pinInput, setPinInput] = useState('');
   const [pinModalOpen, setPinModalOpen] = useState(false);
@@ -135,6 +143,15 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
   // Settings State
   const [webhookInput, setWebhookInput] = useState(state.settings.syncWebhookUrl);
   const [returnDriveInput, setReturnDriveInput] = useState(state.settings.returnHomeDriveUrl);
+  const [showAppsScriptHelper, setShowAppsScriptHelper] = useState(false);
+
+  useEffect(() => {
+    setWebhookInput(state.settings.syncWebhookUrl);
+  }, [state.settings.syncWebhookUrl]);
+
+  useEffect(() => {
+    setReturnDriveInput(state.settings.returnHomeDriveUrl);
+  }, [state.settings.returnHomeDriveUrl]);
   const [piggyCoinsDrafts, setPiggyCoinsDrafts] = useState<Record<string, string>>({});
   const [piggyDailyDrafts, setPiggyDailyDrafts] = useState<Record<string, string>>({});
   const [piggyKidSearch, setPiggyKidSearch] = useState('');
@@ -149,6 +166,7 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
     | 'piggyKids'
     | 'community'
     | 'staffLeave'
+    | 'registrations'
     | 'pins'
     | 'shopAdd'
     | 'shopList'
@@ -161,6 +179,7 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
     'piggyKids',
     'community',
     'staffLeave',
+    'registrations',
     'pins',
     'shopAdd',
     'shopList',
@@ -571,6 +590,59 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
             </p>
           </div>
           {renderSectionToggleButton('piggyRates', 'bg-[#FFF3B0] hover:bg-[#FDE68A] border-[#E8C84A] text-[#5A4208]')}
+        </div>
+
+        {/* Kid-facing Coins & Piggy Bank Master Switch (preserves all settings & balances) */}
+        <div
+          className={`rounded-2xl border-2 px-4 py-3 flex flex-wrap items-center justify-between gap-3 ${
+            state.settings.enableCoinsAndPiggyBank
+              ? 'border-[#8AD1BA] bg-[#E8FAF3]'
+              : 'border-[#F4C46A] bg-[#FFF5D6]'
+          }`}
+        >
+          <div className="space-y-0.5 text-xs">
+            <div className="font-extrabold text-[#3D322C] flex flex-wrap items-center gap-2">
+              <span>
+                {state.settings.enableCoinsAndPiggyBank
+                  ? lang === 'th'
+                    ? '🟢 สถานะฝั่งน้อง: เปิดใช้ระบบเหรียญ & กระปุกหมูอยู่'
+                    : '🟢 Kid Screen Status: Coins & Piggy Bank ON'
+                  : lang === 'th'
+                  ? '⏸️ สถานะฝั่งน้อง: ปิดเรื่องเหรียญชั่วคราว (เปิดใช้เฉพาะ ⭐ ดาว)'
+                  : '⏸️ Kid Screen Status: Coins & Piggy Bank OFF (Stars ⭐ Only)'}
+              </span>
+            </div>
+            <p className="text-[11px] text-[#6B5749]">
+              {lang === 'th'
+                ? state.settings.enableCoinsAndPiggyBank
+                  ? 'น้องๆ จะเห็นกระปุกหมูสีชมพู/สีทอง และปุ่มแลกดาวเป็นเหรียญในหน้าร้านค้าตามปกติ'
+                  : 'ซ่อนกระปุกหมูและการแลก/หักเหรียญฝั่งน้องชั่วคราว โดยยังเก็บยอดเงิน อัตราแลกดาว และประวัติทั้งหมดไว้ในหน้าผู้สร้างสูงสุดครบถ้วน พร้อมเปิดใช้เมื่อต้องการค่ะ'
+                : state.settings.enableCoinsAndPiggyBank
+                ? 'Kids can see Pink/Golden Piggy Banks and Star-to-Coin conversion.'
+                : 'Piggy banks and coin exchanges are hidden on kid screens while all rates and balances stay safely preserved here until you turn them ON.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              onUpdateSettings({
+                enableCoinsAndPiggyBank: !Boolean(state.settings.enableCoinsAndPiggyBank),
+              })
+            }
+            className={`rounded-xl px-3.5 py-2 text-xs font-extrabold transition-colors cursor-pointer shrink-0 ${
+              state.settings.enableCoinsAndPiggyBank
+                ? 'bg-[#3D322C] hover:bg-[#2A221D] text-white'
+                : 'bg-[#1F6F58] hover:bg-[#175745] text-white'
+            }`}
+          >
+            {state.settings.enableCoinsAndPiggyBank
+              ? lang === 'th'
+                ? '⏸️ ปิดระบบเหรียญฝั่งน้องชั่วคราว'
+                : '⏸️ Turn OFF Coins for Kids'
+              : lang === 'th'
+              ? '🟢 เปิดระบบเหรียญให้น้องใช้งาน'
+              : '🟢 Turn ON Coins for Kids'}
+          </button>
         </div>
 
         {!hiddenSections.piggyRates && (
@@ -1027,11 +1099,37 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
         )}
       </div>
 
+      {/* 2C. Platform Sign-Up & Organization Approval Console (Platform Creator Only) */}
+      {!isExternalTenant && cloudUser?.email === MASTER_ADMIN_EMAIL && (
+        <section className="no-print rounded-[28px] border-2 border-[#9FE2D6] bg-[#FFFDF9] p-5 pastel-shadow space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-lg font-bold text-[#114A42]">
+                🏛️ {lang === 'th' ? 'ศูนย์เปิดสิทธิ์ให้มูลนิธิ / องค์กรอื่นใช้งาน' : 'External Organization Access Approvals'}
+              </h3>
+              <p className="text-xs text-[#6E5C52] mt-0.5">
+                {lang === 'th'
+                  ? 'เห็นเฉพาะคำขอเปิดสิทธิ์และสถานะเท่านั้น — ระบบแยกฐานข้อมูลไม่ให้คุณเข้าดูข้อมูลภายในขององค์กรอื่นค่ะ'
+                  : 'Manage organization access approvals only. Internal data of other foundations remains strictly private.'}
+              </p>
+            </div>
+            {renderSectionToggleButton('registrations', 'bg-[#E8FAF6] hover:bg-[#DCF7F2] border-[#8FD4C6] text-[#114A42]')}
+          </div>
+          {!hiddenSections.registrations && (
+            <AdminRegistrationsPanel
+              cloudUser={cloudUser}
+              lang={lang}
+              onShowAlert={onShowAlert}
+            />
+          )}
+        </section>
+      )}
+
       {/* 3. Master Members & PIN Table */}
       <section className="no-print rounded-[28px] border-2 border-[#DCEEF8] bg-[#FFFDF9] p-5 pastel-shadow">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-lg font-bold text-[#3D322C]">
-            🔑 {lang === 'th' ? `ตารางรวมรหัสระบบและ PIN 4 หลัก (ทั้งหมด ${state.members.length} คน)` : `Master Member & 4-Digit PIN Directory (${state.members.length} Members)`}
+            🔑 {lang === 'th' ? `ตารางรวมรหัส PIN 4 หลัก (ทั้งหมด ${state.members.length} คน)` : `Master 4-Digit PIN Directory (${state.members.length} Members)`}
           </h3>
           {renderSectionToggleButton('pins', 'bg-[#DCEEF8] hover:bg-[#C6E2F3] border-[#A7D3EC] text-[#1E445C]')}
         </div>
@@ -1040,8 +1138,7 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
             <table className="w-full text-sm text-left border-collapse">
               <thead className="sticky top-0 bg-[#FFFDF9]">
                 <tr className="border-b-2 border-[#EBD8C3] text-xs text-[#6E5C52]">
-                  <th className="py-2 pr-3">ID</th>
-                  <th className="py-2 px-2">{lang === 'th' ? 'ตำแหน่ง / กลุ่ม' : 'Role / Group'}</th>
+                  <th className="py-2 pr-3">{lang === 'th' ? 'ตำแหน่ง / กลุ่ม' : 'Role / Group'}</th>
                   <th className="py-2 px-2">{lang === 'th' ? 'ชื่อเล่น' : 'Nickname'}</th>
                   <th className="py-2 px-2">{lang === 'th' ? 'ชื่อเต็ม' : 'Full Name'}</th>
                   <th className="py-2 px-2">{lang === 'th' ? 'เพศ' : 'Gender'}</th>
@@ -1051,8 +1148,7 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
               <tbody>
                 {state.members.map((m) => (
                   <tr key={m.id} className="border-b border-[#F5ECE2] hover:bg-[#FFF5BA]/20">
-                    <td className="py-2 pr-3 font-mono font-bold text-xs">{m.id}</td>
-                    <td className="py-2 px-2 text-xs">
+                    <td className="py-2 pr-3 text-xs">
                       {m.role === 'manager'
                         ? 'ผู้จัดการ'
                         : m.role === 'staff'
@@ -1283,16 +1379,142 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
 
         {!hiddenSections.settings && (
           <>
+            {/* Per-Org Storage Mode & Free Space Optimization Banner */}
+            <div className="rounded-2xl border-2 border-[#B9E8DF] bg-[#F2FCF9] p-4 space-y-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="space-y-1 max-w-2xl">
+                  <div className="text-sm font-extrabold text-[#114A42]">
+                    💾 {lang === 'th' ? 'โหมดจัดเก็บข้อมูลขององค์กร (ประหยัดพื้นที่ฟรี)' : 'Organization Storage Mode (Space Saver)'}
+                  </div>
+                  <p className="text-xs text-[#2E5D55] leading-relaxed">
+                    {isExternalTenant
+                      ? lang === 'th'
+                        ? 'เลือกเก็บข้อมูลไว้บนเครื่อง + Google Sheet/Drive ขององค์กรคุณเอง (0 KB บนระบบกลาง) หรือใช้คลาวด์ระบบกลางแบบตัดประวัติอัตโนมัติเหลือ 7-14 วันล่าสุด'
+                        : 'Store locally + your own Google Sheet/Drive (0 KB central cloud), or use central sync (auto-trimmed to recent 7-14 days).'
+                      : lang === 'th'
+                      ? 'ระบบคลาวด์กลางจะตัดประวัติรายวัน/รายสัปดาห์ที่เก่ากว่า 7-14 วันอัตโนมัติเพื่อให้องค์กรใช้งานได้ฟรี และแต่ละองค์กรยังสามารถเชื่อมต่อ Google Sheet / Drive ของตัวเองได้ด้วยค่ะ'
+                      : 'Central cloud sync automatically trims daily/weekly logs older than 7-14 days to preserve free tier quota.'}
+                  </p>
+                </div>
+
+                {isExternalTenant && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onUpdateSettings({ useOwnStorageOnly: false })}
+                      className={`min-h-[38px] rounded-xl px-3 py-1.5 text-xs font-bold cursor-pointer border transition-colors ${
+                        !state.settings.useOwnStorageOnly
+                          ? 'bg-[#114A42] text-white border-[#114A42]'
+                          : 'bg-white text-[#3D322C] border-[#B9E8DF] hover:bg-[#E8FAF6]'
+                      }`}
+                    >
+                      ☁️ {lang === 'th' ? 'ซิงก์หลายเครื่อง (เก็บประวัติ 7 วัน)' : 'Cloud Sync (7-Day History)'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onUpdateSettings({ useOwnStorageOnly: true });
+                        onShowAlert({
+                          icon: '💾',
+                          title: lang === 'th' ? 'เปิดโหมดประหยัดพื้นที่องค์กรแล้ว (0%)' : 'Own Storage Mode Enabled',
+                          message:
+                            lang === 'th'
+                              ? 'ข้อมูลขององค์กรคุณจะเก็บในเครื่องนี้และส่งเข้า Google Sheet ขององค์กรคุณเองเท่านั้น โดยไม่ใช้พื้นที่คลาวด์กลางค่ะ'
+                              : 'Data will stay local and sync only to your organization Google Sheet.',
+                          tone: 'mint',
+                        });
+                      }}
+                      className={`min-h-[38px] rounded-xl px-3 py-1.5 text-xs font-bold cursor-pointer border transition-colors ${
+                        state.settings.useOwnStorageOnly
+                          ? 'bg-[#114A42] text-white border-[#114A42]'
+                          : 'bg-white text-[#3D322C] border-[#B9E8DF] hover:bg-[#E8FAF6]'
+                      }`}
+                    >
+                      🏠 {lang === 'th' ? 'เก็บเอง + Google Sheet (ไม่ใช้พื้นที่กลาง 0%)' : 'Local + Own Google Sheet (0% Cloud)'}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAppsScriptHelper((v) => !v)}
+                  className="min-h-[36px] rounded-xl border border-[#8FD4C6] bg-white hover:bg-[#E8FAF6] px-3 py-1.5 text-xs font-bold text-[#114A42] cursor-pointer"
+                >
+                  📄 {showAppsScriptHelper
+                    ? lang === 'th'
+                      ? 'ซ่อนคู่มือต่อ Google Sheet ของตัวเอง'
+                      : 'Hide Google Sheet Guide'
+                    : lang === 'th'
+                    ? 'ดูวิธีผูก Google Sheet ขององค์กรเอง (ฟรี 100%)'
+                    : 'How to Connect Your Own Google Sheet (Free)'}
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const ok = await copyTextToClipboard(GOOGLE_APPS_SCRIPT_TEMPLATE);
+                    onShowAlert({
+                      icon: '📋',
+                      title: ok
+                        ? lang === 'th'
+                          ? 'คัดลอกโค้ด Google Apps Script แล้ว!'
+                          : 'Apps Script Code Copied!'
+                        : lang === 'th'
+                        ? 'คัดลอกโค้ดสำหรับ Google Sheet'
+                        : 'Apps Script Code',
+                      message:
+                        lang === 'th'
+                          ? 'นำไปวางใน Google Sheet ขององค์กร > ส่วนขยาย (Extensions) > Apps Script แล้วกด Deploy เป็น Web App (Anyone) จากนั้นนำ URL มาวางในช่องลิงก์ซิงค์ด้านล่างค่ะ'
+                          : 'Paste into Google Sheets > Extensions > Apps Script, deploy as Web App (Anyone), and paste the URL below.',
+                      tone: 'mint',
+                    });
+                  }}
+                  className="min-h-[36px] rounded-xl bg-[#114A42] hover:bg-[#0D3A34] text-white px-3 py-1.5 text-xs font-bold cursor-pointer"
+                >
+                  📋 {lang === 'th' ? 'คัดลอกโค้ด Apps Script สำเร็จรูป' : 'Copy Apps Script Template'}
+                </button>
+              </div>
+
+              {showAppsScriptHelper && (
+                <div className="rounded-xl border border-[#B9E8DF] bg-white p-3 space-y-2 text-xs text-[#3D322C]">
+                  <div className="font-bold text-[#114A42]">
+                    {lang === 'th'
+                      ? 'ขั้นตอนเชื่อมต่อ Google Sheet ของมูลนิธิคุณเอง (ทำครั้งเดียว 2 นาที):'
+                      : '3-Step Own Google Sheet Setup:'}
+                  </div>
+                  <ol className="list-decimal list-inside space-y-1 text-[#4F433C]">
+                    <li>
+                      {lang === 'th'
+                        ? 'สร้าง Google Sheet ใหม่ในบัญชี Google ขององค์กรคุณ (เช่น อีเมลขององค์กร)'
+                        : 'Create a new Google Sheet inside your organization Google account.'}
+                    </li>
+                    <li>
+                      {lang === 'th'
+                        ? 'กดเมนู ส่วนขยาย (Extensions) → Apps Script แล้ววางโค้ดที่คัดลอกจากปุ่มด้านบน'
+                        : 'Open Extensions → Apps Script and paste the copied script.'}
+                    </li>
+                    <li>
+                      {lang === 'th'
+                        ? 'กด ทำให้ใช้งานได้ (Deploy) → รายการใหม่ → Web app (ผู้มีสิทธิ์เข้าถึง: ทุกคน / Anyone) แล้วนำลิงก์ Web app URL มาวางช่องด้านล่าง'
+                        : 'Deploy → New deployment → Web app (Who has access: Anyone), then paste the Web app URL below.'}
+                    </li>
+                  </ol>
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
               <div className="space-y-2">
                 <label className="font-bold text-[#3D322C] block">
-                  🔗 {lang === 'th' ? 'ลิงก์ซิงค์ฐานข้อมูล (POST JSON)' : 'Database Sync URL (POST JSON)'}
+                  🔗 {lang === 'th' ? 'ลิงก์ซิงค์ฐานข้อมูล / Google Sheet ขององค์กร (POST JSON)' : 'Organization Google Sheet Webhook URL (POST JSON)'}
                 </label>
                 <div className="flex gap-2">
                   <input
                     type="url"
                     value={webhookInput}
                     onChange={(e) => setWebhookInput(e.target.value)}
+                    placeholder="https://script.google.com/macros/s/.../exec"
                     className="flex-1 rounded-xl border border-[#EBD8C3] bg-white px-3 py-2"
                   />
                   <button
@@ -1301,8 +1523,8 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
                       onUpdateSettings({ syncWebhookUrl: webhookInput.trim() });
                       onShowAlert({
                         icon: '🔗',
-                        title: lang === 'th' ? 'บันทึกลิงก์เชื่อมต่อแล้ว' : 'Sync URL Saved',
-                        message: webhookInput.trim(),
+                        title: lang === 'th' ? 'บันทึกลิงก์เชื่อมต่อ Google Sheet แล้ว' : 'Sync URL Saved',
+                        message: webhookInput.trim() || (lang === 'th' ? 'ล้างลิงก์เรียบร้อยแล้ว' : 'Cleared.'),
                         tone: 'mint',
                       });
                     }}
@@ -1315,13 +1537,14 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
 
               <div className="space-y-2">
                 <label className="font-bold text-[#3D322C] block">
-                  📸 {lang === 'th' ? 'โฟลเดอร์ Google Drive รูปเช็คอินกลับบ้าน' : 'Return-Home Photo Google Drive Folder'}
+                  📸 {lang === 'th' ? 'โฟลเดอร์ Google Drive ขององค์กร (เก็บรูป/เอกสาร)' : 'Organization Google Drive Folder URL'}
                 </label>
                 <div className="flex gap-2">
                   <input
                     type="url"
                     value={returnDriveInput}
                     onChange={(e) => setReturnDriveInput(e.target.value)}
+                    placeholder="https://drive.google.com/drive/folders/..."
                     className="flex-1 rounded-xl border border-[#EBD8C3] bg-white px-3 py-2"
                   />
                   <button
@@ -1330,8 +1553,8 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
                       onUpdateSettings({ returnHomeDriveUrl: returnDriveInput.trim() });
                       onShowAlert({
                         icon: '📸',
-                        title: lang === 'th' ? 'บันทึกลิงก์โฟลเดอร์รูปกลับบ้านแล้ว' : 'Return-Home Drive URL Saved',
-                        message: returnDriveInput.trim(),
+                        title: lang === 'th' ? 'บันทึกลิงก์โฟลเดอร์ Google Drive แล้ว' : 'Drive URL Saved',
+                        message: returnDriveInput.trim() || (lang === 'th' ? 'ล้างลิงก์เรียบร้อยแล้ว' : 'Cleared.'),
                         tone: 'mint',
                       });
                     }}
@@ -1425,17 +1648,32 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
               <button
                 type="button"
                 onClick={async () => {
+                  if (!state.settings.syncWebhookUrl?.trim()) {
+                    onShowAlert({
+                      icon: '⚠️',
+                      title: lang === 'th' ? 'ยังไม่ได้ใส่ลิงก์ Google Sheet' : 'No Sync URL Configured',
+                      message:
+                        lang === 'th'
+                          ? 'กรุณานำลิงก์ Web App URL จาก Google Sheet ขององค์กรมาวางในช่องด้านบนและกด "บันทึก" ก่อนค่ะ'
+                          : 'Please save your organization Google Sheet Web App URL above first.',
+                      tone: 'yellow',
+                    });
+                    return;
+                  }
                   await onManualSync();
                   onShowAlert({
-                    icon: '☁️',
-                    title: lang === 'th' ? 'ส่งข้อมูลซิงค์แล้ว!' : 'Sync Triggered!',
-                    message: lang === 'th' ? 'ส่งข้อมูลแบบ POST (JSON) ไปยังลิงก์ที่ตั้งค่าไว้เรียบร้อยแล้ว' : 'POST (JSON) sync request dispatched to configured URL.',
+                    icon: '📤',
+                    title: lang === 'th' ? 'ทดสอบส่งเข้า Google Sheet แล้ว!' : 'Sync Dispatched!',
+                    message:
+                      lang === 'th'
+                        ? 'ส่งข้อมูลแบบ POST (JSON) ไปยัง Google Sheet ที่ตั้งค่าไว้เรียบร้อยแล้ว กรุณาตรวจเช็กแท็บ Logs ในชีตของคุณค่ะ'
+                        : 'POST (JSON) sync request dispatched to configured Google Sheet URL.',
                     tone: 'blue',
                   });
                 }}
                 className="min-h-[44px] rounded-2xl bg-[#DCEEF8] hover:bg-[#C6E2F3] border border-[#BEDBF0] px-5 py-2 text-sm font-bold text-[#28445A] cursor-pointer"
               >
-                ☁️ {lang === 'th' ? 'ส่งซิงค์ข้อมูลทันที (POST JSON)' : 'Sync Data Now (POST JSON)'}
+                📤 {lang === 'th' ? 'ทดสอบส่งเข้า Google Sheet ทันที (POST JSON)' : 'Test Sync to Google Sheet (POST JSON)'}
               </button>
 
               <label className="inline-flex items-center gap-2 rounded-2xl bg-[#FADADD]/60 px-4 py-2.5 text-sm font-bold text-[#3D322C] cursor-pointer">

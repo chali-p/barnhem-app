@@ -472,8 +472,8 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
                   ? 'ยิงบาร์โค้ด / พิมพ์รหัส เช่น j1 แล้วกด Enter...'
                   : 'Scan barcode or type ID (e.g. j1) + Enter...'
                 : lang === 'th'
-                ? 'พิมพ์รหัสจาก QR เช่น j1, s3 หรือ PIN'
-                : 'Enter QR ID e.g. j1, s3 or PIN'
+                ? 'พิมพ์รหัส PIN 4 หลัก หรือสแกน QR'
+                : 'Enter 4-digit PIN or scan QR'
             }
             className="flex-1 rounded-2xl border border-[#EBD8C3] bg-white px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#D4F0F0]"
           />

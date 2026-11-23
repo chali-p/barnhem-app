@@ -1,7 +1,7 @@
 import { AppSettings, Language, Member } from '../types/barnhem';
 import { applyMorningStreakOnTime } from './houseChores';
 import { applyDailySchoolDeduction, getEconomyConfig, isKidAwayOnDate } from './piggyBank';
-import { getDateKey, getMinutesOfDay, isPublicHoliday } from './timeRules';
+import { getDateKey, getMinutesOfDay, getTomorrowDateKey, isPublicHoliday } from './timeRules';
 
 export interface KioskResult {
   success: boolean;
@@ -531,3 +531,511 @@ export function evaluateOneTapGoToSchool(
     updatedKid: updated,
   };
 }
+
+export type HomeQuickActionId =
+  | 'morning_breakfast'
+  | 'morning_school'
+  | 'afternoon_home'
+  | 'evening_uniform_phone'
+  | 'evening_unlock_cartoon'
+  | 'night_return_phone';
+
+export interface HomeQuickActionConfig {
+  id: HomeQuickActionId;
+  emoji: string;
+  startMins: number;
+  endMins: number;
+  windowLabelTh: string;
+  windowLabelEn: string;
+  titleTh: string;
+  titleEn: string;
+  tapLabelTh: string;
+  tapLabelEn: string;
+  doneLabelTh: string;
+  doneLabelEn: string;
+}
+
+export const HOME_QUICK_ACTIONS: HomeQuickActionConfig[] = [
+  {
+    id: 'morning_breakfast',
+    emoji: '🍚',
+    startMins: 6 * 60 + 30,
+    endMins: 7 * 60 + 30,
+    windowLabelTh: '06:30–07:30 น.',
+    windowLabelEn: '06:30–07:30',
+    titleTh: 'กินข้าวเช้า',
+    titleEn: 'Breakfast',
+    tapLabelTh: '🍚 กินข้าวเช้า',
+    tapLabelEn: '🍚 Breakfast',
+    doneLabelTh: '✅ กินข้าวแล้ว',
+    doneLabelEn: '✅ Ate Breakfast',
+  },
+  {
+    id: 'morning_school',
+    emoji: '🚌',
+    startMins: 6 * 60 + 30,
+    endMins: 7 * 60 + 30,
+    windowLabelTh: '06:30–07:30 น.',
+    windowLabelEn: '06:30–07:30',
+    titleTh: 'ไปโรงเรียน',
+    titleEn: 'Go to School',
+    tapLabelTh: '🚌 ไปโรงเรียน',
+    tapLabelEn: '🚌 Go to School',
+    doneLabelTh: '✅ ไปแล้ว',
+    doneLabelEn: '✅ Checked',
+  },
+  {
+    id: 'afternoon_home',
+    emoji: '🏡',
+    startMins: 15 * 60,
+    endMins: 17 * 60,
+    windowLabelTh: '15:00–17:00 น.',
+    windowLabelEn: '15:00–17:00',
+    titleTh: 'กลับบ้านแล้ว',
+    titleEn: 'Returned Home',
+    tapLabelTh: '🏡 กลับบ้านแล้ว',
+    tapLabelEn: '🏡 Home Now',
+    doneLabelTh: '✅ กลับบ้านแล้ว',
+    doneLabelEn: '✅ Back Home',
+  },
+  {
+    id: 'evening_uniform_phone',
+    emoji: '👔📱',
+    startMins: 18 * 60,
+    endMins: 20 * 60 + 30,
+    windowLabelTh: '18:00–20:30 น.',
+    windowLabelEn: '18:00–20:30',
+    titleTh: 'ตรวจชุด & รับมือถือ',
+    titleEn: 'Uniform & Get Phone',
+    tapLabelTh: '📱 ตรวจชุด & รับมือถือ',
+    tapLabelEn: '📱 Uniform & Phone',
+    doneLabelTh: '✅ รับมือถือแล้ว',
+    doneLabelEn: '✅ Phone Collected',
+  },
+  {
+    id: 'evening_unlock_cartoon',
+    emoji: '📺',
+    startMins: 20 * 60,
+    endMins: 20 * 60 + 40,
+    windowLabelTh: '20:00–20:40 น.',
+    windowLabelEn: '20:00–20:40',
+    titleTh: 'ปลดล็อคดูการ์ตูน',
+    titleEn: 'Unlock Cartoons',
+    tapLabelTh: '📺 ปลดล็อคการ์ตูน',
+    tapLabelEn: '📺 Unlock Cartoons',
+    doneLabelTh: '✅ ดูการ์ตูนแล้ว',
+    doneLabelEn: '✅ Unlocked',
+  },
+  {
+    id: 'night_return_phone',
+    emoji: '🌙',
+    startMins: 21 * 60,
+    endMins: 22 * 60 + 45,
+    windowLabelTh: '21:00–22:45 น.',
+    windowLabelEn: '21:00–22:45',
+    titleTh: 'คืนมือถือ',
+    titleEn: 'Return Phone',
+    tapLabelTh: '🌙 คืนมือถือ',
+    tapLabelEn: '🌙 Return Phone',
+    doneLabelTh: '✅ คืนมือถือแล้ว',
+    doneLabelEn: '✅ Phone Returned',
+  },
+];
+
+export function isHomeActionOpenAt(actionId: HomeQuickActionId, now: Date): boolean {
+  const cfg = HOME_QUICK_ACTIONS.find((a) => a.id === actionId);
+  if (!cfg) return false;
+  const mins = getMinutesOfDay(now);
+  return mins >= cfg.startMins && mins <= cfg.endMins;
+}
+
+export function isHomeActionDoneForKid(actionId: HomeQuickActionId, kid: Member): boolean {
+  switch (actionId) {
+    case 'morning_breakfast':
+      return Boolean(kid.daily.breakfastChecked);
+    case 'morning_school':
+      return Boolean(kid.daily.vanOrMorningChecked);
+    case 'afternoon_home':
+      return Boolean(kid.daily.returnedHomeChecked);
+    case 'evening_uniform_phone':
+      return Boolean(kid.daily.eveningPhoneUnlocked);
+    case 'evening_unlock_cartoon':
+      return Boolean(kid.daily.bossStageUnlocked);
+    case 'night_return_phone':
+      return Boolean(kid.daily.phoneReturnedChecked);
+  }
+}
+
+export function evaluateOneTapHomeAction(
+  actionId: HomeQuickActionId,
+  kid: Member,
+  now: Date,
+  lang: Language,
+  settings?: Partial<AppSettings>,
+  isSickToday = false
+): KioskResult {
+  const cfg = HOME_QUICK_ACTIONS.find((a) => a.id === actionId)!;
+  if (!isHomeActionOpenAt(actionId, now)) {
+    return {
+      success: false,
+      emoji: '🔒',
+      starsDelta: 0,
+      bannerTitle:
+        lang === 'th'
+          ? `ปุ่ม "${cfg.titleTh}" ล็อกอยู่นอกเวลา`
+          : `"${cfg.titleEn}" is Locked`,
+      bannerSubtitle:
+        lang === 'th'
+          ? `เปิดให้กดเฉพาะช่วงเวลา ${cfg.windowLabelTh} เท่านั้นค่ะ`
+          : `Only open during ${cfg.windowLabelEn}.`,
+    };
+  }
+
+  if (actionId === 'morning_school') {
+    return evaluateOneTapGoToSchool(kid, now, lang, settings, isSickToday);
+  }
+
+  const mins = getMinutesOfDay(now);
+  const todayKey = getDateKey(now);
+  const eco = getEconomyConfig(settings);
+  const earlyBonus = eco.early15MinBonusStars;
+  const isAwayToday = isKidAwayOnDate(kid, todayKey);
+
+  const appendStarTx = (prev: Member, amount: number, reason: string, patch: Partial<Member>): Member => ({
+    ...prev,
+    ...patch,
+    stars: Math.max(0, prev.stars + amount),
+    starHistory: [
+      {
+        id: `tx_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+        timestamp: now.toISOString(),
+        reason,
+        amount,
+      },
+      ...prev.starHistory,
+    ].slice(0, 60),
+  });
+
+  if (actionId === 'morning_breakfast') {
+    if (kid.daily.breakfastChecked) {
+      return {
+        success: true,
+        emoji: '✅',
+        starsDelta: 0,
+        bannerTitle: lang === 'th' ? `น้อง${kid.nickname} เช็คกินข้าวเช้าแล้ว` : `${kid.nickname} Breakfast OK`,
+        bannerSubtitle: lang === 'th' ? 'เช็คชื่อมื้อเช้าเรียบร้อยแล้วค่ะ' : 'Already checked breakfast today.',
+      };
+    }
+    const onTime = mins < 6 * 60 + 40;
+    const streakUpdate = onTime ? applyMorningStreakOnTime(kid, now) : null;
+    const stars = (onTime ? 5 : 0) + (streakUpdate?.milestoneBonusStars ?? 0);
+    const updated = appendStarTx(
+      kid,
+      stars,
+      onTime
+        ? `🍚 ปุ่มด่วน "กินข้าวเช้า" (ก่อน 06:40 น. +${stars} ⭐)`
+        : '🍚 ปุ่มด่วน "กินข้าวเช้า" (06:40–07:30 น.)',
+      {
+        avatar: { ...kid.avatar, outfitMode: 'uniform' },
+        streak: streakUpdate ? streakUpdate.nextStreak : kid.streak,
+        daily: { ...kid.daily, breakfastChecked: true },
+      }
+    );
+    return {
+      success: true,
+      emoji: '🍚✨',
+      starsDelta: stars,
+      bannerTitle:
+        lang === 'th'
+          ? `น้อง${kid.nickname} กินข้าวเช้าแล้ว! ${stars > 0 ? `+${stars} ⭐` : ''}`
+          : `${kid.nickname} Ate Breakfast! ${stars > 0 ? `+${stars} ⭐` : ''}`,
+      bannerSubtitle:
+        lang === 'th'
+          ? streakUpdate?.streakTextTh ?? 'บันทึกมื้อเช้าและเปลี่ยนชุดนักเรียนเรียบร้อยค่ะ'
+          : 'Breakfast recorded & uniform equipped.',
+      updatedKid: updated,
+    };
+  }
+
+  if (actionId === 'afternoon_home') {
+    if (kid.daily.returnedHomeChecked) {
+      return {
+        success: true,
+        emoji: '✅',
+        starsDelta: 0,
+        bannerTitle: lang === 'th' ? `น้อง${kid.nickname} เช็คกลับบ้านวันนี้แล้ว` : `${kid.nickname} Already Home`,
+        bannerSubtitle: lang === 'th' ? 'เช็คอินกลับบ้านเรียบร้อยแล้วค่ะ' : 'Already checked return home.',
+      };
+    }
+    const stars = kid.group === 3 ? 20 : kid.group === 2 ? 5 : 0;
+    const isEarly15 = stars > 0 && mins <= 15 * 60 + 45 && earlyBonus > 0 ? 0 : 0;
+    const totalStars = stars + isEarly15;
+    const updated = appendStarTx(
+      kid,
+      totalStars,
+      `🏡 ปุ่มด่วน "กลับบ้านแล้ว"${totalStars > 0 ? ` (+${totalStars} ⭐)` : ' (เริ่ม Speedy Ninja 20 นาที)'}`,
+      {
+        avatar: { ...kid.avatar, outfitMode: 'lounge' },
+        daily: {
+          ...kid.daily,
+          returnedHomeChecked: true,
+          ...(kid.group === 1 ? { speedyNinjaStartMs: now.getTime() } : {}),
+        },
+      }
+    );
+    return {
+      success: true,
+      emoji: kid.group === 1 ? '🥷🏡' : '🏡✨',
+      starsDelta: totalStars,
+      bannerTitle:
+        lang === 'th'
+          ? `น้อง${kid.nickname} กลับบ้านแล้ว! ${totalStars > 0 ? `+${totalStars} ⭐` : ''}`
+          : `${kid.nickname} Back Home! ${totalStars > 0 ? `+${totalStars} ⭐` : ''}`,
+      bannerSubtitle:
+        lang === 'th'
+          ? kid.group === 1
+            ? 'เปลี่ยนเป็นชุดอยู่บ้านและเริ่มภารกิจ Speedy Ninja 20 นาที!'
+            : 'เปลี่ยนเป็นชุดอยู่บ้านเรียบร้อย เตรียมซักชุดนักเรียนตามคิวได้เลยค่ะ'
+          : 'Returned home & changed into lounge wear.',
+      updatedKid: updated,
+    };
+  }
+
+  if (actionId === 'evening_uniform_phone') {
+    if (kid.daily.eveningPhoneUnlocked) {
+      return {
+        success: true,
+        emoji: '✅',
+        starsDelta: 0,
+        bannerTitle:
+          lang === 'th'
+            ? `น้อง${kid.nickname} ตรวจชุด & รับมือถือวันนี้แล้ว`
+            : `${kid.nickname} Already Checked Uniform & Phone`,
+        bannerSubtitle: lang === 'th' ? 'เรียบร้อยแล้วค่ะ' : 'Already completed today.',
+      };
+    }
+
+    if (kid.penalty.noEveningPhoneTomorrowDate === todayKey) {
+      const updated = {
+        ...kid,
+        daily: {
+          ...kid.daily,
+          eveningChecklist: [
+            kid.daily.eveningChecklist[0],
+            kid.daily.eveningChecklist[1],
+            true,
+            kid.daily.eveningChecklist[3],
+          ] as [boolean, boolean, boolean, boolean],
+        },
+      };
+      return {
+        success: false,
+        emoji: '📵',
+        starsDelta: 0,
+        bannerTitle:
+          lang === 'th'
+            ? `น้อง${kid.nickname} ตรวจชุดแล้ว (แต่งดรับมือถือวันนี้)`
+            : `${kid.nickname} Uniform Checked (Phone Suspended Today)`,
+        bannerSubtitle:
+          lang === 'th'
+            ? 'ติดโทษคืนมือถือเกินเวลาเมื่อคืน วันนี้งดรับมือถือรอบเย็น 1 วันค่ะ'
+            : 'Suspended from evening phone today due to late return.',
+        updatedKid: updated,
+      };
+    }
+
+    if (kid.penalty.phoneConfiscatedUntil1830Date === todayKey && mins < 18 * 60 + 30) {
+      const updated = {
+        ...kid,
+        daily: {
+          ...kid.daily,
+          eveningChecklist: [
+            kid.daily.eveningChecklist[0],
+            kid.daily.eveningChecklist[1],
+            true,
+            kid.daily.eveningChecklist[3],
+          ] as [boolean, boolean, boolean, boolean],
+        },
+      };
+      return {
+        success: false,
+        emoji: '⏳📵',
+        starsDelta: 0,
+        bannerTitle:
+          lang === 'th'
+            ? `น้อง${kid.nickname} ตรวจชุดแล้ว (มือถือรับได้หลัง 18:30 น.)`
+            : `${kid.nickname} Uniform Checked (Phone Held Until 18:30)`,
+        bannerSubtitle:
+          lang === 'th'
+            ? 'ติดโทษยึดมือถือถึง 18:30 น. หลัง 18:30 น. ค่อยกดรับอีกครั้งนะคะ'
+            : 'Phone is held until 18:30 today.',
+        updatedKid: updated,
+      };
+    }
+
+    const stars = 10;
+    const updated = appendStarTx(
+      kid,
+      stars,
+      '👔📱 ปุ่มด่วน "ตรวจชุดนักเรียน & ขอรับมือถือ" (+10 ⭐)',
+      {
+        daily: {
+          ...kid.daily,
+          choresChecked: true,
+          eveningChecklist: [true, true, true, true],
+          eveningPhoneUnlocked: true,
+        },
+      }
+    );
+    return {
+      success: true,
+      emoji: '👔📱✨',
+      starsDelta: stars,
+      bannerTitle:
+        lang === 'th'
+          ? `น้อง${kid.nickname} ตรวจชุด & รับมือถือสำเร็จ! +${stars} ⭐`
+          : `${kid.nickname} Uniform OK & Phone Released! +${stars} ⭐`,
+      bannerSubtitle:
+        lang === 'th'
+          ? 'ตรวจชุดนักเรียนเรียบร้อย และบันทึกขอรับโทรศัพท์มือถือรอบค่ำแล้วค่ะ'
+          : 'Uniform checked and evening phone released!',
+      updatedKid: updated,
+    };
+  }
+
+  if (actionId === 'evening_unlock_cartoon') {
+    if (kid.daily.bossStageUnlocked) {
+      return {
+        success: true,
+        emoji: '✅',
+        starsDelta: 0,
+        bannerTitle:
+          lang === 'th'
+            ? `น้อง${kid.nickname} ปลดล็อคดูการ์ตูนวันนี้แล้ว`
+            : `${kid.nickname} Cartoons Already Unlocked`,
+        bannerSubtitle:
+          lang === 'th'
+            ? 'ดูการ์ตูนได้ถึง 20:40 น. แล้วดื่มน้ำก่อนเข้านอน 21:00 น. นะคะ'
+            : 'Watch until 20:40, drink water, and bedtime at 21:00.',
+      };
+    }
+
+    if (!kid.penalty.cartoonPrivilegeActive) {
+      return {
+        success: false,
+        emoji: '🚫📺',
+        starsDelta: 0,
+        bannerTitle:
+          lang === 'th'
+            ? `น้อง${kid.nickname} ถูกระงับสิทธิ์ดูการ์ตูนชั่วคราว`
+            : `${kid.nickname} Cartoon Privilege Suspended`,
+        bannerSubtitle:
+          lang === 'th'
+            ? 'หากต้องการเปิดสิทธิ์คืน ให้พี่เลี้ยงกด "เคลียร์โทษ" ในหน้าพี่เลี้ยงก่อนนะคะ'
+            : 'Ask staff to clear penalties in Staff View first.',
+      };
+    }
+
+    const stars = 10;
+    const updated = appendStarTx(
+      kid,
+      stars,
+      '📺 ปุ่มด่วน "ปลดล็อคดูการ์ตูน" (ด่านบอส 20:00 น. +10 ⭐)',
+      {
+        daily: {
+          ...kid.daily,
+          bossStageUnlocked: true,
+        },
+      }
+    );
+    return {
+      success: true,
+      emoji: '📺🎉',
+      starsDelta: stars,
+      bannerTitle:
+        lang === 'th'
+          ? `น้อง${kid.nickname} ปลดล็อคดูการ์ตูนสำเร็จ! +${stars} ⭐`
+          : `${kid.nickname} Cartoons Unlocked! +${stars} ⭐`,
+      bannerSubtitle:
+        lang === 'th'
+          ? 'ดูการ์ตูนได้ถึง 20:40 น. แล้วอย่าลืมดื่มน้ำและเข้านอน 21:00 น. นะคะ'
+          : 'Watch until 20:40, drink water, and bedtime at 21:00!',
+      updatedKid: updated,
+    };
+  }
+
+  // 'night_return_phone' (21:00 - 22:45)
+  if (kid.daily.phoneReturnedChecked) {
+    return {
+      success: true,
+      emoji: '✅',
+      starsDelta: 0,
+      bannerTitle: lang === 'th' ? `น้อง${kid.nickname} คืนมือถือวันนี้แล้ว` : `${kid.nickname} Phone Returned`,
+      bannerSubtitle: lang === 'th' ? 'คืนเข้าตู้พี่เลี้ยงเรียบร้อยแล้วค่ะ ฝันดีนะ' : 'Already returned today.',
+    };
+  }
+
+  const day = now.getDay();
+  const hasHw = Boolean(kid.daily.homeworkRegisteredSubject) && day !== 0;
+  const deadlineMins = kid.group === 2 && !hasHw ? 21 * 60 : 22 * 60 + 45;
+  const onTime = mins <= deadlineMins;
+
+  if (onTime) {
+    const stars = 5;
+    const updated = appendStarTx(
+      kid,
+      stars,
+      '🌙 ปุ่มด่วน "คืนมือถือ" ตรงเวลา (+5 ⭐)',
+      {
+        daily: { ...kid.daily, phoneReturnedChecked: true },
+      }
+    );
+    return {
+      success: true,
+      emoji: '🌙📱💚',
+      starsDelta: stars,
+      bannerTitle:
+        lang === 'th'
+          ? `น้อง${kid.nickname} คืนมือถือเรียบร้อย! +${stars} ⭐`
+          : `${kid.nickname} Phone Returned! +${stars} ⭐`,
+      bannerSubtitle:
+        lang === 'th'
+          ? 'ส่งคืนมือถือเข้าตู้พี่เลี้ยงตรงเวลา ฝันดีนะคะ!'
+          : 'Returned phone on time. Good night!',
+      updatedKid: updated,
+    };
+  }
+
+  const tomorrow = getTomorrowDateKey(now);
+  const updated: Member = {
+    ...kid,
+    penalty:
+      isSickToday || isAwayToday
+        ? kid.penalty
+        : { ...kid.penalty, fridayFreeDayDeductedCount: kid.penalty.fridayFreeDayDeductedCount + 1 },
+    daily: { ...kid.daily, phoneReturnedChecked: true },
+  };
+  return {
+    success: true,
+    emoji: isSickToday || isAwayToday ? '💚📱' : '⚖️📵',
+    starsDelta: 0,
+    bannerTitle:
+      isSickToday || isAwayToday
+        ? lang === 'th'
+          ? `น้อง${kid.nickname} คืนมือถือแล้ว (ยกเว้นโทษป่วย/ลาพัก)`
+          : `${kid.nickname} Phone Returned (Waived)`
+        : lang === 'th'
+        ? `น้อง${kid.nickname} คืนมือถือเลย 21:00 น. (ยังไม่ลงทะเบียนการบ้าน)`
+        : `${kid.nickname} Returned Past 21:00`,
+    bannerSubtitle:
+      isSickToday || isAwayToday
+        ? lang === 'th'
+          ? `บันทึกคืนมือถือเรียบร้อย (วันหยุด/ป่วยไม่หักสิทธิ์, พรุ่งนี้ ${tomorrow})`
+          : 'Recorded without penalty.'
+        : lang === 'th'
+        ? 'บันทึกคืนมือถือแล้ว และหักสิทธิ์ Free Day วันศุกร์ 1 วันค่ะ'
+        : 'Recorded late return penalty (1 Friday Free Day).',
+    updatedKid: updated,
+  };
+}
+

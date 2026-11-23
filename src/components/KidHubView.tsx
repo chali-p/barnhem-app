@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { COVER_SCENES } from '../data/initialData';
+import { signInWithGoogleCloud } from '../firebase';
 import {
   Announcement,
   AppSettings,
@@ -15,6 +16,7 @@ import {
   HealthProfile,
   KindnessCard,
   Language,
+  LinkedKidSession,
   LostFoundItem,
   Member,
   ModalAlertPayload,
@@ -95,6 +97,9 @@ interface KidHubViewProps {
   activeFestivalOverride?: FestivalId | 'auto' | 'none';
   lang: Language;
   openedFromManager?: boolean;
+  linkedKidSession?: LinkedKidSession | null;
+  cloudUserEmail?: string | null;
+  onSignOutLinkedKid?: () => void;
   onBack: () => void;
   onUpdateKid: (kidId: string, updater: (prev: Member) => Member, eventLabel: string) => void;
   onRecordRulePenalty?: (
@@ -172,6 +177,9 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   activeFestivalOverride = 'auto',
   lang,
   openedFromManager,
+  linkedKidSession = null,
+  cloudUserEmail = null,
+  onSignOutLinkedKid,
   onBack,
   onUpdateKid,
   onRecordRulePenalty,
@@ -202,7 +210,69 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   const [dmText, setDmText] = useState('');
   const [dmTripId, setDmTripId] = useState<string>('');
   const [mySpaceForm, setMySpaceForm] = useState(kid.mySpace);
+  const [linkedEmailForm, setLinkedEmailForm] = useState(kid.linkedEmail ?? '');
+  const [emailLoginBusy, setEmailLoginBusy] = useState(false);
   const [pinRequestAction, setPinRequestAction] = useState<null | { type: 'boss_stage' | 'g2_evening_phone' }>(null);
+  const claimedLocalBonusKidIdsRef = useRef<Set<string>>(new Set());
+
+  const isKidSignedInWithEmail =
+    Boolean(linkedKidSession && linkedKidSession.memberId === kid.id) ||
+    Boolean(
+      cloudUserEmail &&
+        kid.linkedEmail &&
+        cloudUserEmail.trim().toLowerCase() === kid.linkedEmail.trim().toLowerCase()
+    );
+  const displayStars = isKidSignedInWithEmail ? kid.stars : 0;
+  const coinsEnabled = Boolean(settings?.enableCoinsAndPiggyBank);
+
+  useEffect(() => {
+    setLinkedEmailForm(kid.linkedEmail ?? '');
+  }, [kid.id, kid.linkedEmail]);
+
+  useEffect(() => {
+    if (
+      !linkedKidSession &&
+      isKidSignedInWithEmail &&
+      !kid.emailLoginBonusClaimed &&
+      !claimedLocalBonusKidIdsRef.current.has(kid.id)
+    ) {
+      claimedLocalBonusKidIdsRef.current.add(kid.id);
+      const bonusTimeIso = new Date().toISOString();
+      onUpdateKid(
+        kid.id,
+        (prev) => {
+          if (prev.emailLoginBonusClaimed) return prev;
+          return {
+            ...prev,
+            stars: (prev.stars ?? 0) + 1000,
+            emailLoginBonusClaimed: true,
+            starHistory: [
+              {
+                id: `tx_email_bonus_${Date.now()}`,
+                timestamp: bonusTimeIso,
+                reason: '🎁 โบนัสล็อกอินอีเมลครั้งแรก (+1,000 ⭐)',
+                amount: 1000,
+              },
+              ...(prev.starHistory ?? []),
+            ].slice(0, 60),
+          };
+        },
+        `First Email Login Bonus (+1,000 ⭐) (${kid.nickname})`
+      );
+      onShowAlert({
+        icon: '🎉⭐',
+        title:
+          lang === 'th'
+            ? 'ปลดล็อกตัวการ์ตูน + รับโบนัส 1,000 ดวง!'
+            : 'Cartoon Unlocked + 1,000 ⭐ Bonus!',
+        message:
+          lang === 'th'
+            ? `ยินดีต้อนรับ น้อง${kid.nickname}! ดาวปลดล็อกแล้ว พร้อมรับโบนัสล็อกอินอีเมลครั้งแรก +1,000 ⭐ สำหรับช็อปปิ้งที่ร้านมินิมาร์ทและแลกของรางวัลค่ะ`
+            : `Welcome ${kid.nickname}! Your stars are unlocked with +1,000 ⭐ first-login bonus ready for the Minimart!`,
+        tone: 'yellow',
+      });
+    }
+  }, [isKidSignedInWithEmail, kid.emailLoginBonusClaimed, kid.id, kid.nickname, lang, linkedKidSession, onShowAlert, onUpdateKid]);
 
   // Health profile editor state
   const [healthForm, setHealthForm] = useState<HealthProfile>(
@@ -240,8 +310,6 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   const [showExtraTools, setShowExtraTools] = useState(false);
   const [showCoverStages, setShowCoverStages] = useState(false);
   const [stepPopupOpen, setStepPopupOpen] = useState(false);
-  const stepLastDismissedAtRef = useRef<number | null>(null);
-  const lastAutoPopKidRef = useRef<string>('');
   const actionLockRef = useRef<{ key: string; at: number }>({ key: '', at: 0 });
   const staffPinGuard = usePinGuard('kid_staff_pin');
 
@@ -448,37 +516,12 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   const isAwayToday = isKidAwayOnDate(kid, todayKey);
   const stepReminder = evaluateKidStepReminders(kid, now, isSickToday, isPublicHolidayToday);
 
+  // Reminder stays quietly on top header badge (no auto-popup modal); only opens when clicked
   useEffect(() => {
-    if (lastAutoPopKidRef.current !== kid.id) {
-      lastAutoPopKidRef.current = kid.id;
-      stepLastDismissedAtRef.current = null;
-      if (stepReminder.shouldAutoPop) {
-        setStepPopupOpen(true);
-      } else {
-        setStepPopupOpen(false);
-      }
-    }
-  }, [kid.id, stepReminder.shouldAutoPop]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (
-        !stepPopupOpen &&
-        stepReminder.shouldAutoPop &&
-        !pinRequestAction &&
-        !subModal &&
-        stepLastDismissedAtRef.current !== null &&
-        Date.now() - stepLastDismissedAtRef.current >= 3 * 60 * 1000
-      ) {
-        stepLastDismissedAtRef.current = null;
-        setStepPopupOpen(true);
-      }
-    }, 5000);
-    return () => window.clearInterval(timer);
-  }, [stepPopupOpen, stepReminder.shouldAutoPop, pinRequestAction, subModal]);
+    setStepPopupOpen(false);
+  }, [kid.id]);
 
   const dismissStepPopup = () => {
-    stepLastDismissedAtRef.current = Date.now();
     setStepPopupOpen(false);
   };
 
@@ -676,14 +719,14 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
       message: onTime
         ? lang === 'th'
           ? `เก่งมากเลย! รับไปเลย +${earned} ดาว${isEarly15 ? ` (รวมเบี้ยขยันมาก่อน 15 นาที +${earlyBonus} ⭐)` : ''}${
-              schoolDeduct.deducted
+              coinsEnabled && schoolDeduct.deducted
                 ? `\n🐷 หักค่าไปโรงเรียนวันนี้ -${schoolDeduct.amount} ฿ (เหลือในกระปุกสีชมพู ${schoolDeduct.allowance.coins} ฿)`
                 : ''
             }${streakRes?.streakTextTh ? `\n${streakRes.streakTextTh}` : ''}`
           : `Awesome! +${earned} stars added. Enjoy school today!`
         : lang === 'th'
         ? `วันนี้เลย 07:01 น. จึงไม่ได้รับดาว${
-            schoolDeduct.deducted
+            coinsEnabled && schoolDeduct.deducted
               ? ` · หักค่าไปโรงเรียนวันนี้ -${schoolDeduct.amount} ฿ (เหลือ ${schoolDeduct.allowance.coins} ฿)`
               : ''
           } พรุ่งนี้รีบเตรียมตัวให้ไวขึ้นอีกนิดนะ!`
@@ -931,7 +974,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
             ? `ขอบคุณที่รักษาสัญญาความเชื่อใจ! รับ +${earned} ดาว${
                 isEarly15 ? ` (รวมเบี้ยขยันมาก่อน 15 นาที +${earlyBonus} ⭐)` : ''
               }${
-                schoolDeduct.deducted
+                coinsEnabled && schoolDeduct.deducted
                   ? `\n🐷 หักค่าไปโรงเรียนวันนี้ -${schoolDeduct.amount} ฿ (เหลือในกระปุกสีชมพู ${schoolDeduct.allowance.coins} ฿)`
                   : ''
               }${streakRes.streakTextTh ? `\n${streakRes.streakTextTh}` : ''}`
@@ -944,7 +987,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
       const cappedMins = Math.min(mins, SCHOOL_LATE_CEILING);
       const minsLate = Math.max(1, cappedMins - (7 * 60 + 21));
       const pastCeiling = mins > SCHOOL_LATE_CEILING;
-      const fine = isSickToday || isAwayToday ? 0 : Math.min(minsLate * 5, 50);
+      const fine = !coinsEnabled || isSickToday || isAwayToday ? 0 : Math.min(minsLate * 5, 50);
       const applyMemberBase = (prev: Member): Member => {
         if (prev.daily.vanOrMorningChecked) return prev;
         return {
@@ -962,7 +1005,9 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
               timestamp: now.toISOString(),
               reason: isSickToday || isAwayToday
                 ? `ไปโรงเรียนสาย ${minsLate} นาที (ยกเว้นค่าปรับเพราะ${isSickToday ? 'ป่วย' : 'ลาพัก'})`
-                : `ไปโรงเรียนสาย ${minsLate} นาที${pastCeiling ? ' (เพดานสาย 08:00 น.)' : ''} (หักกระปุกหมู ${fine} ฿ → เข้ากระปุกทองคำ)`,
+                : coinsEnabled
+                ? `ไปโรงเรียนสาย ${minsLate} นาที${pastCeiling ? ' (เพดานสาย 08:00 น.)' : ''} (หักกระปุกหมู ${fine} ฿ → เข้ากระปุกทองคำ)`
+                : `ไปโรงเรียนสาย ${minsLate} นาที${pastCeiling ? ' (เพดานสาย 08:00 น.)' : ''}`,
               amount: 0,
             },
             ...prev.starHistory,
@@ -970,7 +1015,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
         };
       };
 
-      if (!isSickToday && !isAwayToday && fine > 0 && onRecordRulePenalty) {
+      if (coinsEnabled && !isSickToday && !isAwayToday && fine > 0 && onRecordRulePenalty) {
         onRecordRulePenalty(
           kid.id,
           fine,
@@ -983,21 +1028,29 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
       }
 
       onShowAlert({
-        icon: isSickToday ? '🤒💚' : '💸⏰',
+        icon: isSickToday ? '🤒💚' : coinsEnabled ? '💸⏰' : '⏰🚌',
         title: isSickToday
           ? lang === 'th'
             ? 'ยกเว้นค่าปรับสาย (แจ้งป่วยวันนี้)'
             : 'Late Fine Waived (Sick Today)'
+          : coinsEnabled
+          ? lang === 'th'
+            ? `สายวันไปโรงเรียน ${minsLate} นาที — หักกระปุกหมู ${fine} ฿`
+            : `School Late ${minsLate} min — Fine ${fine} THB`
           : lang === 'th'
-          ? `สายวันไปโรงเรียน ${minsLate} นาที — หักกระปุกหมู ${fine} ฿`
-          : `School Late ${minsLate} min — Fine ${fine} THB`,
+          ? `เช็คชื่อไปโรงเรียนสาย ${minsLate} นาที`
+          : `School Late ${minsLate} min`,
         message: isSickToday
           ? lang === 'th'
             ? 'เพราะแจ้งป่วยไว้ ระบบไม่คิดค่าปรับสายในวันนี้ พักผ่อนให้หายไวๆ นะ'
             : 'No late fine charged today because you reported sick.'
+          : coinsEnabled
+          ? lang === 'th'
+            ? `เลยเวลา 07:21 น. (วันไปโรงเรียนตั้งเพดานเวลาสายถึง 08:00 น.) ระบบหักค่าปรับ ${fine} ฿ จากกระปุกหมูสีชมพูโอนเข้ากระปุกหมูสีทอง (กองทุนกลาง) แล้ว`
+            : `Past 07:21 (school-day late ceiling 08:00). Deducted ${fine} THB into Shared Golden Piggy Bank.`
           : lang === 'th'
-          ? `เลยเวลา 07:21 น. (วันไปโรงเรียนตั้งเพดานเวลาสายถึง 08:00 น.) ระบบหักค่าปรับ ${fine} ฿ จากกระปุกหมูสีชมพูโอนเข้ากระปุกหมูสีทอง (กองทุนกลาง) แล้ว`
-          : `Past 07:21 (school-day late ceiling 08:00). Deducted ${fine} THB into Shared Golden Piggy Bank.`,
+          ? 'บันทึกการเช็คอินไปโรงเรียนแล้ว (เลยเวลา 07:21 น. จึงไม่ได้รับดาว) พรุ่งนี้รีบเตรียมตัวให้ไวขึ้นอีกนิดนะ!'
+          : 'School check-in recorded (past 07:21 so no stars awarded). Let us get ready faster tomorrow!',
         tone: isSickToday ? 'mint' : 'peach',
       });
     }
@@ -1034,7 +1087,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
       message:
         lang === 'th'
           ? `ไม่มีหักสายตอนเช้า รับ +${earned} ดาว${
-              schoolDeduct.deducted
+              coinsEnabled && schoolDeduct.deducted
                 ? `\n🐷 หักค่าไปเรียนวันนี้ -${schoolDeduct.amount} ฿ (เหลือในกระปุก ${schoolDeduct.allowance.coins} ฿)`
                 : ''
             } ขอให้เป็นวันที่ยอดเยี่ยมในการเรียนรู้!`
@@ -1408,6 +1461,19 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
 
   // --- STAR TO COIN EXCHANGE ---
   const handleExchangeStarsToCoins = () => {
+    if (!coinsEnabled) return;
+    if (!isKidSignedInWithEmail) {
+      onShowAlert({
+        icon: '🔒⭐',
+        title: lang === 'th' ? 'กรุณาล็อกอินอีเมลเพื่อปลดล็อกดาว (0 ⭐)' : 'Sign In with Email to Unlock Stars',
+        message:
+          lang === 'th'
+            ? 'ตัวละครที่ยังไม่ล็อกอิน ดาวจะอยู่ที่ 0 ⭐ ค่ะ เมื่อล็อกอินอีเมลครั้งแรก รับดาวพิเศษ +1,000 ⭐ ทันที พร้อมนำดาวมาแลกของในร้านมินิมาร์ทและออมสินได้เลย!'
+            : 'Stars remain at 0 ⭐ until you sign in with your email. First login grants +1,000 ⭐!',
+        tone: 'yellow',
+      });
+      return;
+    }
     if (kid.stars < eco.starToCoinStars) {
       onShowAlert({
         icon: '⭐',
@@ -1482,6 +1548,22 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
       return;
     }
     actionLockRef.current = { key: `buy_${item.id}`, at: nowMs };
+
+    if (!isKidSignedInWithEmail) {
+      onShowAlert({
+        icon: '🔒🏪',
+        title:
+          lang === 'th'
+            ? 'ล็อกอินอีเมลเพื่อปลดล็อกดาวช็อปปิ้งมินิมาร์ท!'
+            : 'Sign In to Unlock Stars & Minimart!',
+        message:
+          lang === 'th'
+            ? 'ตอนนี้ยอดดาวอยู่ที่ 0 ⭐ เพราะยังไม่ได้ล็อกอินอีเมลค่ะ · 🎁 ล็อกอินอีเมลครั้งแรก รับดาวพิเศษ +1,000 ⭐ ทันที สามารถนำดาวมาช็อปปิ้งที่ร้านมินิมาร์ท รับของรางวัลมากมาย และอัปเดตข้อมูลได้ก่อนใคร!'
+            : 'Your stars are at 0 ⭐ until you sign in with your Google email. First login gives +1,000 ⭐ for Minimart shopping!',
+        tone: 'yellow',
+      });
+      return;
+    }
 
     if (kid.stars < item.priceStars) {
       onShowAlert({
@@ -1743,7 +1825,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
     kid.kitchenDuty.evening1530 || kid.kitchenDuty.sat0930 || kid.kitchenDuty.sun0915;
 
   const isCleanPenalty =
-    kid.penalty.lateFineThb === 0 &&
+    (!coinsEnabled || kid.penalty.lateFineThb === 0) &&
     kid.penalty.phoneConfiscatedUntil1830Date !== todayKey &&
     kid.penalty.noEveningPhoneTomorrowDate !== todayKey &&
     kid.penalty.fridayFreeDayDeductedCount === 0;
@@ -1761,7 +1843,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   const activeCoverScene =
     COVER_SCENES.find((s) => s.stage === kid.activeCoverStage) ?? COVER_SCENES[0];
   const kidsList = allMembers.filter((m) => m.role === 'kid');
-  const dailyHouseChore = getDailyHouseChoreForKid(kid, kidsList, now);
+  const dailyHouseChore = getDailyHouseChoreForKid(kid, kidsList, now, isPublicHolidayToday);
   const trashDutyInfo = getTrashDutyInfoForDate(now);
   const isMyTrashWeek = isKidAssignedTrashWeek(kid, trashDutyInfo);
   const dynamicEventAnnouncement = getDynamicTimeEventAnnouncement(
@@ -1852,31 +1934,52 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
         }`}
         aria-hidden={isPrivacyBlurred}
       >
-      {/* Top Bar Inside Kid Hub: Left Back Button, Right Group & Shop Button */}
+      {/* Top Bar Inside Kid Hub: Left Back / Logout Button, Right Group & Shop Button */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={onBack}
-          className="min-h-[46px] rounded-[20px] bg-white hover:bg-[#FADADD]/40 border-2 border-[#EBD8C3] px-5 py-2 text-sm font-bold text-[#3D322C] shadow-sm cursor-pointer whitespace-nowrap"
-        >
-          ←{' '}
-          {openedFromManager
-            ? lang === 'th'
-              ? 'กลับหน้าผู้จัดการ'
-              : 'Back to Manager'
-            : lang === 'th'
-            ? 'กลับหน้าแรก'
-            : 'Back to Home'}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={onBack}
+            className="min-h-[46px] rounded-[20px] bg-white hover:bg-[#FADADD]/40 border-2 border-[#EBD8C3] px-5 py-2 text-sm font-bold text-[#3D322C] shadow-sm cursor-pointer whitespace-nowrap"
+          >
+            ←{' '}
+            {openedFromManager
+              ? lang === 'th'
+                ? 'กลับหน้าผู้จัดการ'
+                : 'Back to Manager'
+              : lang === 'th'
+              ? 'กลับหน้าแรก'
+              : 'Back to Home'}
+          </button>
+
+          {linkedKidSession && (
+            <>
+              <span className="inline-flex items-center gap-1.5 rounded-2xl border border-[#8FD4C6] bg-[#E8FAF6] px-3 py-1.5 text-xs font-extrabold text-[#114A42]">
+                <span>☁️</span>
+                <span>
+                  {lang === 'th'
+                    ? `ซิงค์ตัวการ์ตูนสด (${cloudUserEmail || linkedKidSession.email})`
+                    : `Live Sync (${cloudUserEmail || linkedKidSession.email})`}
+                </span>
+              </span>
+              {onSignOutLinkedKid && (
+                <button
+                  type="button"
+                  onClick={onSignOutLinkedKid}
+                  className="min-h-[42px] rounded-2xl border border-[#F3B7C0] bg-[#FFF0F3] hover:bg-[#FFE0E7] px-3.5 py-1.5 text-xs font-bold text-[#8B1D36] cursor-pointer whitespace-nowrap"
+                >
+                  🚪 {lang === 'th' ? 'ออกจากระบบ (ซ่อนตัวการ์ตูน)' : 'Sign Out'}
+                </button>
+              )}
+            </>
+          )}
+        </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
           <span className="text-sm font-semibold text-[#6E5C52]">{groupLabel}</span>
           <button
             type="button"
-            onClick={() => {
-              stepLastDismissedAtRef.current = null;
-              setStepPopupOpen(true);
-            }}
+            onClick={() => setStepPopupOpen(true)}
             className={`min-h-[42px] rounded-[18px] border-2 px-3.5 py-1.5 text-xs font-bold shadow-sm cursor-pointer whitespace-nowrap flex items-center gap-1.5 transition-colors ${
               stepReminder.penaltyInstructions.length > 0 || stepReminder.nextStep?.urgent
                 ? 'bg-[#FFE8EC] hover:bg-[#FFD7DF] border-[#F0A4B4] text-[#7D2234]'
@@ -1930,25 +2033,50 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
               kidNickname={kid.nickname}
               kidFullName={kid.fullName}
               kidId={kid.id}
-              stars={kid.stars}
+              stars={displayStars}
               visitingBuddy={visitingBuddy}
               pet={kid.pet}
               petMood={livePet?.mood}
               petHunger={livePet?.hunger}
               activeFestival={activeFestival}
+              emailLocked={!isKidSignedInWithEmail}
+              emailBonusClaimed={Boolean(kid.emailLoginBonusClaimed)}
+              linkedEmail={kid.linkedEmail}
+              emailLoginBusy={emailLoginBusy}
+              onOpenLinkEmailModal={() => {
+                setMySpaceForm(kid.mySpace);
+                setLinkedEmailForm(kid.linkedEmail ?? '');
+                setSubModal('profile_modal');
+              }}
+              onSignInKidEmail={async () => {
+                setEmailLoginBusy(true);
+                try {
+                  await signInWithGoogleCloud();
+                } catch (err) {
+                  onShowAlert({
+                    icon: '⚠️',
+                    title: lang === 'th' ? 'เข้าสู่ระบบ Google ไม่สำเร็จ' : 'Google Sign-In Failed',
+                    message: err instanceof Error ? err.message : String(err),
+                    tone: 'pink',
+                  });
+                } finally {
+                  setEmailLoginBusy(false);
+                }
+              }}
               onOpenWardrobe={() => setSubModal('wardrobe_modal')}
               onOpenFriendVisits={() => setSubModal('friend_visit_modal')}
               onOpenPet={() => setSubModal('pet_modal')}
               onOpenProfile={() => {
                 setMySpaceForm(kid.mySpace);
+                setLinkedEmailForm(kid.linkedEmail ?? '');
                 setSubModal('profile_modal');
               }}
               pendingFriendVisitCount={incomingPendingVisits.length}
-              pinkCoins={liveAllowance.coins}
-              weeklyPenaltyThb={liveAllowance.weeklyPenaltyThb}
-              goldenPoolCoins={goldenPoolBalance}
-              onOpenPinkPiggy={() => setPiggyModal('pink')}
-              onOpenGoldPiggy={() => setPiggyModal('gold')}
+              pinkCoins={coinsEnabled ? liveAllowance.coins : undefined}
+              weeklyPenaltyThb={coinsEnabled ? liveAllowance.weeklyPenaltyThb : 0}
+              goldenPoolCoins={coinsEnabled ? goldenPoolBalance : undefined}
+              onOpenPinkPiggy={coinsEnabled ? () => setPiggyModal('pink') : undefined}
+              onOpenGoldPiggy={coinsEnabled ? () => setPiggyModal('gold') : undefined}
               activeGift={activeProfileGift}
               onOpenGift={() => {
                 if (!activeProfileGift) return;
@@ -2043,6 +2171,27 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
               </button>
               <button
                 type="button"
+                onClick={() => {
+                  setMySpaceForm(kid.mySpace);
+                  setLinkedEmailForm(kid.linkedEmail ?? '');
+                  setSubModal('profile_modal');
+                }}
+                className={`min-h-[32px] rounded-xl border px-2.5 py-1 text-[11px] font-bold cursor-pointer whitespace-nowrap transition-colors ${
+                  kid.linkedEmail
+                    ? 'bg-[#E8FAF6] hover:bg-[#D5F4EE] border-[#8FD4C6] text-[#114A42]'
+                    : 'bg-[#EEF6FF] hover:bg-[#DFEEFF] border-[#A7D3EC] text-[#1E445C]'
+                }`}
+              >
+                {kid.linkedEmail
+                  ? lang === 'th'
+                    ? '✅ ผูกอีเมลซิงค์แล้ว'
+                    : '✅ Sync Email Linked'
+                  : lang === 'th'
+                  ? '📧 ผูกอีเมลน้อง'
+                  : '📧 Link Kid Email'}
+              </button>
+              <button
+                type="button"
                 onClick={() => setShowCoverStages((prev) => !prev)}
                 className="min-h-[32px] rounded-xl bg-[#FAF6F1] hover:bg-[#F1EAE2] border border-[#E5DAD0] px-2.5 py-1 text-[11px] font-bold text-[#5E4E45] cursor-pointer whitespace-nowrap"
               >
@@ -2059,70 +2208,93 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
           </div>
 
           {showCoverStages && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-2.5 pt-2 border-t border-[#F0E6DC]">
-              <div className="lg:col-span-5 grid grid-cols-7 gap-1.5 items-center">
-                {COVER_SCENES.map((sc) => {
-                  const unlocked = kid.unlockedCoverStages.includes(sc.stage);
-                  const isActive = kid.activeCoverStage === sc.stage;
-                  return (
-                    <button
-                      key={sc.stage}
-                      type="button"
-                      title={lang === 'th' ? sc.titleTh : sc.titleEn}
-                      onClick={() => {
-                        if (!unlocked) {
-                          onShowAlert({
-                            icon: '🔒',
-                            title: lang === 'th' ? `ยังไม่ปลดล็อกด่านที่ ${sc.stage}` : `Stage ${sc.stage} Locked`,
-                            message:
-                              lang === 'th'
-                                ? `สะสมไอเทมประจำด่านที่ ${sc.stage - 1} ให้ครบ 7 ชิ้นในร้านค้า เพื่อเปิด "${sc.titleTh}"`
-                                : `Collect 7 items in Stage ${sc.stage - 1} to unlock "${sc.titleEn}".`,
-                            tone: 'lavender',
-                          });
-                          return;
-                        }
-                        onUpdateKid(
-                          kid.id,
-                          (prev) => ({ ...prev, activeCoverStage: sc.stage }),
-                          `Switch Cover Stage ${sc.stage}`
-                        );
-                      }}
-                      className={`min-h-[38px] rounded-xl border text-base flex items-center justify-center cursor-pointer transition-all ${
-                        isActive
-                          ? 'bg-[#FFF5BA] border-[#3D322C] shadow-xs scale-105'
-                          : unlocked
-                          ? 'bg-[#FFFDF9] border-[#EBD8C3] hover:bg-[#FADADD]/40'
-                          : 'bg-[#F6F1EC] border-[#EBD8C3] opacity-60'
-                      }`}
-                    >
-                      {unlocked ? sc.badgeEmoji : '🔒'}
-                    </button>
-                  );
-                })}
-              </div>
+            <div className="relative pt-2 border-t border-[#F0E6DC]">
+              <div
+                className={`grid grid-cols-1 lg:grid-cols-12 gap-2.5 transition-all ${
+                  !isKidSignedInWithEmail
+                    ? 'filter grayscale-[85%] blur-[4px] opacity-75 pointer-events-none select-none'
+                    : ''
+                }`}
+              >
+                <div className="lg:col-span-5 grid grid-cols-7 gap-1.5 items-center">
+                  {COVER_SCENES.map((sc) => {
+                    const unlocked = kid.unlockedCoverStages.includes(sc.stage);
+                    const isActive = kid.activeCoverStage === sc.stage;
+                    return (
+                      <button
+                        key={sc.stage}
+                        type="button"
+                        title={lang === 'th' ? sc.titleTh : sc.titleEn}
+                        onClick={() => {
+                          if (!unlocked) {
+                            onShowAlert({
+                              icon: '🔒',
+                              title: lang === 'th' ? `ยังไม่ปลดล็อกด่านที่ ${sc.stage}` : `Stage ${sc.stage} Locked`,
+                              message:
+                                lang === 'th'
+                                  ? `สะสมไอเทมประจำด่านที่ ${sc.stage - 1} ให้ครบ 7 ชิ้นในร้านค้า เพื่อเปิด "${sc.titleTh}"`
+                                  : `Collect 7 items in Stage ${sc.stage - 1} to unlock "${sc.titleEn}".`,
+                              tone: 'lavender',
+                            });
+                            return;
+                          }
+                          onUpdateKid(
+                            kid.id,
+                            (prev) => ({ ...prev, activeCoverStage: sc.stage }),
+                            `Switch Cover Stage ${sc.stage}`
+                          );
+                        }}
+                        className={`min-h-[38px] rounded-xl border text-base flex items-center justify-center cursor-pointer transition-all ${
+                          isActive
+                            ? 'bg-[#FFF5BA] border-[#3D322C] shadow-xs scale-105'
+                            : unlocked
+                            ? 'bg-[#FFFDF9] border-[#EBD8C3] hover:bg-[#FADADD]/40'
+                            : 'bg-[#F6F1EC] border-[#EBD8C3] opacity-60'
+                        }`}
+                      >
+                        {unlocked ? sc.badgeEmoji : '🔒'}
+                      </button>
+                    );
+                  })}
+                </div>
 
-              <div className="lg:col-span-7 grid grid-cols-7 gap-1.5">
-                {currentStageItems.map((item) => {
-                  const owned = kid.collectedSceneItems.includes(item.id);
-                  return (
-                    <div
-                      key={item.id}
-                      title={lang === 'th' ? item.nameTh : item.nameEn}
-                      className={`rounded-xl border px-1 py-1.5 flex flex-col items-center justify-center text-center min-h-[48px] ${
-                        owned
-                          ? 'border-[#7CC6B8] bg-white shadow-xs'
-                          : 'border-dashed border-[#D8C7B8] bg-white/60 opacity-60'
-                      }`}
-                    >
-                      <span className="text-base">{owned ? item.emoji : '🔒'}</span>
-                      <span className="text-[9px] font-medium text-[#5E4E45] truncate w-full mt-0.5">
-                        {lang === 'th' ? item.nameTh : item.nameEn}
-                      </span>
-                    </div>
-                  );
-                })}
+                <div className="lg:col-span-7 grid grid-cols-7 gap-1.5">
+                  {currentStageItems.map((item) => {
+                    const owned = kid.collectedSceneItems.includes(item.id);
+                    return (
+                      <div
+                        key={item.id}
+                        title={lang === 'th' ? item.nameTh : item.nameEn}
+                        className={`rounded-xl border px-1 py-1.5 flex flex-col items-center justify-center text-center min-h-[48px] ${
+                          owned
+                            ? 'border-[#7CC6B8] bg-white shadow-xs'
+                            : 'border-dashed border-[#D8C7B8] bg-white/60 opacity-60'
+                        }`}
+                      >
+                        <span className="text-base">{owned ? item.emoji : '🔒'}</span>
+                        <span className="text-[9px] font-medium text-[#5E4E45] truncate w-full mt-0.5">
+                          {lang === 'th' ? item.nameTh : item.nameEn}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
+              {!isKidSignedInWithEmail && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMySpaceForm(kid.mySpace);
+                      setLinkedEmailForm(kid.linkedEmail ?? '');
+                      setSubModal('profile_modal');
+                    }}
+                    className="rounded-xl border border-[#EBD8C3] bg-white/95 px-3 py-1.5 text-xs font-extrabold text-[#3D322C] shadow-sm cursor-pointer"
+                  >
+                    🔒 {lang === 'th' ? 'ล็อกอินอีเมลเพื่อเปิดดูฉากและไอเทม (+1,000 ⭐)' : 'Sign in to view stages & items'}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -2234,7 +2406,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
               <button
                 type="button"
                 onClick={() => setSubModal('kid_duties_modal')}
-                title={lang === 'th' ? 'ดูตารางเวรทั้งหมด (เขตเช้า · ครัว · ทิ้งขยะ)' : 'All Duty Schedules'}
+                title={lang === 'th' ? 'ดูตารางเวรทั้งหมด (เวรวันหยุด 14 โซน · ครัว · ทิ้งขยะ)' : 'All Duty Schedules'}
                 className="min-h-[34px] rounded-xl bg-white hover:bg-[#DDF5F1] border border-[#96D9CD] px-2 py-1 text-[11px] font-bold text-[#1D544C] cursor-pointer whitespace-nowrap transition-colors"
               >
                 📋 {lang === 'th' ? 'เวร' : 'Duties'}
@@ -2496,8 +2668,8 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                       ? '🗑️ สัปดาห์นี้เวรทิ้งขยะหนู!'
                       : '🗑️ Your Trash Week!'
                     : lang === 'th'
-                    ? 'เขตเช้า · เวรครัว · ทิ้งขยะ'
-                    : 'Zone · Kitchen · Trash'}
+                    ? 'เวรวันหยุด 14 โซน · ครัว · ทิ้งขยะ'
+                    : 'Holiday 14 Zones · Kitchen · Trash'}
                 </div>
               </div>
             </button>
@@ -2525,9 +2697,13 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                     ? lang === 'th'
                       ? 'ปกติ ยอดเยี่ยม!'
                       : 'Clean record'
+                    : coinsEnabled && kid.penalty.lateFineThb > 0
+                    ? lang === 'th'
+                      ? `ค่าปรับ ${kid.penalty.lateFineThb} บ.`
+                      : `Fine ${kid.penalty.lateFineThb} THB`
                     : lang === 'th'
-                    ? `ค่าปรับ ${kid.penalty.lateFineThb} บ.`
-                    : `Fine ${kid.penalty.lateFineThb} THB`}
+                    ? 'มีแจ้งเตือนวินัย'
+                    : 'Discipline alert'}
                 </div>
               </div>
             </button>
@@ -2764,7 +2940,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                 {subModal === 'kindness_deed_modal' && (lang === 'th' ? '💛 การ์ดขอบคุณเพื่อน & กิจกรรมไถ่ค่าปรับ' : '💛 Kindness Wall & Deed Redemption')}
                 {subModal === 'friend_visit_modal' && (lang === 'th' ? '🏠 ไปบ้านเพื่อน & ยืนข้างกันในโปรไฟล์' : '🏠 Visit a Friend & Hangout')}
                 {subModal === 'staff_roster' && (lang === 'th' ? '👩‍🏫🚐 ตารางงานพี่เลี้ยง ไนท์วอช & ตารางขับรถ' : '👩‍🏫🚐 Staff Shift, Night Watch & Driving Roster')}
-                {subModal === 'kid_duties_modal' && (lang === 'th' ? '🧹 ช่องตารางเวรต่างๆ ของน้อง (เขตเช้า · ห้องครัว · ทิ้งขยะ)' : '🧹 Kid Duty Schedules (Zone · Kitchen · Trash)')}
+                {subModal === 'kid_duties_modal' && (lang === 'th' ? '📋 ช่องตารางเวรต่างๆ ของน้อง (เวรวันหยุด 14 โซน · ห้องครัว · ทิ้งขยะ)' : '📋 Kid Duty Schedules (Holiday Cleaning · Kitchen · Trash)')}
                 {subModal === 'pet_modal' && (lang === 'th' ? '🐾 สัตว์เลี้ยงคู่ใจ (หมา & แมว ทามาก๊อตจิ)' : '🐾 Tamagotchi Pet Companion')}
                 {subModal === 'profile_modal' && (lang === 'th' ? `🩷 พื้นที่ของฉัน · น้อง${kid.nickname}` : `🩷 My Space · ${kid.nickname}`)}
               </h3>
@@ -3664,8 +3840,14 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
             {subModal === 'star_history' && (
               <div className="space-y-4">
                 <div className="rounded-2xl bg-[#FFF5BA] p-4 flex items-center justify-between">
-                  <span className="font-bold text-[#3D322C]">{lang === 'th' ? 'ยอดดาวคงเหลือ' : 'Current Balance'}</span>
-                  <span className="text-2xl font-bold tabular-nums">⭐ {kid.stars.toLocaleString()}</span>
+                  <span className="font-bold text-[#3D322C]">
+                    {lang === 'th'
+                      ? isKidSignedInWithEmail
+                        ? 'ยอดดาวคงเหลือ'
+                        : 'ยอดดาวคงเหลือ (ยังไม่ล็อกอินอีเมล)'
+                      : 'Current Balance'}
+                  </span>
+                  <span className="text-2xl font-bold tabular-nums">⭐ {displayStars.toLocaleString()}</span>
                 </div>
 
                 <div>
@@ -3753,10 +3935,12 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                     <div className="font-bold text-base">
                       {lang === 'th' ? 'รายการบทลงโทษ / ค่าปรับปัจจุบัน' : 'Current Fines & Restrictions'}
                     </div>
-                    <div>
-                      💸 {lang === 'th' ? 'ค่าปรับสายสะสม:' : 'Accumulated Late Fines:'}{' '}
-                      <strong className="tabular-nums">{kid.penalty.lateFineThb} THB</strong>
-                    </div>
+                    {coinsEnabled && kid.penalty.lateFineThb > 0 && (
+                      <div>
+                        💸 {lang === 'th' ? 'ค่าปรับสายสะสม:' : 'Accumulated Late Fines:'}{' '}
+                        <strong className="tabular-nums">{kid.penalty.lateFineThb} THB</strong>
+                      </div>
+                    )}
                     {kid.penalty.phoneConfiscatedUntil1830Date === todayKey && (
                       <div>📵 {lang === 'th' ? 'ยึดมือถือถึง 18:30 น. วันนี้' : 'Phone held until 18:30 today'}</div>
                     )}
@@ -3840,13 +4024,14 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
               </div>
             )}
 
-            {/* KID DUTY SCHEDULES MODAL (MORNING ZONE, KITCHEN & WEEKLY TRASH) */}
+            {/* KID DUTY SCHEDULES MODAL (MORNING ZONE, HOLIDAY CLEANING, KITCHEN & WEEKLY TRASH) */}
             {subModal === 'kid_duties_modal' && (
               <KidDutySchedulesPanel
                 kids={kidsList}
                 now={now}
                 lang={lang}
                 currentKid={kid}
+                isPublicHolidayToday={isPublicHolidayToday}
                 compactHeader
               />
             )}
@@ -3911,11 +4096,97 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
 
                   <div className="flex flex-col items-end gap-1.5">
                     <span className="inline-flex items-center gap-1.5 rounded-2xl bg-[#FFF5BA] border border-[#F0D568] px-4 py-2 text-base font-extrabold text-[#4A380D] tabular-nums">
-                      ⭐ {kid.stars.toLocaleString()} {lang === 'th' ? 'ดาวสะสม' : 'Stars'}
+                      ⭐ {displayStars.toLocaleString()} {lang === 'th' ? 'ดาวสะสม' : 'Stars'}
                     </span>
                     <span className="text-xs font-bold text-[#9E4F16]">
                       🔥 {lang === 'th' ? `มาเช้าต่อเนื่อง ${streakCount} วันติด` : `Streak: ${streakCount} day(s)`}
                     </span>
+                  </div>
+                </div>
+
+                {/* Linked Google Email for Real-Time Personal Device Sync (Top of Profile Modal) */}
+                <div className="rounded-2xl border-2 border-[#8FD4C6] bg-[#F2FCF9] p-4 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-sm font-extrabold text-[#114A42]">
+                      📧{' '}
+                      {lang === 'th'
+                        ? 'อีเมล Google ของฉัน (ซิงค์ตัวการ์ตูน Real-time)'
+                        : 'My Google Email (Real-Time Avatar Sync)'}
+                    </div>
+                    {kid.linkedEmail && (
+                      <span className="rounded-xl bg-[#D5F5ED] border border-[#8FD4C6] px-2.5 py-0.5 text-[11px] font-bold text-[#114A42]">
+                        ✅ {lang === 'th' ? `ผูกแล้ว: ${kid.linkedEmail}` : `Linked: ${kid.linkedEmail}`}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-[#2E5E56] leading-relaxed">
+                    {lang === 'th'
+                      ? 'ใส่อีเมล Google (Gmail) ของหนูไว้ที่นี่ เมื่อหนูล็อกอินด้วยอีเมลนี้บนมือถือหรือแท็บเล็ตส่วนตัว ภาพตัวการ์ตูนจะปลดล็อกเป็นสีสดใสซิงค์แบบเรียลไทม์'
+                      : 'Save your Google email here. Sign in with this email on your phone to unlock full-color live avatar sync.'}
+                    {!kid.emailLoginBonusClaimed && (
+                      <span className="font-extrabold text-[#8A5A00]">
+                        {lang === 'th'
+                          ? ' · 🎁 ล็อกอินครั้งแรก รับโบนัส +1,000 ⭐ ทันที!'
+                          : ' · 🎁 First login gets +1,000 ⭐ bonus!'}
+                      </span>
+                    )}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="email"
+                      maxLength={200}
+                      value={linkedEmailForm}
+                      onChange={(e) => setLinkedEmailForm(e.target.value)}
+                      placeholder="example@gmail.com"
+                      className="flex-1 min-w-[200px] rounded-xl border border-[#B5E5DC] bg-white px-3 py-2 text-sm text-[#3D322C] focus:outline-none focus:ring-2 focus:ring-[#8FD4C6]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const clean = linkedEmailForm.trim().toLowerCase();
+                        if (clean && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) {
+                          onShowAlert({
+                            icon: '⚠️',
+                            title: lang === 'th' ? 'รูปแบบอีเมลไม่ถูกต้อง' : 'Invalid Email Format',
+                            message:
+                              lang === 'th'
+                                ? 'กรุณากรอกอีเมลให้ถูกต้อง เช่น nong@gmail.com'
+                                : 'Please enter a valid email address.',
+                            tone: 'pink',
+                          });
+                          return;
+                        }
+                        onUpdateKid(
+                          kid.id,
+                          (prev) => ({
+                            ...prev,
+                            linkedEmail: clean || undefined,
+                          }),
+                          clean ? `Link Kid Email (${kid.nickname})` : `Unlink Kid Email (${kid.nickname})`
+                        );
+                        onShowAlert({
+                          icon: clean ? '📧✅' : '🔓',
+                          title: clean
+                            ? lang === 'th'
+                              ? 'บันทึกอีเมลซิงค์ตัวการ์ตูนแล้ว!'
+                              : 'Google Email Linked!'
+                            : lang === 'th'
+                            ? 'ยกเลิกการผูกอีเมลแล้ว'
+                            : 'Email Unlinked',
+                          message: clean
+                            ? lang === 'th'
+                              ? `ผูกอีเมล ${clean} ให้น้อง${kid.nickname} แล้ว! เมื่อล็อกอินด้วยอีเมลนี้บนมือถือส่วนตัวจะเห็นตัวการ์ตูนทันทีค่ะ`
+                              : `Linked ${clean}. Sign in with this Google account on your own device to view your live cartoon character.`
+                            : lang === 'th'
+                            ? 'นำอีเมลออกจากโปรไฟล์แล้วค่ะ'
+                            : 'Removed linked email from profile.',
+                          tone: 'mint',
+                        });
+                      }}
+                      className="min-h-[40px] rounded-xl bg-[#114A42] hover:bg-[#0D3A34] text-white px-4 py-2 text-xs font-bold cursor-pointer whitespace-nowrap"
+                    >
+                      💾 {lang === 'th' ? 'บันทึกอีเมลนี้' : 'Save Email'}
+                    </button>
                   </div>
                 </div>
 
@@ -4085,28 +4356,48 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                   <button
                     type="button"
                     onClick={() => {
+                      const cleanEmail = linkedEmailForm.trim().toLowerCase();
+                      if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+                        onShowAlert({
+                          icon: '⚠️',
+                          title: lang === 'th' ? 'รูปแบบอีเมลไม่ถูกต้อง' : 'Invalid Email Format',
+                          message:
+                            lang === 'th'
+                              ? 'กรุณากรอกอีเมลให้ถูกต้อง เช่น nong@gmail.com (หรือเว้นว่างไว้)'
+                              : 'Please enter a valid email or leave blank.',
+                          tone: 'pink',
+                        });
+                        return;
+                      }
                       onUpdateKid(
                         kid.id,
                         (prev) => ({
                           ...prev,
+                          linkedEmail: cleanEmail || undefined,
                           mySpace: {
                             ...mySpaceForm,
                             ...(prev.mySpace?.activeGift ? { activeGift: prev.mySpace.activeGift } : {}),
                           },
                         }),
-                        'Save My Space'
+                        'Save My Space & Profile Email'
                       );
                       setSubModal(null);
                       onShowAlert({
                         icon: '🩷',
-                        title: lang === 'th' ? 'บันทึกพื้นที่ของฉันแล้ว!' : 'My Space Saved!',
-                        message: lang === 'th' ? 'บันทึกข้อมูลส่วนตัวในพื้นที่ของฉันเรียบร้อยจ้า' : 'Your personal notebook has been updated!',
+                        title: lang === 'th' ? 'บันทึกโปรไฟล์ & พื้นที่ของฉันแล้ว!' : 'Profile & My Space Saved!',
+                        message: cleanEmail
+                          ? lang === 'th'
+                            ? `บันทึกข้อมูลส่วนตัวและผูกอีเมล ${cleanEmail} เรียบร้อยจ้า`
+                            : `Profile and linked email ${cleanEmail} saved!`
+                          : lang === 'th'
+                          ? 'บันทึกข้อมูลส่วนตัวในพื้นที่ของฉันเรียบร้อยจ้า'
+                          : 'Your personal notebook has been updated!',
                         tone: 'pink',
                       });
                     }}
                     className="w-full min-h-[48px] rounded-2xl bg-[#FADADD] hover:bg-[#F5C7CE] border border-[#EC9BAE] text-[#5B1D2C] font-bold cursor-pointer transition-colors"
                   >
-                    💾 {lang === 'th' ? 'บันทึกข้อมูลพื้นที่ของฉัน' : 'Save My Space'}
+                    💾 {lang === 'th' ? 'บันทึกข้อมูลพื้นที่ของฉัน & อีเมล' : 'Save My Space & Email'}
                   </button>
                 </div>
               </div>
@@ -4115,39 +4406,97 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
             {/* SHOP MODAL */}
             {subModal === 'shop_modal' && (
               <div className="space-y-4">
+                {!isKidSignedInWithEmail && (
+                  <div className="rounded-2xl border-2 border-[#F2C36B] bg-gradient-to-r from-[#FFF6D6] via-[#FFF9E6] to-[#FFF2C2] p-3.5 flex flex-wrap items-center justify-between gap-3">
+                    <div className="space-y-0.5 text-xs text-[#6E4500] min-w-0 flex-1">
+                      <div className="font-extrabold text-sm">
+                        🔒{' '}
+                        {lang === 'th'
+                          ? 'ดาวอยู่ที่ 0 ⭐ จนกว่าจะล็อกอินอีเมล · 🎁 ล็อกอินครั้งแรก รับโบนัส +1,000 ⭐ ทันที!'
+                          : 'Stars stay at 0 ⭐ until Email Sign-In · 🎁 First login grants +1,000 ⭐!'}
+                      </div>
+                      <div>
+                        {lang === 'th'
+                          ? 'เมื่อล็อกอินแล้ว ดาวจะขึ้นอัตโนมัติ สามารถนำดาวมาช็อปปิ้งที่ร้านมินิมาร์ท รับของรางวัลมากมาย และอัปเดตข้อมูลได้ก่อนใคร'
+                          : 'Sign in with your email to unlock your stars automatically and shop at the foundation minimart!'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={emailLoginBusy}
+                      onClick={async () => {
+                        if (!kid.linkedEmail) {
+                          setMySpaceForm(kid.mySpace);
+                          setLinkedEmailForm('');
+                          setSubModal('profile_modal');
+                          return;
+                        }
+                        setEmailLoginBusy(true);
+                        try {
+                          await signInWithGoogleCloud();
+                        } catch (err) {
+                          onShowAlert({
+                            icon: '⚠️',
+                            title: lang === 'th' ? 'เข้าสู่ระบบ Google ไม่สำเร็จ' : 'Google Sign-In Failed',
+                            message: err instanceof Error ? err.message : String(err),
+                            tone: 'pink',
+                          });
+                        } finally {
+                          setEmailLoginBusy(false);
+                        }
+                      }}
+                      className="min-h-[38px] rounded-xl bg-[#114A42] hover:bg-[#0D3A34] text-white px-3.5 py-1.5 text-xs font-extrabold cursor-pointer whitespace-nowrap disabled:opacity-60"
+                    >
+                      {!kid.linkedEmail
+                        ? lang === 'th'
+                          ? '📧 เพิ่มอีเมลของหนู'
+                          : '📧 Add My Email'
+                        : emailLoginBusy
+                        ? lang === 'th'
+                          ? 'กำลังเปิด Google...'
+                          : 'Signing in...'
+                        : lang === 'th'
+                        ? '🔑 ล็อกอินอีเมลรับ +1,000 ⭐'
+                        : '🔑 Sign In (+1,000 ⭐)'}
+                    </button>
+                  </div>
+                )}
+
                 <div className="rounded-2xl border border-[#D4F0F0] bg-[#D4F0F0]/55 px-4 py-2.5 text-xs font-semibold text-[#214F4B] flex flex-wrap items-center justify-between gap-2">
                   <span>
                     🌟 {lang === 'th' ? 'มินิมาร์ทมูลนิธิ — น้องๆ นำดาวมาแลกของใช้และขนมได้ฟรี ไม่ใช้เงินค่ะ' : 'Foundation Minimart — Exchange earned stars for essentials & snacks (No money needed)'}
                   </span>
                 </div>
 
-                {/* Star-to-Coin Piggy Bank Exchange inside Star Shop */}
-                <div className="rounded-2xl border-2 border-[#F3B7C0] bg-[#FFF4F7] px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-                  <div className="text-xs text-[#5E3A44]">
-                    <div className="font-extrabold text-[#3D322C]">
-                      🐷 {lang === 'th' ? 'แลกดาวความดีเป็นเหรียญเข้ากระปุกหมูสีชมพู' : 'Exchange Stars to Pink Piggy Coins'}
+                {/* Star-to-Coin Piggy Bank Exchange inside Star Shop (shown only when Creator enables Coins) */}
+                {coinsEnabled && (
+                  <div className="rounded-2xl border-2 border-[#F3B7C0] bg-[#FFF4F7] px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                    <div className="text-xs text-[#5E3A44]">
+                      <div className="font-extrabold text-[#3D322C]">
+                        🐷 {lang === 'th' ? 'แลกดาวความดีเป็นเหรียญเข้ากระปุกหมูสีชมพู' : 'Exchange Stars to Pink Piggy Coins'}
+                      </div>
+                      <div>
+                        {lang === 'th'
+                          ? `อัตราปัจจุบัน: ${eco.starToCoinStars} ⭐ = +${eco.starToCoinThb} ฿ (ในกระปุกมี ${liveAllowance.coins} ฿)`
+                          : `Rate: ${eco.starToCoinStars} ⭐ = +${eco.starToCoinThb} THB (Piggy: ${liveAllowance.coins} THB)`}
+                      </div>
                     </div>
-                    <div>
+                    <button
+                      type="button"
+                      onClick={handleExchangeStarsToCoins}
+                      disabled={!isKidSignedInWithEmail || displayStars < eco.starToCoinStars}
+                      className={`rounded-xl px-3.5 py-2 text-xs font-bold transition-colors ${
+                        isKidSignedInWithEmail && displayStars >= eco.starToCoinStars
+                          ? 'bg-[#3D322C] hover:bg-[#2B221D] text-white cursor-pointer'
+                          : 'bg-[#EADBC8] text-[#8C7A6B] cursor-not-allowed'
+                      }`}
+                    >
                       {lang === 'th'
-                        ? `อัตราปัจจุบัน: ${eco.starToCoinStars} ⭐ = +${eco.starToCoinThb} ฿ (ในกระปุกมี ${liveAllowance.coins} ฿)`
-                        : `Rate: ${eco.starToCoinStars} ⭐ = +${eco.starToCoinThb} THB (Piggy: ${liveAllowance.coins} THB)`}
-                    </div>
+                        ? `แลก ${eco.starToCoinStars} ⭐ → +${eco.starToCoinThb} ฿`
+                        : `Trade ${eco.starToCoinStars} ⭐ → +${eco.starToCoinThb} THB`}
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleExchangeStarsToCoins}
-                    disabled={kid.stars < eco.starToCoinStars}
-                    className={`rounded-xl px-3.5 py-2 text-xs font-bold transition-colors ${
-                      kid.stars >= eco.starToCoinStars
-                        ? 'bg-[#3D322C] hover:bg-[#2B221D] text-white cursor-pointer'
-                        : 'bg-[#EADBC8] text-[#8C7A6B] cursor-not-allowed'
-                    }`}
-                  >
-                    {lang === 'th'
-                      ? `แลก ${eco.starToCoinStars} ⭐ → +${eco.starToCoinThb} ฿`
-                      : `Trade ${eco.starToCoinStars} ⭐ → +${eco.starToCoinThb} THB`}
-                  </button>
-                </div>
+                )}
 
                 <div className="flex flex-wrap items-center justify-between gap-2 bg-[#FFF5BA]/70 rounded-2xl p-3">
                   <div className="flex flex-wrap gap-1.5">
@@ -4172,7 +4521,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                     ))}
                   </div>
                   <div className="text-sm font-bold text-[#3D322C] tabular-nums">
-                    ⭐ {kid.stars.toLocaleString()}
+                    ⭐ {displayStars.toLocaleString()}
                   </div>
                 </div>
 
@@ -4180,9 +4529,13 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                   <div className="space-y-4">
                     <div className="rounded-2xl bg-[#FFF5BA] p-4 flex items-center justify-between">
                       <span className="font-bold text-[#3D322C]">
-                        {lang === 'th' ? 'ยอดดาวคงเหลือของฉัน' : 'My Current Star Balance'}
+                        {lang === 'th'
+                          ? isKidSignedInWithEmail
+                            ? 'ยอดดาวคงเหลือของฉัน'
+                            : 'ยอดดาวคงเหลือ (ล็อกอินเพื่อปลดล็อก)'
+                          : 'My Current Star Balance'}
                       </span>
-                      <span className="text-2xl font-bold tabular-nums">⭐ {kid.stars.toLocaleString()}</span>
+                      <span className="text-2xl font-bold tabular-nums">⭐ {displayStars.toLocaleString()}</span>
                     </div>
 
                     <div>
@@ -4239,7 +4592,14 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                     </div>
                   </div>
                 ) : (
-                  <>
+                  <div className="relative rounded-3xl overflow-hidden">
+                    <div
+                      className={`space-y-4 transition-all duration-300 ${
+                        !isKidSignedInWithEmail
+                          ? 'filter grayscale-[85%] blur-[7px] opacity-70 pointer-events-none select-none min-h-[280px]'
+                          : ''
+                      }`}
+                    >
                 {activeFestival && (shopFilter === 'all' || shopFilter === 'festival') && (
                   <div
                     className="rounded-2xl border-2 border-[#E6B8D0] px-4 py-2.5 text-xs text-[#3D322C] flex flex-wrap items-center justify-between gap-2"
@@ -4379,14 +4739,87 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                       );
                     })}
                 </div>
-                  </>
+                    </div>
+                    {!isKidSignedInWithEmail && (
+                      <div className="absolute inset-0 z-20 flex items-center justify-center p-4 bg-[#2D2522]/15">
+                        <div className="max-w-md w-full rounded-[26px] border-2 border-white/95 bg-[#FFFDF9]/94 backdrop-blur-md p-5 text-center shadow-lg space-y-2.5">
+                          <div className="inline-flex items-center gap-1.5 rounded-full bg-[#F2EDE9] border border-[#DFD3C8] px-3 py-1 text-[11px] font-extrabold text-[#4D3E36]">
+                            <span>🔒</span>
+                            <span>
+                              {lang === 'th'
+                                ? 'ปิดภาพสินค้าร้านมินิมาร์ท & ไอเทมต่างๆ ชั่วคราว'
+                                : 'Minimart Items & Photos Locked'}
+                            </span>
+                          </div>
+                          {!kid.emailLoginBonusClaimed && (
+                            <div className="rounded-2xl border border-[#F2C36B] bg-[#FFF6D6] px-3 py-2 text-xs sm:text-sm font-extrabold text-[#6E4500]">
+                              🎁{' '}
+                              {lang === 'th'
+                                ? 'ล็อกอินอีเมลครั้งแรก รับดาวพิเศษ +1,000 ⭐ ทันที!'
+                                : 'First email login bonus: +1,000 ⭐!'}
+                            </div>
+                          )}
+                          <p className="text-xs text-[#5E4E45] leading-relaxed">
+                            {lang === 'th'
+                              ? 'ล็อกอินด้วยอีเมลของหนูเพื่อเปิดดูภาพขนม ของรางวัล ไอเทมแต่งตัว และอัปเดตข้อมูลได้ก่อนใคร'
+                              : 'Sign in with your Google email to unlock minimart product photos, items, and rewards.'}
+                          </p>
+                          <button
+                            type="button"
+                            disabled={emailLoginBusy}
+                            onClick={async () => {
+                              if (!kid.linkedEmail) {
+                                setMySpaceForm(kid.mySpace);
+                                setLinkedEmailForm('');
+                                setSubModal('profile_modal');
+                                return;
+                              }
+                              setEmailLoginBusy(true);
+                              try {
+                                await signInWithGoogleCloud();
+                              } catch (err) {
+                                onShowAlert({
+                                  icon: '⚠️',
+                                  title: lang === 'th' ? 'เข้าสู่ระบบ Google ไม่สำเร็จ' : 'Google Sign-In Failed',
+                                  message: err instanceof Error ? err.message : String(err),
+                                  tone: 'pink',
+                                });
+                              } finally {
+                                setEmailLoginBusy(false);
+                              }
+                            }}
+                            className="min-h-[40px] rounded-2xl bg-[#114A42] hover:bg-[#0D3A34] text-white px-4 py-2 text-xs font-extrabold cursor-pointer disabled:opacity-60"
+                          >
+                            {!kid.linkedEmail
+                              ? lang === 'th'
+                                ? '📧 เพิ่มอีเมลของหนู'
+                                : '📧 Add My Email'
+                              : emailLoginBusy
+                              ? lang === 'th'
+                                ? 'กำลังเปิด Google...'
+                                : 'Signing in...'
+                              : lang === 'th'
+                              ? '🔑 ล็อกอินอีเมลเปิดร้านค้า (+1,000 ⭐)'
+                              : '🔑 Sign In to Unlock Shop'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             )}
 
             {/* WARDROBE & 7 SCENES MODAL */}
             {subModal === 'wardrobe_modal' && (
-              <div className="space-y-5">
+              <div className="relative rounded-3xl overflow-hidden">
+                <div
+                  className={`space-y-5 transition-all duration-300 ${
+                    !isKidSignedInWithEmail
+                      ? 'filter grayscale-[85%] blur-[7px] opacity-70 pointer-events-none select-none min-h-[300px]'
+                      : ''
+                  }`}
+                >
                 {/* 7 Cover Locations Switcher */}
                 <div>
                   <h4 className="font-bold text-sm text-[#3D322C] mb-2">
@@ -4752,6 +5185,72 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                     )}
                   </div>
                 </div>
+                </div>
+                {!isKidSignedInWithEmail && (
+                  <div className="absolute inset-0 z-20 flex items-center justify-center p-4 bg-[#2D2522]/15">
+                    <div className="max-w-md w-full rounded-[26px] border-2 border-white/95 bg-[#FFFDF9]/94 backdrop-blur-md p-5 text-center shadow-lg space-y-2.5">
+                      <div className="inline-flex items-center gap-1.5 rounded-full bg-[#F2EDE9] border border-[#DFD3C8] px-3 py-1 text-[11px] font-extrabold text-[#4D3E36]">
+                        <span>🔒</span>
+                        <span>
+                          {lang === 'th'
+                            ? 'ปิดภาพชุดแต่งตัวและไอเทมต่างๆ ชั่วคราว'
+                            : 'Wardrobe & Items Locked'}
+                        </span>
+                      </div>
+                      {!kid.emailLoginBonusClaimed && (
+                        <div className="rounded-2xl border border-[#F2C36B] bg-[#FFF6D6] px-3 py-2 text-xs sm:text-sm font-extrabold text-[#6E4500]">
+                          🎁{' '}
+                          {lang === 'th'
+                            ? 'ล็อกอินอีเมลครั้งแรก รับดาวพิเศษ +1,000 ⭐ ทันที!'
+                            : 'First email login bonus: +1,000 ⭐!'}
+                        </div>
+                      )}
+                      <p className="text-xs text-[#5E4E45] leading-relaxed">
+                        {lang === 'th'
+                          ? 'ล็อกอินด้วยอีเมลของหนูเพื่อเปิดดูภาพชุดแต่งตัว ไอเทมสะสม และฉากหลังทั้งหมดแบบสีสดใสค่ะ'
+                          : 'Sign in with your Google email to view outfits, collectible items, and scenes.'}
+                      </p>
+                      <button
+                        type="button"
+                        disabled={emailLoginBusy}
+                        onClick={async () => {
+                          if (!kid.linkedEmail) {
+                            setMySpaceForm(kid.mySpace);
+                            setLinkedEmailForm('');
+                            setSubModal('profile_modal');
+                            return;
+                          }
+                          setEmailLoginBusy(true);
+                          try {
+                            await signInWithGoogleCloud();
+                          } catch (err) {
+                            onShowAlert({
+                              icon: '⚠️',
+                              title: lang === 'th' ? 'เข้าสู่ระบบ Google ไม่สำเร็จ' : 'Google Sign-In Failed',
+                              message: err instanceof Error ? err.message : String(err),
+                              tone: 'pink',
+                            });
+                          } finally {
+                            setEmailLoginBusy(false);
+                          }
+                        }}
+                        className="min-h-[40px] rounded-2xl bg-[#114A42] hover:bg-[#0D3A34] text-white px-4 py-2 text-xs font-extrabold cursor-pointer disabled:opacity-60"
+                      >
+                        {!kid.linkedEmail
+                          ? lang === 'th'
+                            ? '📧 เพิ่มอีเมลของหนู'
+                            : '📧 Add My Email'
+                          : emailLoginBusy
+                          ? lang === 'th'
+                            ? 'กำลังเปิด Google...'
+                            : 'Signing in...'
+                          : lang === 'th'
+                          ? '🔑 ล็อกอินอีเมลเปิดตู้แต่งตัว (+1,000 ⭐)'
+                          : '🔑 Sign In to Unlock Wardrobe'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -5527,9 +6026,11 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                     <div className="font-bold text-sm text-[#3D322C]">
                       ⚖️ {lang === 'th' ? 'กิจกรรมไถ่ค่าปรับด้วยความดี' : 'Good-Deed Fine Redemption'}
                     </div>
-                    <span className="text-xs font-bold text-[#B84A39] tabular-nums">
-                      💸 {lang === 'th' ? `ค่าปรับค้าง: ฿${kid.penalty.lateFineThb}` : `Fine: ฿${kid.penalty.lateFineThb}`}
-                    </span>
+                    {coinsEnabled && (
+                      <span className="text-xs font-bold text-[#B84A39] tabular-nums">
+                        💸 {lang === 'th' ? `ค่าปรับค้าง: ฿${kid.penalty.lateFineThb}` : `Fine: ฿${kid.penalty.lateFineThb}`}
+                      </span>
+                    )}
                   </div>
                   {myDeedRedemptions.length === 0 ? (
                     <p className="text-xs text-[#7B695F]">
@@ -6068,7 +6569,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-xs font-bold text-[#9E4F16]">
-                  🔔 {lang === 'th' ? 'แจ้งเตือนสเตปประจำวัน (เด้งเตือนทุก 3 นาที)' : 'Daily Step Reminder (Every 3 Min)'}
+                  🔔 {lang === 'th' ? 'สรุปสเตปประจำวันของหนู' : 'Daily Step Summary'}
                 </div>
                 <h3 className="text-lg sm:text-xl font-extrabold text-[#3D322C] mt-0.5">
                   {kid.emoji} {lang === 'th' ? `สเตปต่อไปของน้อง${kid.nickname}` : `${kid.nickname}'s Next Steps`}
@@ -6252,7 +6753,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
         </div>
       )}
       <PiggyBankModals
-        activeModal={piggyModal}
+        activeModal={coinsEnabled ? piggyModal : null}
         kid={kid}
         allowance={liveAllowance}
         goldenPoolLogs={goldenPoolLogs}

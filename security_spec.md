@@ -7,6 +7,8 @@
 4. **No Shadow Fields & Bounded Strings/Lists**: Every `create` and `update` enforces `keys().hasAll(...)` and `keys().hasOnly(...)`, string `.size()` caps, and list `.size()` caps to prevent Denial-of-Wallet attacks.
 5. **Server Timestamp Integrity**: Every write enforces `incoming().updatedAt == request.time`.
 6. **Zero-Lookup List Queries**: `allow list` relies purely on `request.auth` and `resource.data` fields without `get()` or `exists()` calls.
+7. **Applicant PII & Self-Approval Isolation (`/registrations/{uid}`)**: Applicants can read/create/edit ONLY their own registration document keyed by `request.auth.uid`, cannot set `status` to `approved` on creation or update, and cannot list other applicants' PII (`allow list: if isMasterAdmin()`).
+8. **Zero-Knowledge Creator Isolation for External Organizations (`org_*`)**: Even the Platform Creator (`chali6939p@gmail.com`) CANNOT read, list, update, or delete any `/members`, `/records`, or `/config` document belonging to another foundation (`org_*`), unless that foundation explicitly shares with them. Platform Creator only manages approval status on `/registrations/{uid}`.
 
 ## 2. The "Dirty Dozen" Adversarial Payloads (Expected: PERMISSION_DENIED)
 1. Unauthenticated read on `/members/j1` (`request.auth == null`).
@@ -21,3 +23,6 @@
 10. Stranger attempting to write `/admins/stranger_uid` to escalate privileges.
 11. Creating `/config/settings` with invalid `creatorPins` list (> 5 items) or missing `ownerUid`.
 12. Deleting `/members/j1` or `/config/settings` as an unauthorized user.
+13. Applicant creating `/registrations/{uid}` with `status: "approved"` or `assignedOrgId: "barnhem_main"` (self-approval / tenant hijacking).
+14. Non-admin applicant attempting `list` on `/registrations` or `get` on another user's `/registrations/{otherUid}` (PII scraping).
+15. Platform Creator (`chali6939p@gmail.com`) attempting `get` or `list` on `/members/org_friend123__kid1` owned by an external foundation.

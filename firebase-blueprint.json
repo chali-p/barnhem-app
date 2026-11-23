@@ -31,6 +31,8 @@
         "kitchenDuty": { "type": "object" },
         "daily": { "type": "object" },
         "starHistory": { "type": "array" },
+        "linkedEmail": { "type": "string", "maxLength": 200 },
+        "emailLoginBonusClaimed": { "type": "boolean" },
         "ownerUid": { "type": "string", "maxLength": 128 },
         "sharedEmails": { "type": "array" },
         "updatedAt": { "type": "string", "format": "date-time" }
@@ -60,7 +62,8 @@
             "shop_item",
             "friend_visit",
             "golden_pool_log",
-            "staff_leave"
+            "staff_leave",
+            "weekly_activity_log"
           ]
         },
         "payload": { "type": "object" },
@@ -88,6 +91,11 @@
         "early15MinBonusStars": { "type": "number" },
         "starToCoinStars": { "type": "number" },
         "starToCoinThb": { "type": "number" },
+        "lastWeeklyClearedAt": { "type": "string", "maxLength": 64 },
+        "useOwnStorageOnly": { "type": "boolean" },
+        "enableCoinsAndPiggyBank": { "type": "boolean" },
+        "organizationPreset": { "type": "string", "maxLength": 40 },
+        "automationAddons": { "type": "array" },
         "ownerUid": { "type": "string", "maxLength": 128 },
         "sharedEmails": { "type": "array" },
         "updatedAt": { "type": "string", "format": "date-time" }
@@ -104,12 +112,60 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email", "updatedAt"]
+    },
+    "PlatformRegistration": {
+      "title": "PlatformRegistration",
+      "description": "Partner organization or staff applicant registration record for platform onboarding and approval",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 200 },
+        "applicantName": { "type": "string", "maxLength": 120 },
+        "nickname": { "type": "string", "maxLength": 64 },
+        "organizationName": { "type": "string", "maxLength": 140 },
+        "applicationType": { "type": "string", "enum": ["open_organization", "apply_staff"] },
+        "organizationPreset": {
+          "type": "string",
+          "enum": [
+            "autonomous_minimart",
+            "kindergarten_classroom",
+            "lean_sme_shop",
+            "foundation_care",
+            "custom_automation"
+          ]
+        },
+        "automationAddons": { "type": "array" },
+        "contactInfo": { "type": "string", "maxLength": 160 },
+        "experienceOrSize": { "type": "string", "maxLength": 240 },
+        "notes": { "type": "string", "maxLength": 600 },
+        "status": { "type": "string", "enum": ["pending", "interview", "approved", "rejected"] },
+        "assignedOrgId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "adminNote": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid",
+        "email",
+        "applicantName",
+        "nickname",
+        "organizationName",
+        "applicationType",
+        "contactInfo",
+        "experienceOrSize",
+        "notes",
+        "status",
+        "assignedOrgId",
+        "adminNote",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
     "/members/{memberId}": {
       "schema": { "$ref": "#/entities/FoundationMember" },
-      "description": "Foundation members (kids, staff, chefs, managers) synced across Barnhem devices"
+      "description": "Foundation members (kids, staff, chefs, managers) synced across devices and scoped per organization"
     },
     "/records/{recordId}": {
       "schema": { "$ref": "#/entities/FoundationRecord" },
@@ -117,11 +173,15 @@
     },
     "/config/{configId}": {
       "schema": { "$ref": "#/entities/FoundationConfig" },
-      "description": "Foundation-wide settings and device sync configuration"
+      "description": "Organization-wide settings and device sync configuration"
     },
     "/admins/{uid}": {
       "schema": { "$ref": "#/entities/AdminUser" },
       "description": "Bootstrapped and delegated admin UIDs"
+    },
+    "/registrations/{uid}": {
+      "schema": { "$ref": "#/entities/PlatformRegistration" },
+      "description": "Self-service registration applications for opening an isolated home workspace or applying for a staff role"
     }
   }
 }
