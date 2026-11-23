@@ -789,6 +789,7 @@ export const INITIAL_SHOP_ITEMS: ShopItem[] = [
 export function createEmptyDaily(dateKey: string) {
   return {
     dateKey,
+    morningPhonePickupChecked: false,
     breakfastChecked: false,
     vanOrMorningChecked: false,
     morningDressedConfirmed: false,

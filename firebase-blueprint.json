@@ -101,6 +101,8 @@
         "homeworkCurfewMins": { "type": "number" },
         "kidsWithoutPhoneIds": { "type": "array" },
         "commandPermissions": { "type": "object" },
+        "kidAwaySecretCode": { "type": "string", "maxLength": 8 },
+        "kidAwaySecretDateKey": { "type": "string", "maxLength": 16 },
         "ownerUid": { "type": "string", "maxLength": 128 },
         "sharedEmails": { "type": "array" },
         "updatedAt": { "type": "string", "format": "date-time" }

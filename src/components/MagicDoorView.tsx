@@ -1,6 +1,7 @@
 import { User } from 'firebase/auth';
 import React, { useEffect, useMemo, useState } from 'react';
 import { DAILY_WORDS_4_LANG } from '../data/dailyWords';
+import { getStaffScheduleForDate } from '../data/staffSchedule';
 import { signInWithGoogleCloud, signOutCloud } from '../firebase';
 import { MASTER_ADMIN_EMAIL } from '../services/firestoreSync';
 import {
@@ -12,6 +13,7 @@ import {
   Member,
   ModalAlertPayload,
   PastelTheme,
+  SickReport,
   TimedScheduleSlot,
 } from '../types/barnhem';
 import {
@@ -33,10 +35,16 @@ import {
   KioskResult,
   minsToHHMM,
 } from '../utils/expressKiosk';
+import {
+  getActiveFestival,
+  getAnnouncementScheduleStatus,
+  getDynamicTimeEventAnnouncement,
+} from '../utils/festivalAndEvents';
 import { isKidAwayOnDate } from '../utils/piggyBank';
 import {
   formatPinAttemptsHint,
   formatPinLockoutMessage,
+  getActiveKidAwaySecretCode,
   usePinGuard,
 } from '../utils/pinGuard';
 import {
@@ -45,9 +53,12 @@ import {
   getDateKey,
   getLaundryQueueInfo,
 } from '../utils/timeRules';
+import { copyTextToClipboard } from '../utils/syncStorage';
 import { PinPadModal, QrScannerModal } from './CenteredAlertModal';
 import { CloudSyncBanner } from './CloudSyncBanner';
 import { CommandPermissionsEditorCard } from './CommandPermissionsEditorCard';
+import { KidDutySchedulesPanel } from './KidDutySchedulesPanel';
+import { StaffRosterPanel } from './StaffRosterPanel';
 import { TimedScheduleEditorCard } from './TimedScheduleEditorCard';
 
 export interface ThemeSwatchOption {
@@ -85,6 +96,7 @@ interface MagicDoorViewProps {
     nextKidsWithoutPhoneIds: string[],
     nextCommandPermissions: Record<string, CommandAccessRule>
   ) => void;
+  onAddSickReport?: (report: SickReport) => void;
   onShowAlert: (payload: ModalAlertPayload) => void;
   organizationName?: string;
   linkedKidSession?: LinkedKidSession | null;
@@ -114,6 +126,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
   onSaveCustomQuickCommands,
   onSaveTimedSchedule,
   onSaveCommandPermissions,
+  onAddSickReport,
   onShowAlert,
   organizationName,
   linkedKidSession = null,
@@ -158,8 +171,22 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
   const [newCmdStars, setNewCmdStars] = useState(0);
   const [newCmdDefaultNote, setNewCmdDefaultNote] = useState('');
   const [showCloudSync, setShowCloudSync] = useState(false);
+  const [homeSickOpen, setHomeSickOpen] = useState(false);
+  const [homeSickStep, setHomeSickStep] = useState<'pin' | 'pick_kid' | 'form' | 'line_copy'>('pin');
+  const [homeSickPinInput, setHomeSickPinInput] = useState('');
+  const [homeSickKidId, setHomeSickKidId] = useState<string | null>(null);
+  const [homeSickGroupFilter, setHomeSickGroupFilter] = useState<0 | 1 | 2 | 3>(0);
+  const [homeSickSymptoms, setHomeSickSymptoms] = useState('มีไข้ / ตัวร้อน');
+  const [homeSickDetails, setHomeSickDetails] = useState('');
+  const [homeSickLineText, setHomeSickLineText] = useState<string | null>(null);
+  const [homeSickLineCopied, setHomeSickLineCopied] = useState(false);
+  const [usefulInfoOpen, setUsefulInfoOpen] = useState(false);
+  const [usefulInfoTab, setUsefulInfoTab] = useState<
+    'hub' | 'announcements' | 'staff_roster' | 'duties' | 'rules_schedule' | 'trips' | 'lost_found'
+  >('hub');
   const pinGuard = usePinGuard('magic_door');
   const staffBoardPinGuard = usePinGuard('magic_door_staff_board');
+  const homeSickPinGuard = usePinGuard('magic_door_sick');
 
   const defaultWordIndex = useMemo(() => {
     const startOfYear = new Date(now.getFullYear(), 0, 0);
@@ -186,6 +213,10 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     [members, creatorPins]
   );
   const todayKey = getDateKey(now);
+  const activeAwaySecretCode = useMemo(
+    () => getActiveKidAwaySecretCode(appState.settings, todayKey),
+    [appState.settings, todayKey]
+  );
   const customQuickCommands = useMemo(
     () => getEffectiveCustomQuickCommands(appState.settings),
     [appState.settings]
@@ -214,6 +245,49 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
   );
   const totalCommandCount = effectiveHomeActions.length + customQuickCommands.length;
   const totalOpenCount = openHomeActions.length + openCustomCommands.length;
+  const isPublicHolidayToday = Boolean(appState.settings.isPublicHolidayToday);
+  const activeFestival = useMemo(
+    () => getActiveFestival(now, appState.settings.activeFestivalOverride ?? 'auto'),
+    [now, appState.settings.activeFestivalOverride]
+  );
+  const sortedHomeAnnouncements = useMemo(() => {
+    const active = appState.announcements.filter(
+      (a) => getAnnouncementScheduleStatus(a, now) === 'active'
+    );
+    return [...active].sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      return b.createdAt.localeCompare(a.createdAt);
+    });
+  }, [appState.announcements, now]);
+  const urgentHomeAnnouncementsCount = useMemo(
+    () => sortedHomeAnnouncements.filter((a) => a.priority === 'urgent').length,
+    [sortedHomeAnnouncements]
+  );
+  const openHomeLostCount = useMemo(
+    () => appState.lostFoundItems.filter((i) => i.status !== 'claimed').length,
+    [appState.lostFoundItems]
+  );
+  const homeDynamicEventAnnouncement = useMemo(() => {
+    const refKid = kids[0] ?? members[0];
+    if (!refKid) return null;
+    return getDynamicTimeEventAnnouncement(
+      now,
+      { ...refKid, group: 2 },
+      'เวรดูแลบ้านประจำวัน',
+      'Daily House Chore',
+      isPublicHolidayToday,
+      activeFestival
+    );
+  }, [now, kids, members, isPublicHolidayToday, activeFestival]);
+  const todayStaffRow = useMemo(() => getStaffScheduleForDate(now), [now]);
+  const todayMorningCarerLabel =
+    todayStaffRow.shiftATh !== '—'
+      ? lang === 'th'
+        ? todayStaffRow.shiftATh
+        : todayStaffRow.shiftAEn
+      : lang === 'th'
+      ? todayStaffRow.shiftBTh
+      : todayStaffRow.shiftBEn;
   const activeCustomCmd = useMemo(
     () =>
       activeCustomCmdId
@@ -749,6 +823,54 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                 <span>{laundry.emoji}</span>
                 <span>{laundry.label}</span>
               </div>
+              {onAddSickReport && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHomeSickPinInput('');
+                    setHomeSickSymptoms('มีไข้ / ตัวร้อน');
+                    setHomeSickDetails('');
+                    setHomeSickLineText(null);
+                    setHomeSickLineCopied(false);
+                    setHomeSickGroupFilter(0);
+                    if (linkedKidMember) {
+                      setHomeSickKidId(linkedKidMember.id);
+                      setHomeSickStep('form');
+                    } else {
+                      setHomeSickKidId(null);
+                      setHomeSickStep('pin');
+                    }
+                    setHomeSickOpen(true);
+                  }}
+                  className="mt-2.5 w-full min-h-[42px] rounded-xl border border-[#F2B8C3] bg-[#FFF0F3] hover:bg-[#FADADD] px-3 py-2 text-xs font-extrabold text-[#8B1D36] flex items-center justify-center gap-1.5 shadow-2xs transition-colors cursor-pointer active:scale-[0.99]"
+                >
+                  <span>🤒</span>
+                  <span>{lang === 'th' ? 'แจ้งเจ็บป่วย / ไม่สบาย' : 'Report Illness'}</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setUsefulInfoTab('hub');
+                  setUsefulInfoOpen(true);
+                }}
+                title={
+                  lang === 'th'
+                    ? 'เปิดดูประกาศบ้าน ตารางพี่เลี้ยง ตารางเวร กฎบ้าน กิจกรรม และของหาย'
+                    : 'Announcements, Rosters, Duties, Rules, Trips & Lost/Found'
+                }
+                className="mt-2 inline-flex items-center justify-center gap-1.5 rounded-xl border border-[#E5D3BA] bg-white/95 hover:bg-[#FFF5E4] px-3 py-1.5 text-[11px] font-bold text-[#5E411D] shadow-2xs transition-colors cursor-pointer active:scale-[0.98]"
+              >
+                <span>📢</span>
+                <span>{lang === 'th' ? 'ประกาศ & ข้อมูล' : 'Notices & Info'}</span>
+                <span className="rounded-md bg-[#FFF1D6] px-1.5 py-0.5 text-[10px] font-extrabold text-[#7A5411] tabular-nums">
+                  {sortedHomeAnnouncements.length + 1}
+                </span>
+                {urgentHomeAnnouncementsCount > 0 && (
+                  <span className="h-2 w-2 rounded-full bg-[#E86F87]" aria-hidden="true" />
+                )}
+                <span className="text-[10px] opacity-75">▾</span>
+              </button>
             </div>
           </div>
 
@@ -970,6 +1092,366 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
         onExpressKioskScan={onExpressKioskScan}
       />
 
+      {/* Home Quick Illness Report Modal (Inserted from Clock & Laundry Box) */}
+      {homeSickOpen && (() => {
+        const selectedSickKid = homeSickKidId ? kids.find((k) => k.id === homeSickKidId) ?? null : null;
+        const canSubmitHomeSickPin = (rawPin: string) => {
+          const clean = rawPin.trim();
+          if (homeSickPinGuard.isLocked) {
+            onShowAlert({
+              icon: '🔒',
+              title: lang === 'th' ? 'ระบบล็อกชั่วคราว' : 'Temporarily Locked',
+              message: formatPinLockoutMessage(homeSickPinGuard.remainingSec, lang),
+              tone: 'pink',
+            });
+            return;
+          }
+          if (!/^\d{4}$/.test(clean)) {
+            onShowAlert({
+              icon: '🔑',
+              title: lang === 'th' ? 'กรุณากรอกเลข 4 หลัก' : '4-Digit PIN Required',
+              message:
+                lang === 'th'
+                  ? 'กรอกรหัส PIN 4 หลักของน้อง หรือรหัสพี่เลี้ยง/รหัสลับค่ะ'
+                  : 'Enter kid 4-digit PIN, staff PIN, or active away code.',
+              tone: 'yellow',
+            });
+            return;
+          }
+          const matchedKid = kids.find((k) => k.pin === clean);
+          if (matchedKid) {
+            homeSickPinGuard.recordSuccess();
+            setHomeSickPinInput('');
+            setHomeSickKidId(matchedKid.id);
+            setHomeSickStep('form');
+            return;
+          }
+          if (staffPins.includes(clean) || (activeAwaySecretCode !== null && clean === activeAwaySecretCode)) {
+            homeSickPinGuard.recordSuccess();
+            setHomeSickPinInput('');
+            setHomeSickStep('pick_kid');
+            return;
+          }
+          const res = homeSickPinGuard.recordFailure();
+          setHomeSickPinInput('');
+          onShowAlert({
+            icon: res.lockedNow ? '🔒' : '🔐',
+            title: res.lockedNow
+              ? lang === 'th'
+                ? 'ล็อกชั่วคราว 30 วินาที'
+                : 'Locked for 30 Seconds'
+              : lang === 'th'
+              ? 'รหัส PIN ไม่ถูกต้อง'
+              : 'Incorrect PIN',
+            message: res.lockedNow
+              ? formatPinLockoutMessage(res.lockSec, lang)
+              : `${lang === 'th' ? 'กรุณากรอก PIN 4 หลักของน้อง หรือรหัสพี่เลี้ยงให้ถูกต้อง' : 'Please check the 4-digit PIN.'}\n${formatPinAttemptsHint(res.attemptsRemaining, lang)}`,
+            tone: 'pink',
+          });
+        };
+
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-[#3D322C]/45 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="w-full max-w-lg max-h-[92dvh] overflow-y-auto rounded-[28px] border-4 border-[#F5C5CF] bg-[#FFFDF9] p-5 sm:p-6 pastel-shadow space-y-4">
+              <div className="flex items-start justify-between gap-3 pb-3 border-b border-[#EFE6DC]">
+                <div>
+                  <h3 className="text-lg font-extrabold text-[#702D22] flex items-center gap-2">
+                    <span>🤒</span>
+                    <span>{lang === 'th' ? 'แจ้งอาการเจ็บป่วยด่วน (หน้าแรก)' : 'Quick Illness Report'}</span>
+                  </h3>
+                  <p className="text-xs text-[#6E5C52] mt-0.5">
+                    {lang === 'th'
+                      ? 'แจ้งพี่เลี้ยงทันที พร้อมยกเว้นค่าปรับสายวันนี้ให้อัตโนมัติค่ะ'
+                      : 'Notifies caregivers immediately and waives today’s late fines.'}
+                  </p>
+                </div>
+                {!(homeSickStep === 'line_copy' && !homeSickLineCopied) && (
+                  <button
+                    type="button"
+                    onClick={() => setHomeSickOpen(false)}
+                    className="min-h-[38px] min-w-[38px] rounded-full bg-[#FADADD] hover:bg-[#F7C7CD] text-[#3D322C] font-bold cursor-pointer shrink-0"
+                    aria-label="Close"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {homeSickStep === 'pin' && (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    canSubmitHomeSickPin(homeSickPinInput);
+                  }}
+                  className="space-y-3"
+                >
+                  <div className="rounded-2xl border border-[#F2C9C2] bg-[#FFF8F6] p-3.5 text-xs text-[#702D22] space-y-1">
+                    <div className="font-bold">
+                      🔐 {lang === 'th' ? 'ยืนยันตัวตนก่อนแจ้งเจ็บป่วย' : 'Verify Identity First'}
+                    </div>
+                    <div>
+                      {lang === 'th'
+                        ? activeAwaySecretCode
+                          ? 'ใส่รหัส PIN 4 หลักของน้องเอง หรือรหัสพี่เลี้ยง / รหัสลับวันที่พี่เลี้ยงไม่อยู่ได้เลยค่ะ'
+                          : 'ใส่รหัส PIN 4 หลักของน้องเอง (เพื่อเข้าแจ้งของตัวเอง) หรือใส่ PIN พี่เลี้ยงเพื่อเลือกชื่อน้องค่ะ'
+                        : 'Enter your 4-digit kid PIN or a staff PIN to select a kid.'}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={4}
+                      autoFocus
+                      value={homeSickPinInput}
+                      onChange={(e) => setHomeSickPinInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                      placeholder={lang === 'th' ? 'กรอก PIN 4 หลัก...' : '4-digit PIN...'}
+                      className="flex-1 rounded-2xl border-2 border-[#F2C9C2] bg-white px-4 py-3 text-center font-mono text-xl font-extrabold tracking-widest text-[#3D322C] focus:outline-none focus:ring-2 focus:ring-[#E66C84]"
+                    />
+                    <button
+                      type="submit"
+                      className="min-h-[50px] rounded-2xl bg-[#8B1D36] hover:bg-[#6E1529] text-white px-5 py-3 text-sm font-extrabold cursor-pointer shrink-0"
+                    >
+                      {lang === 'th' ? 'ถัดไป →' : 'Next →'}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {homeSickStep === 'pick_kid' && (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      { g: 0 as const, th: 'ทั้งหมด', en: 'All' },
+                      { g: 1 as const, th: 'กลุ่ม 1 ประถม', en: 'G1' },
+                      { g: 2 as const, th: 'กลุ่ม 2 มัธยม', en: 'G2' },
+                      { g: 3 as const, th: 'กลุ่ม 3 วิทยาลัย', en: 'G3' },
+                    ].map((tab) => (
+                      <button
+                        key={tab.g}
+                        type="button"
+                        onClick={() => setHomeSickGroupFilter(tab.g)}
+                        className={`rounded-xl px-3 py-1.5 text-xs font-bold cursor-pointer ${
+                          homeSickGroupFilter === tab.g
+                            ? 'bg-[#FADADD] border border-[#E66C84] text-[#702D22]'
+                            : 'bg-white border border-[#EBD8C3] text-[#6E5C52]'
+                        }`}
+                      >
+                        {lang === 'th' ? tab.th : tab.en}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-64 overflow-y-auto pr-0.5">
+                    {kids
+                      .filter((k) => homeSickGroupFilter === 0 || k.group === homeSickGroupFilter)
+                      .map((k) => {
+                        const alreadySick = appState.sickReports.some(
+                          (r) => r.kidId === k.id && r.dateKey === todayKey && !r.resolved
+                        );
+                        return (
+                          <button
+                            key={k.id}
+                            type="button"
+                            onClick={() => {
+                              setHomeSickKidId(k.id);
+                              setHomeSickStep('form');
+                            }}
+                            className={`rounded-2xl border-2 px-3 py-2.5 text-left transition-colors cursor-pointer ${
+                              alreadySick
+                                ? 'border-[#A5DFD4] bg-[#EFFAF7] text-[#19534B]'
+                                : 'border-[#F2C9C2] bg-white hover:bg-[#FFF0F3] text-[#3D322C]'
+                            }`}
+                          >
+                            <div className="text-sm font-extrabold truncate">
+                              {k.emoji} {k.nickname}
+                            </div>
+                            <div className="text-[11px] opacity-75">
+                              {alreadySick
+                                ? lang === 'th'
+                                  ? 'แจ้งป่วยวันนี้แล้ว'
+                                  : 'Reported Today'
+                                : lang === 'th'
+                                ? `กลุ่ม ${k.group}`
+                                : `Group ${k.group}`}
+                            </div>
+                          </button>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+
+              {homeSickStep === 'form' && selectedSickKid && (
+                <div className="space-y-4">
+                  <div className="rounded-2xl border-2 border-[#F5C5CF] bg-[#FADADD]/45 p-3.5 text-xs text-[#5E2832] space-y-1">
+                    <div className="font-bold flex items-center justify-between gap-2">
+                      <span>
+                        🩺 ข้อมูลสุขภาพ & การแพ้ยาของน้อง{selectedSickKid.nickname}
+                      </span>
+                      <span className="text-[11px] opacity-75">กลุ่ม {selectedSickKid.group}</span>
+                    </div>
+                    <div>
+                      🩸 กรุ๊ปเลือด: <strong>{selectedSickKid.healthProfile?.bloodType ?? 'ไม่ระบุ'}</strong> · 💊 แพ้ยา:{' '}
+                      <strong>{selectedSickKid.healthProfile?.drugAllergies ?? 'ไม่มี'}</strong> · 🍽️ แพ้อาหาร:{' '}
+                      <strong>{selectedSickKid.healthProfile?.foodAllergies ?? 'ไม่มี'}</strong>
+                    </div>
+                    {selectedSickKid.healthProfile?.regularMeds &&
+                      selectedSickKid.healthProfile.regularMeds !== 'ไม่มี' && (
+                        <div>
+                          💉 ยาประจำตัว: <strong>{selectedSickKid.healthProfile.regularMeds}</strong>
+                        </div>
+                      )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {['มีไข้ / ตัวร้อน', 'ปวดหัว / เวียนหัว', 'ปวดท้อง', 'เจ็บคอ / ไอ', 'ปวดเมื่อย / บาดเจ็บ'].map(
+                      (sym) => (
+                        <button
+                          key={sym}
+                          type="button"
+                          onClick={() => setHomeSickSymptoms(sym)}
+                          className={`rounded-2xl px-3.5 py-2 text-xs sm:text-sm font-semibold border-2 cursor-pointer ${
+                            homeSickSymptoms === sym
+                              ? 'bg-[#FADADD] border-[#E66C84] text-[#3D322C]'
+                              : 'bg-white border-[#EBD8C3] text-[#6E5C52]'
+                          }`}
+                        >
+                          {sym}
+                        </button>
+                      )
+                    )}
+                  </div>
+
+                  <textarea
+                    rows={3}
+                    value={homeSickDetails}
+                    onChange={(e) => setHomeSickDetails(e.target.value)}
+                    placeholder={
+                      lang === 'th'
+                        ? 'ระบุอาการเพิ่มเติม เช่น ปวดตั้งแต่เมื่อคืน ต้องการยา...'
+                        : 'Additional symptom details...'
+                    }
+                    className="w-full rounded-2xl border-2 border-[#F3C5AE] bg-white p-3.5 text-sm"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cleanDetails = homeSickDetails.trim() || '-';
+                      onAddSickReport?.({
+                        id: `sick_${Date.now()}`,
+                        kidId: selectedSickKid.id,
+                        kidNickname: selectedSickKid.nickname,
+                        dateKey: todayKey,
+                        reportedAt: now.toISOString(),
+                        symptoms: homeSickSymptoms,
+                        details: cleanDetails,
+                        resolved: false,
+                      });
+                      const lineMsg = [
+                        '🚨 [แจ้งอาการเจ็บป่วยด่วน - Barnhem]',
+                        `👤 ชื่อเล่น: น้อง${selectedSickKid.nickname} (${selectedSickKid.id.toUpperCase()} | กลุ่ม ${selectedSickKid.group})`,
+                        `🤒 อาการ: ${homeSickSymptoms}`,
+                        `📝 รายละเอียด: ${cleanDetails}`,
+                        `⏰ เวลาที่แจ้ง: ${formatDigitalClock(now)} น. (${todayKey})`,
+                        '💚 ระบบยกเว้นค่าปรับสายวันนี้ให้อัตโนมัติแล้วค่ะ',
+                      ].join('\n');
+                      setHomeSickDetails('');
+                      setHomeSickLineCopied(false);
+                      setHomeSickLineText(lineMsg);
+                      setHomeSickStep('line_copy');
+                    }}
+                    className="w-full min-h-[50px] rounded-2xl bg-[#3D322C] hover:bg-[#2C241F] text-white font-bold cursor-pointer"
+                  >
+                    🚑{' '}
+                    {lang === 'th'
+                      ? 'ส่งแจ้งอาการเจ็บป่วย & สร้างข้อความส่ง LINE'
+                      : 'Submit Sick Report & Prepare LINE Alert'}
+                  </button>
+                </div>
+              )}
+
+              {homeSickStep === 'line_copy' && homeSickLineText && (
+                <div className="space-y-4">
+                  <div className="rounded-2xl border-2 border-[#E66C84] bg-[#FADADD]/60 p-4 text-sm text-[#6B2D39] space-y-1">
+                    <div className="font-bold text-base">
+                      🚨{' '}
+                      {lang === 'th'
+                        ? 'ขั้นตอนสำคัญ (บังคับ): คัดลอกส่งเข้ากลุ่ม LINE ทันที!'
+                        : 'Urgent Mandatory Step: Copy for LINE Group!'}
+                    </div>
+                    <p className="text-xs">
+                      {lang === 'th'
+                        ? 'กรุณากดปุ่ม "คัดลอกข้อความส่ง LINE" ด้านล่าง แล้วนำไปวาง (Paste) ในกลุ่ม LINE บ้าน Barnhem ก่อนปิดหน้าต่างนี้'
+                        : 'Tap Copy below and paste into the Barnhem LINE group before closing.'}
+                    </p>
+                  </div>
+
+                  <textarea
+                    readOnly
+                    rows={6}
+                    value={homeSickLineText}
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="w-full rounded-2xl border-2 border-[#EBD8C3] bg-white p-3.5 text-xs sm:text-sm font-medium text-[#3D322C]"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await copyTextToClipboard(homeSickLineText);
+                      setHomeSickLineCopied(true);
+                    }}
+                    className={`w-full min-h-[52px] rounded-2xl font-bold text-sm sm:text-base cursor-pointer transition-colors ${
+                      homeSickLineCopied
+                        ? 'bg-[#2F685E] text-white'
+                        : 'bg-[#C93B4E] hover:bg-[#AE2F40] text-white shadow-md'
+                    }`}
+                  >
+                    {homeSickLineCopied
+                      ? lang === 'th'
+                        ? '✅ คัดลอกข้อความส่ง LINE สำเร็จแล้ว! กดวางในแชท LINE ได้เลย'
+                        : '✅ Copied for LINE! Ready to Paste'
+                      : lang === 'th'
+                      ? '📋 คัดลอกข้อความแจ้งป่วยส่ง LINE กลุ่มทันที (บังคับกด)'
+                      : '📋 Copy Urgent Sick Alert for LINE Now (Required)'}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={!homeSickLineCopied}
+                    onClick={() => {
+                      setHomeSickOpen(false);
+                      onShowAlert({
+                        icon: '🤒💚',
+                        title: lang === 'th' ? 'แจ้งป่วยและคัดลอกส่ง LINE เรียบร้อย!' : 'Sick Alert Complete!',
+                        message:
+                          lang === 'th'
+                            ? 'อย่าลืมกดวางข้อความในกลุ่ม LINE ด้วยนะ พี่เลี้ยงได้รับแจ้งแล้ว และระบบยกเว้นค่าปรับสายวันนี้ให้เรียบร้อย พักผ่อนเยอะๆ นะคนเก่ง'
+                            : 'Please paste into LINE group. Late fines are waived today. Rest well!',
+                        tone: 'mint',
+                      });
+                    }}
+                    className="w-full min-h-[48px] rounded-2xl bg-[#3D322C] disabled:bg-[#C9BEB5] disabled:cursor-not-allowed text-white font-bold cursor-pointer"
+                  >
+                    {homeSickLineCopied
+                      ? lang === 'th'
+                        ? '✓ เสร็จสิ้น & ปิดหน้าต่าง'
+                        : '✓ Done & Close'
+                      : lang === 'th'
+                      ? '🔒 กดปุ่มคัดลอกข้อความส่ง LINE ด้านบนก่อนจึงจะปิดได้'
+                      : '🔒 Tap Copy button above to unlock close'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Unified Timed + Custom Quick Shortcut Commands Menu Modal with '+' Add Button */}
       {quickActionsMenuOpen && (
         <div
@@ -1059,6 +1541,16 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                     ? `ขณะนี้ ${formatDigitalClock(now)} น. · กด + เพิ่มคีย์ลัด, ⚙️ ตั้งเวลา หรือ 👥 สิทธิ์ & มือถือ`
                     : `Time ${formatDigitalClock(now)} · + Add shortcut, ⚙️ Schedule, 👥 Kid access`}
                 </p>
+                {activeAwaySecretCode && (
+                  <div className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-[#F5F0FF] border border-[#C8B7EB] px-2 py-0.5 text-[11px] font-bold text-[#3E2B63]">
+                    <span>🔑</span>
+                    <span>
+                      {lang === 'th'
+                        ? 'วันที่พี่เลี้ยงไม่อยู่: ใช้รหัสลับ 4 หลักจากผู้สร้างเปิดช่องคำสั่งนี้ได้ค่ะ'
+                        : 'Staff away today: Creator daily secret code is active for these commands.'}
+                    </span>
+                  </div>
+                )}
               </div>
               <button
                 type="button"
@@ -1526,6 +2018,14 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
             ? '🔐 ใส่รหัส PIN พี่เลี้ยงเพื่อแสดงรายชื่อน้อง'
             : '🔐 Enter Staff PIN to Show Kids’ Names'
         }
+        subtitle={
+          (pendingBoardUnlock?.type === 'core' || pendingBoardUnlock?.type === 'custom') &&
+          activeAwaySecretCode
+            ? lang === 'th'
+              ? '🔑 วันที่พี่เลี้ยงไม่อยู่: สามารถใช้รหัสลับ 4 หลักจากผู้สร้างได้ค่ะ'
+              : '🔑 Staff away today: Creator daily 4-digit secret code is accepted.'
+            : undefined
+        }
         onCancel={() => setPendingBoardUnlock(null)}
         onSubmitPin={(pin) => {
           if (!pendingBoardUnlock) return;
@@ -1538,7 +2038,12 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
             });
             return;
           }
-          if (staffPins.includes(pin)) {
+          const isCheckInBoardUnlock =
+            pendingBoardUnlock.type === 'core' || pendingBoardUnlock.type === 'custom';
+          const isValidAwayCode =
+            isCheckInBoardUnlock && activeAwaySecretCode !== null && pin === activeAwaySecretCode;
+
+          if (staffPins.includes(pin) || isValidAwayCode) {
             staffBoardPinGuard.recordSuccess();
             const unlockJob = pendingBoardUnlock;
             setPendingBoardUnlock(null);
@@ -2070,6 +2575,556 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
           </div>
         );
       })()}
+
+      {/* Single Collapsed Modal: House Announcements & Useful Public Information */}
+      {usefulInfoOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-2.5 sm:p-4 bg-[#3D322C]/45 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className={`w-full ${
+              usefulInfoTab === 'staff_roster' || usefulInfoTab === 'duties'
+                ? 'max-w-4xl'
+                : 'max-w-2xl'
+            } max-h-[92dvh] flex flex-col rounded-[24px] sm:rounded-[30px] border-4 border-[#EAD9C5] bg-[#FFFDF9] p-4 sm:p-6 pastel-shadow space-y-4 overflow-hidden`}
+          >
+            <div className="flex items-start justify-between gap-2 pb-3 border-b border-[#EFE6DC]">
+              <div className="flex items-start gap-2.5 min-w-0">
+                {usefulInfoTab !== 'hub' && (
+                  <button
+                    type="button"
+                    onClick={() => setUsefulInfoTab('hub')}
+                    className="min-h-[36px] rounded-xl border border-[#E5DAD0] bg-white hover:bg-[#FAF5EF] px-3 py-1.5 text-xs font-extrabold text-[#5E4E45] cursor-pointer shrink-0"
+                  >
+                    ← {lang === 'th' ? 'หน้ารวม' : 'Back'}
+                  </button>
+                )}
+                <div className="min-w-0">
+                  <h3 className="text-base sm:text-lg font-extrabold text-[#3D322C] truncate">
+                    {usefulInfoTab === 'hub' &&
+                      (lang === 'th'
+                        ? '📢 ประกาศบ้าน & ข้อมูลที่เป็นประโยชน์'
+                        : '📢 House Announcements & Useful Info')}
+                    {usefulInfoTab === 'announcements' &&
+                      (lang === 'th'
+                        ? '📢 ประกาศอัปเดตบ้าน Barnhem'
+                        : '📢 Barnhem House Announcements')}
+                    {usefulInfoTab === 'staff_roster' &&
+                      (lang === 'th'
+                        ? '👩‍🏫🚐 ตารางพี่เลี้ยง ไนท์วอช & ตารางขับรถ'
+                        : '👩‍🏫🚐 Staff Shift, Night Watch & Driving Roster')}
+                    {usefulInfoTab === 'duties' &&
+                      (lang === 'th'
+                        ? '🧹 ตารางเวรต่างๆ ของบ้าน (14 โซน · ห้องครัว · ทิ้งขยะ)'
+                        : '🧹 House Duty Schedules (Weekend · Kitchen · Trash)')}
+                    {usefulInfoTab === 'rules_schedule' &&
+                      (lang === 'th'
+                        ? '📜 กฎบ้าน & ตารางเวลาเปิด–ปิดคำสั่ง'
+                        : '📜 House Rules & Command Schedule')}
+                    {usefulInfoTab === 'trips' &&
+                      (lang === 'th'
+                        ? '🗺️ กิจกรรม & สถานที่เที่ยว'
+                        : '🗺️ Outings & Activities')}
+                    {usefulInfoTab === 'lost_found' &&
+                      (lang === 'th'
+                        ? '🔎 กระดานของหาย / เก็บของได้'
+                        : '🔎 Lost & Found Board')}
+                  </h3>
+                  <p className="text-[11px] sm:text-xs text-[#6E5C52] mt-0.5 truncate">
+                    {usefulInfoTab === 'hub'
+                      ? lang === 'th'
+                        ? 'รวมประกาศสำคัญ ตารางเวร กฎบ้าน กิจกรรม และของหายไว้ในปุ่มเดียว'
+                        : 'House notices, staff & duty schedules, rules, outings, and lost & found'
+                      : lang === 'th'
+                      ? `อัปเดตเรียลไทม์ · ขณะนี้เวลา ${formatDigitalClock(now)} น.`
+                      : `Live update · ${formatDigitalClock(now)}`}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUsefulInfoOpen(false)}
+                className="min-h-[38px] min-w-[38px] rounded-full bg-[#FADADD] hover:bg-[#F7C7CD] text-[#3D322C] font-bold cursor-pointer shrink-0"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-4 pr-0.5">
+              {/* HUB OVERVIEW */}
+              {usefulInfoTab === 'hub' && (
+                <div className="space-y-4">
+                  {/* Spotlight Top Announcement / Live Notice */}
+                  {(() => {
+                    const topPinOrUrgent =
+                      sortedHomeAnnouncements.find(
+                        (a) => a.priority === 'urgent' || a.pinned
+                      ) ?? sortedHomeAnnouncements[0];
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => setUsefulInfoTab('announcements')}
+                        className={`w-full rounded-2xl border-2 p-4 text-left space-y-1.5 cursor-pointer transition-colors ${
+                          topPinOrUrgent?.priority === 'urgent'
+                            ? 'border-[#F3B7C0] bg-[#FFF2F4] hover:bg-[#FFE6EA]'
+                            : 'border-[#F3D86B] bg-[#FFFBEB] hover:bg-[#FFF5CC]'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2 text-[11px] font-extrabold">
+                          <span className="text-[#7A5411]">
+                            {topPinOrUrgent
+                              ? topPinOrUrgent.priority === 'urgent'
+                                ? '🚨 ประกาศด่วนล่าสุด'
+                                : '📌 ประกาศปักหมุดล่าสุด'
+                              : homeDynamicEventAnnouncement?.badgeTh ?? '📢 ประกาศประจำวัน'}
+                          </span>
+                          <span className="text-[#5E411D] shrink-0">
+                            {lang === 'th'
+                              ? `ดูทั้งหมด (${sortedHomeAnnouncements.length + 1}) →`
+                              : `View All (${sortedHomeAnnouncements.length + 1}) →`}
+                          </span>
+                        </div>
+                        <div className="font-extrabold text-sm sm:text-base text-[#3D322C]">
+                          {topPinOrUrgent
+                            ? topPinOrUrgent.title
+                            : lang === 'th'
+                            ? homeDynamicEventAnnouncement?.titleTh
+                            : homeDynamicEventAnnouncement?.titleEn}
+                        </div>
+                        <p className="text-xs text-[#5E4E45] line-clamp-2 whitespace-pre-line">
+                          {topPinOrUrgent
+                            ? topPinOrUrgent.body
+                            : lang === 'th'
+                            ? homeDynamicEventAnnouncement?.bodyTh
+                            : homeDynamicEventAnnouncement?.bodyEn}
+                        </p>
+                      </button>
+                    );
+                  })()}
+
+                  {/* All Public Announcements & Helpful House Utilities in One Place */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setUsefulInfoTab('announcements')}
+                      className="min-h-[64px] rounded-2xl border-2 border-[#F4DB73] bg-[#FFFDF0] hover:bg-[#FFF5BA]/60 px-4 py-3 text-left flex items-center justify-between gap-3 cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-2xl shrink-0">📢</span>
+                        <div className="min-w-0">
+                          <div className="text-sm font-extrabold text-[#3D322C] truncate">
+                            {lang === 'th' ? 'ประกาศบ้าน Barnhem' : 'House Announcements'}
+                          </div>
+                          <div className="text-[11px] text-[#6E5C52] truncate">
+                            {lang === 'th'
+                              ? `${sortedHomeAnnouncements.length} ประกาศพี่เลี้ยง · +1 เวลาบ้านตอนนี้`
+                              : `${sortedHomeAnnouncements.length} staff notices · Live event`}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="text-xs font-extrabold text-[#7A5411] shrink-0">
+                        {sortedHomeAnnouncements.length + 1} →
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setUsefulInfoTab('staff_roster')}
+                      className="min-h-[64px] rounded-2xl border-2 border-[#BEDBF0] bg-[#F5FAFF] hover:bg-[#EAF4FF] px-4 py-3 text-left flex items-center justify-between gap-3 cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-2xl shrink-0">📅</span>
+                        <div className="min-w-0">
+                          <div className="text-sm font-extrabold text-[#1D4D73] truncate">
+                            {lang === 'th' ? 'ตารางพี่เลี้ยง & ขับรถ' : 'Staff & Driving Roster'}
+                          </div>
+                          <div className="text-[11px] text-[#456D8F] truncate">
+                            {lang === 'th'
+                              ? `เวรเช้าวันนี้: ${todayMorningCarerLabel}`
+                              : `Today morning: ${todayMorningCarerLabel}`}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="text-xs font-extrabold text-[#1D4D73] shrink-0">→</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setUsefulInfoTab('duties')}
+                      className="min-h-[64px] rounded-2xl border-2 border-[#B3E0DC] bg-[#F0FAF8] hover:bg-[#E0F5F1] px-4 py-3 text-left flex items-center justify-between gap-3 cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-2xl shrink-0">🧹</span>
+                        <div className="min-w-0">
+                          <div className="text-sm font-extrabold text-[#19534B] truncate">
+                            {lang === 'th' ? 'ตารางเวรต่างๆ ของบ้าน' : 'House Duty Schedules'}
+                          </div>
+                          <div className="text-[11px] text-[#356964] truncate">
+                            {lang === 'th'
+                              ? 'เวรวันหยุด 14 โซน · ห้องครัว · ทิ้งขยะ'
+                              : '14-Zone Weekend · Kitchen · Trash'}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="text-xs font-extrabold text-[#19534B] shrink-0">→</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setUsefulInfoTab('rules_schedule')}
+                      className="min-h-[64px] rounded-2xl border-2 border-[#D4C7EA] bg-[#FAF7FD] hover:bg-[#F2ECFA] px-4 py-3 text-left flex items-center justify-between gap-3 cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-2xl shrink-0">📜</span>
+                        <div className="min-w-0">
+                          <div className="text-sm font-extrabold text-[#3E2B63] truncate">
+                            {lang === 'th' ? 'กฎบ้าน & ตารางเวลาคำสั่ง' : 'Rules & Command Hours'}
+                          </div>
+                          <div className="text-[11px] text-[#5B4782] truncate">
+                            {lang === 'th'
+                              ? `กติกา 3 กลุ่ม · เส้นตายการบ้าน ${hwCurfewTh}`
+                              : `3 Groups · Curfew ${hwCurfewEn}`}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="text-xs font-extrabold text-[#3E2B63] shrink-0">→</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setUsefulInfoTab('trips')}
+                      className="min-h-[64px] rounded-2xl border-2 border-[#C3DFEC] bg-[#F5FBFE] hover:bg-[#E7F4FB] px-4 py-3 text-left flex items-center justify-between gap-3 cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-2xl shrink-0">🗺️</span>
+                        <div className="min-w-0">
+                          <div className="text-sm font-extrabold text-[#1B4A73] truncate">
+                            {lang === 'th' ? 'กิจกรรม & สถานที่เที่ยว' : 'Outings & Trips'}
+                          </div>
+                          <div className="text-[11px] text-[#456D8F] truncate">
+                            {lang === 'th'
+                              ? `ทริปที่กำลังเปิด ${appState.trips.length} รายการ`
+                              : `${appState.trips.length} upcoming trip(s)`}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="text-xs font-extrabold text-[#1B4A73] shrink-0">
+                        {appState.trips.length} →
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setUsefulInfoTab('lost_found')}
+                      className="min-h-[64px] rounded-2xl border-2 border-[#EBD8C3] bg-white hover:bg-[#FAF5EF] px-4 py-3 text-left flex items-center justify-between gap-3 cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-2xl shrink-0">🔎</span>
+                        <div className="min-w-0">
+                          <div className="text-sm font-extrabold text-[#3D322C] truncate">
+                            {lang === 'th' ? 'กระดานของหาย / เก็บของได้' : 'Lost & Found Board'}
+                          </div>
+                          <div className="text-[11px] text-[#7B695F] truncate">
+                            {lang === 'th'
+                              ? openHomeLostCount > 0
+                                ? `รอเจ้าของมารับ ${openHomeLostCount} รายการ`
+                                : 'ไม่มีรายการรอรับในตอนนี้'
+                              : `${openHomeLostCount} open item(s)`}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="text-xs font-extrabold text-[#6E5C52] shrink-0">
+                        {openHomeLostCount} →
+                      </span>
+                    </button>
+                  </div>
+
+                  <div className="rounded-2xl border border-[#EAE1D8] bg-[#FAF7F3] px-4 py-2.5 text-[11px] text-[#6E5C52]">
+                    💡{' '}
+                    {lang === 'th'
+                      ? 'ข้อมูลส่วนตัวของน้อง (แชทหลังไมค์ คะแนนดาวส่วนตัว บทลงโทษ และโหวตลับ) จะเข้าดูได้เฉพาะหลังล็อกอินด้วย PIN 4 หลักเท่านั้นค่ะ'
+                      : 'Private kid info (personal stars, DMs, penalties, and secret votes) remains protected behind your 4-digit PIN.'}
+                  </div>
+                </div>
+              )}
+
+              {/* SUB-VIEW 1: HOUSE ANNOUNCEMENTS */}
+              {usefulInfoTab === 'announcements' && (
+                <div className="space-y-3">
+                  {homeDynamicEventAnnouncement && (
+                    <div
+                      className={`rounded-2xl border-2 p-4 space-y-2 ${
+                        homeDynamicEventAnnouncement.isFestival
+                          ? 'border-[#E6B8D0]'
+                          : 'border-[#96C3E6] bg-[#EFF7FF]'
+                      }`}
+                      style={
+                        homeDynamicEventAnnouncement.isFestival && activeFestival
+                          ? { background: activeFestival.bannerGradient }
+                          : undefined
+                      }
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="rounded-lg bg-white/85 border border-[#E5DAD0] px-2.5 py-0.5 text-[11px] font-extrabold text-[#3D322C]">
+                          {lang === 'th'
+                            ? homeDynamicEventAnnouncement.badgeTh
+                            : homeDynamicEventAnnouncement.badgeEn}
+                        </span>
+                        <span className="text-[11px] font-bold text-[#5E4E45]">
+                          ⏰{' '}
+                          {lang === 'th'
+                            ? homeDynamicEventAnnouncement.windowLabelTh
+                            : homeDynamicEventAnnouncement.windowLabelEn}
+                        </span>
+                      </div>
+                      <div className="font-extrabold text-base text-[#3D322C]">
+                        {lang === 'th'
+                          ? homeDynamicEventAnnouncement.titleTh
+                          : homeDynamicEventAnnouncement.titleEn}
+                      </div>
+                      <p className="text-sm text-[#4E3F38] whitespace-pre-line leading-relaxed">
+                        {lang === 'th'
+                          ? homeDynamicEventAnnouncement.bodyTh
+                          : homeDynamicEventAnnouncement.bodyEn}
+                      </p>
+                    </div>
+                  )}
+
+                  {sortedHomeAnnouncements.length === 0 ? (
+                    <p className="text-sm text-[#7B695F] text-center py-4">
+                      {lang === 'th'
+                        ? 'ยังไม่มีประกาศเพิ่มเติมจากพี่เลี้ยงในเวลานี้'
+                        : 'No additional staff announcements right now.'}
+                    </p>
+                  ) : (
+                    sortedHomeAnnouncements.map((ann) => (
+                      <div
+                        key={ann.id}
+                        className={`rounded-2xl border-2 p-4 space-y-1.5 ${
+                          ann.priority === 'urgent'
+                            ? 'border-[#F3B7C0] bg-[#FADADD]/45'
+                            : 'border-[#F4DB73] bg-[#FFF5BA]/45'
+                        }`}
+                      >
+                        <div className="font-bold text-base text-[#3D322C]">
+                          {ann.pinned ? '📌 ' : ''}
+                          {ann.priority === 'urgent' ? '🚨 ' : '📢 '}
+                          {ann.title}
+                        </div>
+                        <p className="text-sm text-[#53433A] whitespace-pre-line leading-relaxed">
+                          {ann.body}
+                        </p>
+                        {(ann.startAt || ann.endAt) && (
+                          <div className="text-[11px] font-semibold text-[#456D8F]">
+                            🗓️{' '}
+                            {ann.startAt
+                              ? new Date(ann.startAt).toLocaleString(lang === 'th' ? 'th-TH' : 'en-US')
+                              : '—'}{' '}
+                            →{' '}
+                            {ann.endAt
+                              ? new Date(ann.endAt).toLocaleString(lang === 'th' ? 'th-TH' : 'en-US')
+                              : '—'}
+                          </div>
+                        )}
+                        <div className="text-xs text-[#7B695F] pt-1">
+                          {ann.authorName} ·{' '}
+                          {new Date(ann.createdAt).toLocaleString(lang === 'th' ? 'th-TH' : 'en-US')}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* SUB-VIEW 2: STAFF & DRIVING ROSTER */}
+              {usefulInfoTab === 'staff_roster' && (
+                <StaffRosterPanel
+                  now={now}
+                  lang={lang}
+                  isPublicHolidayToday={isPublicHolidayToday}
+                  staffLeaves={appState.staffLeaves ?? []}
+                  compactHeader
+                />
+              )}
+
+              {/* SUB-VIEW 3: KID DUTY SCHEDULES */}
+              {usefulInfoTab === 'duties' && (
+                <KidDutySchedulesPanel
+                  kids={kids}
+                  now={now}
+                  lang={lang}
+                  isPublicHolidayToday={isPublicHolidayToday}
+                  compactHeader
+                />
+              )}
+
+              {/* SUB-VIEW 4: HOUSE RULES & LIVE COMMAND SCHEDULE */}
+              {usefulInfoTab === 'rules_schedule' && (
+                <div className="space-y-4 text-sm text-[#3D322C] leading-relaxed">
+                  <div className="rounded-2xl border-2 border-[#B9E8DF] bg-[#F2FCF9] p-4 space-y-2.5">
+                    <div className="font-extrabold text-[#114A42]">
+                      ⏰ {lang === 'th' ? 'ตารางเวลาเปิด–ปิดคำสั่งหน้าแรก (ตั้งค่าปัจจุบัน)' : 'Live Command Hours'}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                      {effectiveHomeActions.map((act) => {
+                        const isOpenNow = isHomeActionOpenAt(act.id, now, appState.settings);
+                        return (
+                          <div
+                            key={`rule-win-${act.id}`}
+                            className={`rounded-xl border px-3 py-2 flex items-center justify-between gap-2 ${
+                              isOpenNow
+                                ? 'border-[#64CBB9] bg-white text-[#114A42]'
+                                : 'border-[#E6DCD2] bg-white/80 text-[#6E5C52]'
+                            }`}
+                          >
+                            <span className="font-bold truncate">
+                              {act.emoji} {lang === 'th' ? act.titleTh : act.titleEn}
+                            </span>
+                            <span className="tabular-nums font-bold shrink-0">
+                              {lang === 'th' ? act.windowLabelTh : act.windowLabelEn}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl bg-[#FFF5BA]/60 p-4 space-y-1.5 text-xs sm:text-sm">
+                    <h4 className="font-extrabold text-sm sm:text-base">
+                      🐣 {lang === 'th' ? 'กติกาทีมน้องเล็ก (กลุ่ม 1 ประถม)' : 'Group 1 Rules'}
+                    </h4>
+                    <p>• กินข้าวเช้าก่อน 06:40 น. (+5 ⭐) และขึ้นรถตู้ไม่เกิน 07:01 น. (+10 ⭐)</p>
+                    <p>• กลับบ้าน 16:30 น. จับเวลา Speedy Ninja 20 นาที เรียนเสริมไม่เกิน 16:50 น.</p>
+                    <p>• งานบ้าน & ตากชุดนักเรียนก่อน 18:15 น. (+10 ⭐) / ด่านบอส 20:00 น. / เข้านอน 21:00 น.</p>
+                  </div>
+
+                  <div className="rounded-2xl bg-[#DCEEF8]/60 p-4 space-y-1.5 text-xs sm:text-sm">
+                    <h4 className="font-extrabold text-sm sm:text-base">
+                      🌟 {lang === 'th' ? 'กติกาทีมพี่โต (กลุ่ม 2 มัธยม)' : 'Group 2 Rules'}
+                    </h4>
+                    <p>• จ–ศ: ขอรับมือถือตามรอบเวลา และเช็คชื่อไปโรงเรียนไม่เกิน 07:21 น. (+10 ⭐)</p>
+                    <p>• เช้าเสาร์: 08:00–08:30 น. | เช้าอาทิตย์: 08:00–08:15 น. (+15 ⭐)</p>
+                    <p>• กลับบ้านเก็บมือถือเข้ากล่อง (+5 ⭐) และเช็คลิสต์ครบ 4 ข้อรับมือถือรอบเย็น 18:30 น.</p>
+                    <p>
+                      • ขออนุญาตทำการบ้าน ({hwPermWin.labelTh}) ใช้เพิ่มได้ถึง {hwCurfewTh} (หากเกินถือว่ายินยอมงดใช้มือถือวัน Free Day 1 วัน)
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl bg-[#EAE4F2]/70 p-4 space-y-1.5 text-xs sm:text-sm">
+                    <h4 className="font-extrabold text-sm sm:text-base">
+                      🎓 {lang === 'th' ? 'กติกาทีมพี่ใหญ่ (กลุ่ม 3 วิทยาลัย / ฝึกงาน)' : 'Group 3 Rules'}
+                    </h4>
+                    <p>• กะเช้า: เช็คอินไปฝึกงาน/เรียน (+10 ⭐) · กะเย็น: เก็บมือถือเข้าตู้ (+20 ⭐)</p>
+                    <p>• กะค่ำ: คืนมือถือเข้าตู้พี่เลี้ยงไม่เกิน Curfew 22:45 น. ทุกวัน</p>
+                  </div>
+                </div>
+              )}
+
+              {/* SUB-VIEW 5: OUTING TRIPS */}
+              {usefulInfoTab === 'trips' && (
+                <div className="space-y-3">
+                  <div className="rounded-2xl border border-[#C3DFEC] bg-[#F5FBFE] px-4 py-2.5 text-xs text-[#1B4A73]">
+                    💡{' '}
+                    {lang === 'th'
+                      ? 'น้องสามารถดูรายละเอียดกิจกรรมและพี่เลี้ยงดูแลได้ที่นี่ หากต้องการกดลงชื่อไปด้วย หรือส่งข้อความหลังไมค์ถึงพี่เลี้ยง ให้เข้าสู่ระบบด้วยรหัส PIN 4 หลักก่อนนะคะ'
+                      : 'Sign in with your 4-digit PIN to RSVP or send a private question about any trip.'}
+                  </div>
+                  {appState.trips.length === 0 ? (
+                    <p className="text-sm text-[#7B695F] text-center py-6">
+                      {lang === 'th' ? 'ยังไม่มีทริปสถานที่เที่ยวในตอนนี้' : 'No trips posted yet.'}
+                    </p>
+                  ) : (
+                    appState.trips.map((trip) => (
+                      <div
+                        key={trip.id}
+                        className="rounded-2xl border-2 border-[#B3E0DC] bg-white p-4 space-y-2"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <div className="font-bold text-base text-[#3D322C]">
+                              🗺️ {trip.title}
+                            </div>
+                            <div className="text-xs text-[#6E5C52] mt-0.5">
+                              📍 {trip.location} · 🗓️ {trip.dateText}
+                            </div>
+                            <div className="text-xs text-[#6E5C52]">
+                              👩‍🏫 {lang === 'th' ? 'พี่เลี้ยงดูแล:' : 'Chaperones:'} {trip.chaperone}
+                            </div>
+                          </div>
+                          <span className="rounded-xl bg-[#D4F0F0] px-3 py-1 text-xs font-extrabold text-[#214F4B]">
+                            👥 {lang === 'th' ? `ลงชื่อแล้ว ${trip.attendeeIds.length} คน` : `${trip.attendeeIds.length} going`}
+                          </span>
+                        </div>
+                        <p className="text-xs sm:text-sm text-[#5E4E45] whitespace-pre-line">
+                          {trip.details}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* SUB-VIEW 6: LOST & FOUND BOARD */}
+              {usefulInfoTab === 'lost_found' && (
+                <div className="space-y-3">
+                  <div className="rounded-2xl border border-[#F4DB73] bg-[#FFFDF0] px-4 py-2.5 text-xs text-[#6B5412]">
+                    💡{' '}
+                    {lang === 'th'
+                      ? 'หากเห็นของตัวเองในรายการด้านล่าง หรือต้องการโพสต์แจ้งของหาย/เก็บของได้ ให้เข้าสู่ระบบด้วยรหัส PIN 4 หลักของน้องเพื่อกดรับคืนได้เลยค่ะ'
+                      : 'Sign in with your 4-digit PIN to post or claim an item.'}
+                  </div>
+                  {appState.lostFoundItems.length === 0 ? (
+                    <p className="text-sm text-[#7B695F] text-center py-6">
+                      {lang === 'th' ? 'ยังไม่มีรายการของหายในตอนนี้' : 'No lost & found items.'}
+                    </p>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {appState.lostFoundItems.map((item) => (
+                        <div
+                          key={item.id}
+                          className="rounded-2xl border border-[#EBD8C3] bg-white p-3.5 flex items-start gap-3 text-xs"
+                        >
+                          {item.photoBase64 && (
+                            <img
+                              src={item.photoBase64}
+                              alt={item.title}
+                              className="h-14 w-14 rounded-xl object-cover border shrink-0"
+                            />
+                          )}
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <div className="font-bold text-sm text-[#3D322C]">
+                              {item.status === 'claimed'
+                                ? '✅ [คืนเจ้าของแล้ว] '
+                                : item.status === 'found'
+                                ? '✨ [เจอของ] '
+                                : '❓ [ตามหา] '}
+                              {item.title}
+                            </div>
+                            <div className="text-[#6E5C52]">
+                              📍 {item.locationFound} · โพสต์โดย {item.postedByName}
+                            </div>
+                            {item.description && item.description !== '-' && (
+                              <div className="text-[#53433A]">{item.description}</div>
+                            )}
+                            {item.claimedByNickname && (
+                              <div className="text-[#2F685E] font-bold">
+                                🙋‍♀️ {item.claimedByNickname} แสดงตัวรับคืนแล้ว
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

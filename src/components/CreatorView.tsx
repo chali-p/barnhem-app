@@ -27,6 +27,8 @@ import {
   findPinConflict,
   formatPinAttemptsHint,
   formatPinLockoutMessage,
+  generateNonConflicting4DigitCode,
+  getActiveKidAwaySecretCode,
   usePinGuard,
 } from '../utils/pinGuard';
 import { getDateKey } from '../utils/timeRules';
@@ -160,10 +162,21 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
   const [piggyGroupFilter, setPiggyGroupFilter] = useState<0 | 1 | 2 | 3>(0);
   const [creatorPin1, setCreatorPin1] = useState(state.settings.creatorPins[0] ?? '9292');
   const [creatorPin2, setCreatorPin2] = useState(state.settings.creatorPins[1] ?? '1629');
+  const [awaySecretDraftCode, setAwaySecretDraftCode] = useState(state.settings.kidAwaySecretCode ?? '');
+  const [awaySecretDraftDate, setAwaySecretDraftDate] = useState(
+    state.settings.kidAwaySecretDateKey ?? getDateKey(now)
+  );
   const [showRosterRadar, setShowRosterRadar] = useState(false);
   const pinGuard = usePinGuard('creator');
 
+  const todayDateStr = getDateKey(now);
+  useEffect(() => {
+    setAwaySecretDraftCode(state.settings.kidAwaySecretCode ?? '');
+    setAwaySecretDraftDate(state.settings.kidAwaySecretDateKey ?? todayDateStr);
+  }, [state.settings.kidAwaySecretCode, state.settings.kidAwaySecretDateKey, todayDateStr]);
+
   type CreatorSectionKey =
+    | 'awaySecret'
     | 'piggyRates'
     | 'piggyKids'
     | 'community'
@@ -177,6 +190,7 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
     | 'cloud';
 
   const CREATOR_SECTION_KEYS: CreatorSectionKey[] = [
+    'awaySecret',
     'piggyRates',
     'piggyKids',
     'community',
@@ -577,6 +591,210 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
           </div>
         </section>
       )}
+
+      {/* 0. CREATOR DAILY SECRET CODE FOR KIDS WHEN STAFF ARE AWAY */}
+      {(() => {
+        const activeTodayAwayCode = getActiveKidAwaySecretCode(state.settings, todayKey);
+        const savedCode = (state.settings.kidAwaySecretCode ?? '').trim();
+        const savedDate = state.settings.kidAwaySecretDateKey ?? null;
+        const isScheduledOtherDay = Boolean(/^\d{4}$/.test(savedCode) && savedDate && savedDate !== todayKey);
+
+        return (
+          <section className="no-print rounded-[28px] border-2 border-[#C8B7EB] bg-gradient-to-br from-[#F9F5FF] to-[#FFFDF9] p-5 pastel-shadow space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-base sm:text-lg font-extrabold text-[#3E2B63] flex flex-wrap items-center gap-2">
+                  <span>🔑</span>
+                  <span>
+                    {lang === 'th'
+                      ? 'รหัสลับให้เด็กวันที่พี่เลี้ยงไม่อยู่ (ผู้สร้างเปลี่ยนเลขรายวัน)'
+                      : 'Creator Daily Kid Secret Code (When Staff Are Away)'}
+                  </span>
+                  {activeTodayAwayCode ? (
+                    <span className="rounded-full bg-[#D6F5EE] border border-[#7CC6B8] px-2.5 py-0.5 text-xs font-extrabold text-[#114A42] tabular-nums">
+                      🟢 {lang === 'th' ? `เปิดใช้วันนี้: ${activeTodayAwayCode}` : `Active Today: ${activeTodayAwayCode}`}
+                    </span>
+                  ) : isScheduledOtherDay ? (
+                    <span className="rounded-full bg-[#FFF5BA] border border-[#E8C84A] px-2.5 py-0.5 text-xs font-extrabold text-[#5A4208] tabular-nums">
+                      📅 {lang === 'th' ? `ตั้งไว้ ${savedDate}: ${savedCode}` : `Scheduled ${savedDate}: ${savedCode}`}
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-[#F3EFEA] border border-[#DED4C8] px-2.5 py-0.5 text-xs font-bold text-[#6E5C52]">
+                      ⚪ {lang === 'th' ? 'ยังไม่เปิดใช้วันนี้' : 'Not Active Today'}
+                    </span>
+                  )}
+                </h3>
+                <p className="text-xs text-[#5B4782] mt-0.5">
+                  {lang === 'th'
+                    ? 'ใช้ในวันที่พี่เลี้ยงไม่อยู่: เด็กๆ สามารถนำเลข 4 หลักนี้ไปเปิดได้เฉพาะ "ช่องคำสั่ง" เพื่อเช็คชื่อเท่านั้น (ไม่สามารถนำไปกรอกช่องเลข 4 หลักด้านบนเพื่อเข้าสู่ระบบได้ และหมดอายุอัตโนมัติหลังพ้นวันที่เลือกค่ะ)'
+                    : 'Allows kids to open command slots only when caregivers are away (blocked from the top 4-digit login box, auto-expires after the selected date).'}
+                </p>
+              </div>
+              {renderSectionToggleButton('awaySecret', 'bg-[#EFE8FC] hover:bg-[#E2D6FA] border-[#C8B7EB] text-[#3E2B63]')}
+            </div>
+
+            {!hiddenSections.awaySecret && (
+              <div className="rounded-2xl border border-[#DFD2F6] bg-white p-4 space-y-3">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#5B4782] mb-1">
+                      🔢 {lang === 'th' ? 'เลขรหัสลับ 4 หลักสำหรับเด็ก' : '4-Digit Secret Code'}
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={4}
+                      value={awaySecretDraftCode}
+                      onChange={(e) => setAwaySecretDraftCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                      placeholder="เช่น 4829"
+                      className="w-32 rounded-xl border-2 border-[#C8B7EB] bg-[#FBF8FF] px-3 py-2 text-center font-mono text-lg font-extrabold tracking-widest text-[#3E2B63] tabular-nums focus:outline-none focus:ring-2 focus:ring-[#9E82D9]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#5B4782] mb-1">
+                      📅 {lang === 'th' ? 'วันที่ใช้งานได้ (หมดอายุอัตโนมัติวันถัดไป)' : 'Valid Date (Auto-expires next day)'}
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="date"
+                        value={awaySecretDraftDate}
+                        onChange={(e) => setAwaySecretDraftDate(e.target.value)}
+                        className="rounded-xl border-2 border-[#C8B7EB] bg-[#FBF8FF] px-3 py-2 text-xs font-bold text-[#3D322C] tabular-nums"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setAwaySecretDraftDate(todayKey)}
+                        className="rounded-xl border border-[#C8B7EB] bg-[#F5F0FF] hover:bg-[#EAE1FA] px-2.5 py-2 text-xs font-bold text-[#3E2B63] cursor-pointer whitespace-nowrap"
+                      >
+                        {lang === 'th' ? 'วันนี้' : 'Today'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const randomCode = generateNonConflicting4DigitCode(
+                          state.members,
+                          state.settings.creatorPins
+                        );
+                        setAwaySecretDraftCode(randomCode);
+                        if (!awaySecretDraftDate) setAwaySecretDraftDate(todayKey);
+                      }}
+                      className="min-h-[40px] rounded-xl border border-[#8FD4C6] bg-[#E8FAF6] hover:bg-[#D5F4EE] px-3.5 py-2 text-xs font-extrabold text-[#114A42] cursor-pointer"
+                    >
+                      🎲 {lang === 'th' ? 'สุ่มเลข 4 หลักใหม่' : 'Randomize 4 Digits'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cleanCode = awaySecretDraftCode.trim();
+                        const targetDate = awaySecretDraftDate || todayKey;
+                        if (!/^\d{4}$/.test(cleanCode)) {
+                          onShowAlert({
+                            icon: '⚠️',
+                            title: lang === 'th' ? 'กรุณาใส่เลข 4 หลัก' : '4-Digit Code Required',
+                            message:
+                              lang === 'th'
+                                ? 'รหัสลับสำหรับเด็กต้องเป็นตัวเลข 4 หลัก หรือกดปุ่ม "สุ่มเลข 4 หลักใหม่" ได้เลยค่ะ'
+                                : 'Please enter 4 digits or click Randomize.',
+                            tone: 'yellow',
+                          });
+                          return;
+                        }
+                        const conflict = findPinConflict(
+                          cleanCode,
+                          state.members,
+                          state.settings.creatorPins
+                        );
+                        if (conflict.conflict) {
+                          onShowAlert({
+                            icon: '⚠️',
+                            title: lang === 'th' ? 'เลขนี้ชนกับ PIN สมาชิก!' : 'Code Conflicts with Existing PIN!',
+                            message:
+                              lang === 'th'
+                                ? `เลข "${cleanCode}" ซ้ำกับ ${conflict.conflictOwnerLabel} กรุณาเปลี่ยนเลขอื่นหรือกดสุ่มใหม่ค่ะ`
+                                : `Code "${cleanCode}" conflicts with ${conflict.conflictOwnerLabel}.`,
+                            tone: 'pink',
+                          });
+                          return;
+                        }
+                        onUpdateSettings({
+                          kidAwaySecretCode: cleanCode,
+                          kidAwaySecretDateKey: targetDate,
+                        });
+                        onShowAlert({
+                          icon: '🔑✨',
+                          title:
+                            lang === 'th'
+                              ? `ตั้งรหัสลับวันที่ ${targetDate} แล้ว!`
+                              : `Secret Code Set for ${targetDate}!`,
+                          message:
+                            lang === 'th'
+                              ? `รหัสลับวันนี้คือ "${cleanCode}" — เด็กๆ สามารถใช้กรอกเข้าเช็คชื่อในวันที่พี่เลี้ยงไม่อยู่ได้ทันทีค่ะ`
+                              : `Kids can now use "${cleanCode}" on ${targetDate} when staff are away.`,
+                          tone: 'mint',
+                        });
+                      }}
+                      className="min-h-[40px] rounded-xl bg-[#3E2B63] hover:bg-[#2F1F4E] text-white px-4 py-2 text-xs sm:text-sm font-extrabold cursor-pointer"
+                    >
+                      💾 {lang === 'th' ? 'บันทึกรหัสวันนี้' : 'Save Daily Code'}
+                    </button>
+
+                    {(activeTodayAwayCode || isScheduledOtherDay) && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const codeToCopy = activeTodayAwayCode ?? savedCode;
+                            const dateToCopy = activeTodayAwayCode ? todayKey : savedDate;
+                            const msg = `🔑 รหัสลับเข้าเช็คชื่อวันที่พี่เลี้ยงไม่อยู่ (${dateToCopy}): ${codeToCopy}`;
+                            await copyTextToClipboard(msg);
+                            onShowAlert({
+                              icon: '📋',
+                              title: lang === 'th' ? 'คัดลอกข้อความแจ้งเด็กแล้ว!' : 'Copied for Kids!',
+                              message: msg,
+                              tone: 'mint',
+                            });
+                          }}
+                          className="min-h-[40px] rounded-xl border border-[#A7D3EC] bg-[#EEF7FC] hover:bg-[#DCEEF8] px-3 py-2 text-xs font-bold text-[#1E445C] cursor-pointer"
+                        >
+                          📋 {lang === 'th' ? 'คัดลอกแจ้งเด็ก' : 'Copy'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAwaySecretDraftCode('');
+                            onUpdateSettings({
+                              kidAwaySecretCode: '',
+                              kidAwaySecretDateKey: null,
+                            });
+                            onShowAlert({
+                              icon: '🔒',
+                              title: lang === 'th' ? 'ปิดใช้งานรหัสลับแล้ว' : 'Daily Secret Code Cleared',
+                              message:
+                                lang === 'th'
+                                  ? 'ยกเลิกรหัสลับสำหรับเด็กเรียบร้อย ระบบกลับไปใช้ PIN พี่เลี้ยงตามปกติค่ะ'
+                                  : 'Cleared secret code; normal staff PIN verification resumed.',
+                              tone: 'blue',
+                            });
+                          }}
+                          className="min-h-[40px] rounded-xl border border-[#F3B7C0] bg-[#FFF0F3] hover:bg-[#FADADD] px-3 py-2 text-xs font-bold text-[#8B1D36] cursor-pointer"
+                        >
+                          🗑️ {lang === 'th' ? 'ปิดใช้งาน' : 'Disable'}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        );
+      })()}
 
       {/* 1A. MOVED TO TOP: Piggy Bank & Star Economy Rates */}
       <section className="no-print rounded-[28px] border-2 border-[#F4DB73] bg-[#FFFBEB] p-5 pastel-shadow space-y-3">

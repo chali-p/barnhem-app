@@ -151,7 +151,8 @@ service cloud.firestore {
           'early15MinBonusStars', 'starToCoinStars', 'starToCoinThb', 'lastWeeklyClearedAt',
           'useOwnStorageOnly', 'enableCoinsAndPiggyBank', 'organizationPreset', 'automationAddons',
           'customQuickCommands', 'timedCommandSchedule', 'homeworkCurfewMins',
-          'kidsWithoutPhoneIds', 'commandPermissions', 'ownerUid', 'sharedEmails', 'updatedAt'
+          'kidsWithoutPhoneIds', 'commandPermissions', 'kidAwaySecretCode', 'kidAwaySecretDateKey',
+          'ownerUid', 'sharedEmails', 'updatedAt'
         ]) &&
         isValidId(data.id) &&
         (!('syncWebhookUrl' in data) || (data.syncWebhookUrl is string && data.syncWebhookUrl.size() <= 500)) &&
@@ -177,6 +178,8 @@ service cloud.firestore {
         (!('homeworkCurfewMins' in data) || (data.homeworkCurfewMins is number && data.homeworkCurfewMins >= 0 && data.homeworkCurfewMins <= 1439)) &&
         (!('kidsWithoutPhoneIds' in data) || (data.kidsWithoutPhoneIds is list && data.kidsWithoutPhoneIds.size() <= 100 && (data.kidsWithoutPhoneIds.size() == 0 || data.kidsWithoutPhoneIds[0] is string))) &&
         (!('commandPermissions' in data) || (data.commandPermissions is map && data.commandPermissions.keys().size() <= 40)) &&
+        (!('kidAwaySecretCode' in data) || data.kidAwaySecretCode == null || (data.kidAwaySecretCode is string && data.kidAwaySecretCode.size() <= 8)) &&
+        (!('kidAwaySecretDateKey' in data) || data.kidAwaySecretDateKey == null || (data.kidAwaySecretDateKey is string && data.kidAwaySecretDateKey.size() <= 16)) &&
         isValidSharedMetadata(data);
     }
 
@@ -320,7 +323,8 @@ service cloud.firestore {
               'early15MinBonusStars', 'starToCoinStars', 'starToCoinThb', 'lastWeeklyClearedAt',
               'useOwnStorageOnly', 'enableCoinsAndPiggyBank', 'organizationPreset', 'automationAddons',
               'customQuickCommands', 'timedCommandSchedule', 'homeworkCurfewMins',
-              'kidsWithoutPhoneIds', 'commandPermissions', 'sharedEmails', 'updatedAt'
+              'kidsWithoutPhoneIds', 'commandPermissions', 'kidAwaySecretCode', 'kidAwaySecretDateKey',
+              'sharedEmails', 'updatedAt'
             ])
           )
         );

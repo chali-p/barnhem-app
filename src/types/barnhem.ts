@@ -78,6 +78,7 @@ export interface MySpaceProfile {
 
 export interface DailyProgress {
   dateKey: string; // YYYY-MM-DD
+  morningPhonePickupChecked?: boolean;
   breakfastChecked: boolean;
   vanOrMorningChecked: boolean;
   morningDressedConfirmed: boolean;
@@ -517,6 +518,8 @@ export interface AppSettings {
   homeworkCurfewMins?: number;
   kidsWithoutPhoneIds?: string[];
   commandPermissions?: Record<string, CommandAccessRule>;
+  kidAwaySecretCode?: string;
+  kidAwaySecretDateKey?: string | null;
 }
 
 export interface CustomQuickCommand {

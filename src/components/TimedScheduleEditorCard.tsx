@@ -83,8 +83,8 @@ export const TimedScheduleEditorCard: React.FC<TimedScheduleEditorCardProps> = (
           </div>
           <p className="text-[11px] text-[#5B4782] mt-0.5">
             {lang === 'th'
-              ? 'ปรับเวลาเปิด–ปิดของทั้ง 7 คำสั่ง และเส้นตายคืนมือถือ (มีผลทั้งหน้าแรก ช่องที่ 3 และระบบแจ้งเตือน)'
-              : 'Adjust start/end windows for all 7 core actions and curfew deadline across all screens.'}
+              ? `ปรับเวลาเปิด–ปิดของทั้ง ${effectiveActions.length} คำสั่ง และเส้นตายคืนมือถือ (มีผลทั้งหน้าแรก ช่องที่ 3 และระบบแจ้งเตือน)`
+              : `Adjust start/end windows for all ${effectiveActions.length} core actions and curfew deadline across all screens.`}
           </p>
         </div>
         {onClose && (

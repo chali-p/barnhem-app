@@ -1030,6 +1030,16 @@ export const StaffView: React.FC<StaffViewProps> = ({
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
               {[
                 {
+                  key: 'morningPhonePickupChecked' as const,
+                  emoji: '📱',
+                  labelTh: 'รับมือถือเช้า',
+                  labelEn: 'AM Phone',
+                  onToggle: (prev: Member, nextVal: boolean): Member => ({
+                    ...prev,
+                    daily: { ...prev.daily, morningPhonePickupChecked: nextVal },
+                  }),
+                },
+                {
                   key: 'breakfastChecked' as const,
                   emoji: '🍚',
                   labelTh: 'ข้าวเช้า',

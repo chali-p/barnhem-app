@@ -261,6 +261,18 @@ function serializeConfigDoc(
           commandPermissions: stripUndefined(settings.commandPermissions),
         }
       : {}),
+    ...(typeof settings.kidAwaySecretCode === 'string'
+      ? {
+          kidAwaySecretCode: settings.kidAwaySecretCode.trim().slice(0, 8),
+        }
+      : {}),
+    ...(settings.kidAwaySecretDateKey !== undefined
+      ? {
+          kidAwaySecretDateKey: settings.kidAwaySecretDateKey
+            ? String(settings.kidAwaySecretDateKey).slice(0, 16)
+            : null,
+        }
+      : {}),
     ...makeSharedMeta(user, orgId, extraEmails),
   };
 }
@@ -775,6 +787,14 @@ export function subscribeFoundationCloud(
               !Array.isArray(d.commandPermissions)
                 ? (d.commandPermissions as AppSettings['commandPermissions'])
                 : undefined,
+            kidAwaySecretCode:
+              typeof d.kidAwaySecretCode === 'string'
+                ? d.kidAwaySecretCode.slice(0, 8)
+                : undefined,
+            kidAwaySecretDateKey:
+              typeof d.kidAwaySecretDateKey === 'string'
+                ? d.kidAwaySecretDateKey.slice(0, 16)
+                : null,
           });
         }
       });
@@ -1032,6 +1052,14 @@ export function subscribeLinkedKidCloud(
                     !Array.isArray(d.commandPermissions)
                       ? (d.commandPermissions as AppSettings['commandPermissions'])
                       : undefined,
+                  kidAwaySecretCode:
+                    typeof d.kidAwaySecretCode === 'string'
+                      ? d.kidAwaySecretCode.slice(0, 8)
+                      : undefined,
+                  kidAwaySecretDateKey:
+                    typeof d.kidAwaySecretDateKey === 'string'
+                      ? d.kidAwaySecretDateKey.slice(0, 16)
+                      : null,
                 });
               });
             },

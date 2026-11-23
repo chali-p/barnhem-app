@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Language, Member } from '../types/barnhem';
+import { AppSettings, Language, Member } from '../types/barnhem';
 
 export const MAX_PIN_ATTEMPTS = 5;
 export const LOCKOUT_DURATION_MS = 30_000;
@@ -154,4 +154,35 @@ export function findPinConflict(
   }
 
   return { conflict: false };
+}
+
+/**
+ * Returns the active 4-digit secret code set by Creator for days when staff are away,
+ * ONLY if it is a valid 4-digit string matching `todayKey` (YYYY-MM-DD).
+ */
+export function getActiveKidAwaySecretCode(
+  settings: Partial<AppSettings> | undefined,
+  todayKey: string
+): string | null {
+  const code = (settings?.kidAwaySecretCode ?? '').trim();
+  const dateKey = settings?.kidAwaySecretDateKey ?? null;
+  if (!/^\d{4}$/.test(code) || !dateKey || dateKey !== todayKey) return null;
+  return code;
+}
+
+/**
+ * Generates a random 4-digit numeric code (1000..9999) that does not collide
+ * with any member PIN or Creator PIN.
+ */
+export function generateNonConflicting4DigitCode(
+  members: Member[],
+  creatorPins: string[]
+): string {
+  for (let i = 0; i < 200; i += 1) {
+    const candidate = String(Math.floor(1000 + Math.random() * 9000));
+    if (!findPinConflict(candidate, members, creatorPins).conflict) {
+      return candidate;
+    }
+  }
+  return '4829';
 }

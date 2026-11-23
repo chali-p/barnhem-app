@@ -2070,6 +2070,7 @@ export default function App() {
             onSaveCustomQuickCommands={handleSaveCustomQuickCommands}
             onSaveTimedSchedule={handleSaveTimedSchedule}
             onSaveCommandPermissions={handleSaveCommandPermissions}
+            onAddSickReport={handleAddSickReport}
             onShowAlert={showAlert}
             organizationName={activeTenant?.orgName}
             linkedKidSession={linkedKidSession}

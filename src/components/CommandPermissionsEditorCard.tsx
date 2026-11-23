@@ -23,6 +23,7 @@ interface CommandPermissionsEditorCardProps {
 }
 
 const PHONE_COMMAND_IDS = [
+  'morning_phone_pickup',
   'evening_uniform_phone',
   'night_homework_permission',
   'night_return_phone',

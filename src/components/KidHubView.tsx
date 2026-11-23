@@ -49,6 +49,7 @@ import {
 import {
   formatPinAttemptsHint,
   formatPinLockoutMessage,
+  getActiveKidAwaySecretCode,
   usePinGuard,
 } from '../utils/pinGuard';
 import {
@@ -78,6 +79,8 @@ import {
   formatThaiCurfewClock,
   getEffectiveHomeworkCurfewMins,
   getEffectiveHomeworkPermissionWindow,
+  getEffectiveMorningPhoneWindow,
+  isHomeActionOpenAt,
   minsToHHMM,
 } from '../utils/expressKiosk';
 import { evaluateKidStepReminders } from '../utils/stepReminders';
@@ -535,9 +538,12 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   const isAwayToday = isKidAwayOnDate(kid, todayKey);
   const stepReminder = evaluateKidStepReminders(kid, now, isSickToday, isPublicHolidayToday, settings);
   const kidHasPhone = doesKidHavePhone(kid.id, settings);
+  const allowMorningPhonePickup = kidHasPhone && canKidUseCommand('morning_phone_pickup', kid, settings);
   const allowEveningPhone = kidHasPhone && canKidUseCommand('evening_uniform_phone', kid, settings);
   const allowHwPerm = kidHasPhone && canKidUseCommand('night_homework_permission', kid, settings);
   const allowReturnPhone = kidHasPhone && canKidUseCommand('night_return_phone', kid, settings);
+  const morningPhoneWin = getEffectiveMorningPhoneWindow(settings);
+  const isMorningPhoneOpen = isHomeActionOpenAt('morning_phone_pickup', now, settings);
   const hwPermWin = getEffectiveHomeworkPermissionWindow(settings);
   const hwCurfewMins = getEffectiveHomeworkCurfewMins(settings);
   const hwCurfewTh = formatThaiCurfewClock(hwCurfewMins);
@@ -552,6 +558,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
     setStepPopupOpen(false);
   };
 
+  const activeAwaySecretCode = getActiveKidAwaySecretCode(settings, todayKey);
   const staffPins = Array.from(
     new Set([
       ...allMembers.filter((m) => m.role === 'staff' || m.role === 'manager').map((m) => m.pin),
@@ -3123,6 +3130,154 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                       : 'Report →'}
                   </span>
                 </button>
+
+                {allowMorningPhonePickup && (
+                  <button
+                    type="button"
+                    disabled={Boolean(kid.daily.morningPhonePickupChecked)}
+                    onClick={() => {
+                      if (kid.daily.morningPhonePickupChecked) return;
+                      if (!isMorningPhoneOpen) {
+                        onShowAlert({
+                          icon: '🔒',
+                          title:
+                            lang === 'th'
+                              ? 'ปุ่ม "มาขอรับมือถือ" ล็อกอยู่นอกเวลา'
+                              : '"Morning Phone Pickup" is Locked',
+                          message:
+                            lang === 'th'
+                              ? `ระบบเปิดให้กดรับมือถือเฉพาะช่วงเวลา ${morningPhoneWin.labelTh} เท่านั้นค่ะ (ขณะนี้เวลา ${formatDigitalClock(now)} น.)`
+                              : `Only open during ${morningPhoneWin.labelEn} (currently ${formatDigitalClock(now)}).`,
+                          tone: 'pink',
+                        });
+                        return;
+                      }
+                      if (!kid.penalty.phonePrivilegeActive) {
+                        onShowAlert({
+                          icon: '📵',
+                          title:
+                            lang === 'th'
+                              ? 'ถูกระงับสิทธิ์ใช้มือถือชั่วคราว'
+                              : 'Phone Privilege Suspended',
+                          message:
+                            lang === 'th'
+                              ? 'หากต้องการเปิดสิทธิ์คืน ให้พี่เลี้ยงกด "เคลียร์โทษ" ในหน้าพี่เลี้ยงก่อนนะคะ'
+                              : 'Ask staff to clear penalties in Staff View first.',
+                          tone: 'pink',
+                        });
+                        return;
+                      }
+                      if (kid.penalty.noEveningPhoneTomorrowDate === todayKey) {
+                        onShowAlert({
+                          icon: '📵',
+                          title:
+                            lang === 'th'
+                              ? 'ติดโทษงดใช้มือถือวันนี้'
+                              : 'Phone Suspended Today',
+                          message:
+                            lang === 'th'
+                              ? 'ติดโทษคืนมือถือเกินเวลาเมื่อคืน วันนี้จึงงดรับมือถือ 1 วันค่ะ'
+                              : 'Phone use is suspended today due to late return.',
+                          tone: 'pink',
+                        });
+                        return;
+                      }
+                      if (
+                        kid.penalty.phoneConfiscatedUntil1830Date === todayKey &&
+                        getMinutesOfDay(now) < 18 * 60 + 30
+                      ) {
+                        onShowAlert({
+                          icon: '⏳📵',
+                          title:
+                            lang === 'th'
+                              ? 'ติดโทษยึดมือถือถึง 18:30 น.'
+                              : 'Phone Held Until 18:30',
+                          message:
+                            lang === 'th'
+                              ? 'ไม่สามารถรับมือถือรอบเช้าได้ รอรับหลัง 18:30 น. นะคะ'
+                              : 'Phone is held until 18:30 today.',
+                          tone: 'pink',
+                        });
+                        return;
+                      }
+                      onUpdateKid(
+                        kid.id,
+                        (prev) => ({
+                          ...prev,
+                          daily: { ...prev.daily, morningPhonePickupChecked: true },
+                          starHistory: [
+                            {
+                              id: `tx_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+                              timestamp: now.toISOString(),
+                              reason: `📱 กะเช้า "มาขอรับมือถือ" (${morningPhoneWin.labelTh})`,
+                              amount: 0,
+                            },
+                            ...prev.starHistory,
+                          ].slice(0, 60),
+                        }),
+                        `Morning Phone Pickup (${morningPhoneWin.labelEn})`
+                      );
+                      onShowAlert({
+                        icon: '📱✨',
+                        title:
+                          lang === 'th'
+                            ? 'มาขอรับมือถือเรียบร้อยแล้ว!'
+                            : 'Morning Phone Pickup Confirmed!',
+                        message:
+                          lang === 'th'
+                            ? `บันทึกการขอรับมือถือรอบเช้า (${morningPhoneWin.labelTh}) เรียบร้อยแล้วค่ะ`
+                            : `Morning phone pickup (${morningPhoneWin.labelEn}) recorded.`,
+                        tone: 'mint',
+                      });
+                    }}
+                    className={`w-full min-h-[56px] rounded-2xl border-2 px-4 py-3 text-left flex items-center justify-between gap-3 transition-colors ${
+                      kid.daily.morningPhonePickupChecked
+                        ? 'border-[#8FD4C6] bg-[#E8FAF6] text-[#114A42] cursor-default'
+                        : isMorningPhoneOpen
+                        ? 'border-[#7CC6B8] bg-[#E3F5F3] hover:bg-[#D0EFEA] text-[#114A42] cursor-pointer'
+                        : 'border-[#E6DCD2] bg-[#F7F3EE] hover:bg-[#EFE9E1] text-[#7B695F] cursor-pointer'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="h-10 w-10 rounded-xl border border-white/80 bg-white flex items-center justify-center text-xl shrink-0">
+                        {kid.daily.morningPhonePickupChecked ? '✅' : isMorningPhoneOpen ? '📱' : '🔒'}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-sm sm:text-base font-extrabold leading-tight truncate">
+                          {lang === 'th' ? 'มาขอรับมือถือ' : 'Morning Phone Pickup'}
+                        </div>
+                        <div className="text-xs opacity-85 mt-0.5 tabular-nums truncate">
+                          ⏰{' '}
+                          {lang === 'th'
+                            ? `เปิดระบบ ${morningPhoneWin.labelTh}`
+                            : `Open ${morningPhoneWin.labelEn}`}
+                        </div>
+                      </div>
+                    </div>
+                    <span
+                      className={`rounded-xl px-2.5 py-1 text-xs font-extrabold shrink-0 whitespace-nowrap ${
+                        kid.daily.morningPhonePickupChecked
+                          ? 'bg-[#114A42] text-white'
+                          : isMorningPhoneOpen
+                          ? 'bg-[#114A42] text-white'
+                          : 'bg-white text-[#7B695F] border border-[#DFD4C8]'
+                      }`}
+                    >
+                      {kid.daily.morningPhonePickupChecked
+                        ? lang === 'th'
+                          ? 'รับมือถือแล้ว'
+                          : 'Collected'
+                        : isMorningPhoneOpen
+                        ? lang === 'th'
+                          ? 'กดรับมือถือ'
+                          : 'Pick Up'
+                        : lang === 'th'
+                        ? 'ล็อกนอกเวลา'
+                        : 'Locked'}
+                    </span>
+                  </button>
+                )}
+
                 {kid.group === 1 && (
                   <>
                     <div className="rounded-2xl bg-[#FFF5BA]/70 p-4 text-sm text-[#53433A]">
@@ -6671,13 +6826,18 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
         lang={lang}
         title={lang === 'th' ? 'ให้พี่เลี้ยงใส่รหัส PIN 4 หลัก' : 'Staff 4-Digit PIN Verification'}
         subtitle={
-          pinRequestAction?.type === 'boss_stage'
+          (pinRequestAction?.type === 'boss_stage'
             ? lang === 'th'
               ? 'ปลดล็อกสิทธิ์ดูการ์ตูนด่านบอส 20:00 น. (+10 ⭐)'
               : 'Unlock 20:00 Boss Stage cartoon privilege (+10 ⭐)'
             : lang === 'th'
             ? 'ตรวจมือถือและเช็คลิสต์ครบ 4 ข้อ เพื่อรับมือถือรอบ 18:30 น. (+10 ⭐)'
-            : 'Confirm 4-item checklist & phone check to release 18:30 phone (+10 ⭐)'
+            : 'Confirm 4-item checklist & phone check to release 18:30 phone (+10 ⭐)') +
+          (activeAwaySecretCode
+            ? lang === 'th'
+              ? ' · (วันที่พี่เลี้ยงไม่อยู่: ใส่รหัสลับจากผู้สร้างได้)'
+              : ' · (Staff away today: Creator daily code accepted)'
+            : '')
         }
         onCancel={() => setPinRequestAction(null)}
         onSubmitPin={(pin) => {
@@ -6690,7 +6850,8 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
             });
             return;
           }
-          if (!staffPins.includes(pin)) {
+          const isValidAwayCode = activeAwaySecretCode !== null && pin === activeAwaySecretCode;
+          if (!staffPins.includes(pin) && !isValidAwayCode) {
             const res = staffPinGuard.recordFailure();
             onShowAlert({
               icon: res.lockedNow ? '🔒' : '🔐',

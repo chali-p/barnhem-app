@@ -543,6 +543,7 @@ export function evaluateOneTapGoToSchool(
 }
 
 export type HomeQuickActionId =
+  | 'morning_phone_pickup'
   | 'morning_breakfast'
   | 'morning_school'
   | 'afternoon_home'
@@ -567,6 +568,20 @@ export interface HomeQuickActionConfig {
 }
 
 export const HOME_QUICK_ACTIONS: HomeQuickActionConfig[] = [
+  {
+    id: 'morning_phone_pickup',
+    emoji: '📱',
+    startMins: 6 * 60,
+    endMins: 7 * 60,
+    windowLabelTh: '06:00–07:00 น.',
+    windowLabelEn: '06:00–07:00',
+    titleTh: 'มาขอรับมือถือ',
+    titleEn: 'Morning Phone Pickup',
+    tapLabelTh: '📱 มาขอรับมือถือ',
+    tapLabelEn: '📱 Get Phone',
+    doneLabelTh: '✅ รับมือถือแล้ว',
+    doneLabelEn: '✅ Phone Collected',
+  },
   {
     id: 'morning_breakfast',
     emoji: '🍚',
@@ -745,6 +760,23 @@ export function getEffectiveHomeworkPermissionWindow(settings?: Partial<AppSetti
   };
 }
 
+export function getEffectiveMorningPhoneWindow(settings?: Partial<AppSettings>): {
+  startMins: number;
+  endMins: number;
+  labelTh: string;
+  labelEn: string;
+} {
+  const found =
+    getEffectiveHomeQuickActions(settings).find((a) => a.id === 'morning_phone_pickup') ??
+    HOME_QUICK_ACTIONS.find((a) => a.id === 'morning_phone_pickup')!;
+  return {
+    startMins: found.startMins,
+    endMins: found.endMins,
+    labelTh: found.windowLabelTh,
+    labelEn: found.windowLabelEn,
+  };
+}
+
 export function isHomeActionOpenAt(
   actionId: HomeQuickActionId,
   now: Date,
@@ -761,6 +793,8 @@ export function isHomeActionOpenAt(
 
 export function isHomeActionDoneForKid(actionId: HomeQuickActionId, kid: Member): boolean {
   switch (actionId) {
+    case 'morning_phone_pickup':
+      return Boolean(kid.daily.morningPhonePickupChecked);
     case 'morning_breakfast':
       return Boolean(kid.daily.breakfastChecked);
     case 'morning_school':
@@ -960,6 +994,95 @@ export function evaluateOneTapHomeAction(
       ...prev.starHistory,
     ].slice(0, 60),
   });
+
+  if (actionId === 'morning_phone_pickup') {
+    if (kid.daily.morningPhonePickupChecked) {
+      return {
+        success: true,
+        emoji: '✅',
+        starsDelta: 0,
+        bannerTitle:
+          lang === 'th'
+            ? `น้อง${kid.nickname} มาขอรับมือถือเช้านี้แล้ว`
+            : `${kid.nickname} Phone Already Collected`,
+        bannerSubtitle:
+          lang === 'th'
+            ? 'บันทึกการขอรับมือถือรอบเช้าเรียบร้อยแล้วค่ะ'
+            : 'Already collected phone this morning.',
+      };
+    }
+
+    if (!kid.penalty.phonePrivilegeActive) {
+      return {
+        success: false,
+        emoji: '📵',
+        starsDelta: 0,
+        bannerTitle:
+          lang === 'th'
+            ? `น้อง${kid.nickname} ถูกระงับสิทธิ์ใช้มือถือชั่วคราว`
+            : `${kid.nickname} Phone Privilege Suspended`,
+        bannerSubtitle:
+          lang === 'th'
+            ? 'หากต้องการเปิดสิทธิ์คืน ให้พี่เลี้ยงกด "เคลียร์โทษ" ในหน้าพี่เลี้ยงก่อนนะคะ'
+            : 'Ask staff to clear penalties in Staff View first.',
+      };
+    }
+
+    if (kid.penalty.noEveningPhoneTomorrowDate === todayKey) {
+      return {
+        success: false,
+        emoji: '📵',
+        starsDelta: 0,
+        bannerTitle:
+          lang === 'th'
+            ? `น้อง${kid.nickname} ติดโทษงดใช้มือถือวันนี้`
+            : `${kid.nickname} Phone Suspended Today`,
+        bannerSubtitle:
+          lang === 'th'
+            ? 'ติดโทษคืนมือถือเกินเวลาเมื่อคืน วันนี้จึงงดรับมือถือ 1 วันค่ะ'
+            : 'Phone use is suspended today due to late return.',
+      };
+    }
+
+    if (kid.penalty.phoneConfiscatedUntil1830Date === todayKey && mins < 18 * 60 + 30) {
+      return {
+        success: false,
+        emoji: '⏳📵',
+        starsDelta: 0,
+        bannerTitle:
+          lang === 'th'
+            ? `น้อง${kid.nickname} ติดโทษยึดมือถือถึง 18:30 น.`
+            : `${kid.nickname} Phone Held Until 18:30`,
+        bannerSubtitle:
+          lang === 'th'
+            ? 'ไม่สามารถรับมือถือรอบเช้าได้ รอรับหลัง 18:30 น. นะคะ'
+            : 'Phone is held until 18:30 today.',
+      };
+    }
+
+    const updated = appendStarTx(
+      kid,
+      0,
+      `📱 ปุ่มด่วน "มาขอรับมือถือ" (${cfg.windowLabelTh})`,
+      {
+        daily: { ...kid.daily, morningPhonePickupChecked: true },
+      }
+    );
+    return {
+      success: true,
+      emoji: '📱✨',
+      starsDelta: 0,
+      bannerTitle:
+        lang === 'th'
+          ? `น้อง${kid.nickname} มาขอรับมือถือเรียบร้อยแล้ว!`
+          : `${kid.nickname} Morning Phone Pickup Confirmed!`,
+      bannerSubtitle:
+        lang === 'th'
+          ? `บันทึกขอรับมือถือรอบเช้า (${cfg.windowLabelTh}) เรียบร้อยค่ะ`
+          : `Morning phone pickup (${cfg.windowLabelEn}) recorded.`,
+      updatedKid: updated,
+    };
+  }
 
   if (actionId === 'morning_breakfast') {
     if (kid.daily.breakfastChecked) {
