@@ -8,7 +8,12 @@ export type KidGroup = 1 | 2 | 3; // 1 = ประถม, 2 = มัธยม, 3
 
 export type Gender = 'M' | 'F';
 
-export type OutfitMode = 'lounge' | 'uniform' | 'casual' | 'custom_design' | 'festival';
+export type OutfitMode =
+  | 'lounge'
+  | 'uniform'
+  | 'casual'
+  | 'custom_design'
+  | 'festival';
 
 export type FestivalId =
   | 'new_year'
@@ -179,8 +184,28 @@ export interface MorningStreakState {
   streakMilestonesClaimed: number;
 }
 
-export type PetSpecies = 'dog' | 'cat';
-export type PetCoatStyle = 'cream' | 'brown' | 'spotted' | 'grey' | 'calico';
+export type PetSpecies =
+  | 'dog'
+  | 'shiba'
+  | 'cat'
+  | 'rabbit'
+  | 'hamster'
+  | 'panda'
+  | 'fox'
+  | 'penguin'
+  | 'duck'
+  | 'capybara';
+
+export type PetCoatStyle =
+  | 'cream'
+  | 'brown'
+  | 'spotted'
+  | 'grey'
+  | 'calico'
+  | 'mint'
+  | 'pink'
+  | 'midnight';
+
 export type PetOutfitId =
   | 'none'
   | 'collar_heart'
@@ -202,6 +227,8 @@ export interface PetCompanionConfig {
   lastFedAt: string;
   lastPlayedAt: string;
   lastNoticeBonusDate?: string;
+  lastFedRewardDate?: string;
+  fedRewardCountToday?: number;
 }
 
 export interface Member {
@@ -456,6 +483,17 @@ export interface CoverSceneInfo {
   descriptionEn: string;
 }
 
+export interface TimedScheduleSlot {
+  startMins: number;
+  endMins: number;
+}
+
+export interface CommandAccessRule {
+  phoneFilter?: 'all' | 'has_phone' | 'no_phone';
+  restrictToKidIds?: boolean;
+  allowedKidIds?: string[];
+}
+
 export interface AppSettings {
   syncWebhookUrl: string;
   returnHomeDriveUrl: string;
@@ -474,6 +512,24 @@ export interface AppSettings {
   enableCoinsAndPiggyBank?: boolean; // Default false: keep coins & piggy bank off on kid screens until Creator enables it
   organizationPreset?: OrganizationPresetId;
   automationAddons?: AutomationAddonId[];
+  customQuickCommands?: CustomQuickCommand[];
+  timedCommandSchedule?: Record<string, TimedScheduleSlot>;
+  homeworkCurfewMins?: number;
+  kidsWithoutPhoneIds?: string[];
+  commandPermissions?: Record<string, CommandAccessRule>;
+}
+
+export interface CustomQuickCommand {
+  id: string;
+  emoji: string;
+  titleTh: string;
+  titleEn: string;
+  kind: 'homework_permission' | 'custom_checkin';
+  alwaysOpen: boolean;
+  startMins?: number;
+  endMins?: number;
+  starsDelta?: number;
+  defaultNote?: string;
 }
 
 export type WeeklyActivityStatus = 'on_time' | 'late' | 'absent' | 'sick_leave' | 'other';
@@ -530,19 +586,11 @@ export interface ModalAlertPayload {
 export type RegistrationApplicationType = 'open_organization' | 'apply_staff';
 export type RegistrationStatus = 'pending' | 'interview' | 'approved' | 'rejected';
 
-export type OrganizationPresetId =
-  | 'autonomous_minimart'
-  | 'kindergarten_classroom'
-  | 'lean_sme_shop'
-  | 'foundation_care'
-  | 'custom_automation';
+export type OrganizationPresetId = 'foundation_care';
 
 export type AutomationAddonId =
-  | 'receipt_door_gate'
-  | 'self_checkout_qr'
   | 'auto_shift_attendance'
   | 'star_loyalty_minimart'
-  | 'smart_stock_alerts'
   | 'auto_sheet_line_report';
 
 export interface PlatformRegistration {
@@ -570,6 +618,7 @@ export interface ActiveTenantContext {
   ownerName: string;
   ownerUid: string;
   ownerEmail: string;
+  organizationPreset?: OrganizationPresetId;
 }
 
 export interface LinkedKidSession {

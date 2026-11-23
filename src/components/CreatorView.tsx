@@ -43,6 +43,8 @@ import { MASTER_ADMIN_EMAIL } from '../services/firestoreSync';
 import { QrBarcodeSheet } from './QrBarcodeSheet';
 import { StaffLeavePanel } from './StaffLeavePanel';
 import { StaffRosterPanel } from './StaffRosterPanel';
+import { TimedScheduleEditorCard } from './TimedScheduleEditorCard';
+import { CommandPermissionsEditorCard } from './CommandPermissionsEditorCard';
 
 interface CreatorViewProps {
   state: AppState;
@@ -1711,6 +1713,44 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
                 </select>
               </div>
             </div>
+
+            <TimedScheduleEditorCard
+              settings={state.settings}
+              lang={lang}
+              onSave={(timedCommandSchedule, homeworkCurfewMins) => {
+                onUpdateSettings({ timedCommandSchedule, homeworkCurfewMins });
+                onShowAlert({
+                  icon: '⚙️',
+                  title: lang === 'th' ? 'อัปเดตตารางเวลาคำสั่งทั้งหมดแล้ว!' : 'Schedules Updated!',
+                  message:
+                    lang === 'th'
+                      ? 'ระบบได้บันทึกเวลาเปิด–ปิดของทุกคำสั่งและเส้นตายคืนมือถือเรียบร้อยแล้ว มีผลทันทีทั้งหน้าแรกและหน้าของน้องค่ะ'
+                      : 'All core command windows and curfew deadlines are now live across all views.',
+                  tone: 'mint',
+                });
+              }}
+            />
+
+            <CommandPermissionsEditorCard
+              members={state.members}
+              settings={state.settings}
+              lang={lang}
+              onSave={(kidsWithoutPhoneIds, commandPermissions) => {
+                onUpdateSettings({ kidsWithoutPhoneIds, commandPermissions });
+                onShowAlert({
+                  icon: '👥📱',
+                  title:
+                    lang === 'th'
+                      ? 'บันทึกสถานะมือถือและสิทธิ์การกดปุ่มแล้ว!'
+                      : 'Phone Status & Permissions Saved!',
+                  message:
+                    lang === 'th'
+                      ? 'อัปเดตรายชื่อน้องที่มี/ไม่มีมือถือ และสิทธิ์การกดของแต่ละปุ่มเรียบร้อยแล้ว มีผลทันทีทั้งหน้าแรกและหน้าของน้องค่ะ'
+                      : 'Kid phone ownership and per-button permissions are now active.',
+                  tone: 'mint',
+                });
+              }}
+            />
           </>
         )}
       </section>

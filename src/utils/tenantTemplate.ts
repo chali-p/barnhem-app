@@ -20,6 +20,7 @@ function makeStarterMember(params: {
   pin: string;
   emoji: string;
   todayKey: string;
+  outfitMode?: Member['avatar']['outfitMode'];
 }): Member {
   return {
     id: params.id,
@@ -43,7 +44,7 @@ function makeStarterMember(params: {
       faceMood: 'happy',
       hairStyle: params.gender === 'F' ? 'tied_ponytail' : 'neat_short',
       hairColor: '#3B2F2F',
-      outfitMode: 'lounge',
+      outfitMode: params.outfitMode ?? 'lounge',
     },
     mySpace: {
       favoriteColor: 'พาสเทล',

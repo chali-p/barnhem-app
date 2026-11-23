@@ -38,7 +38,6 @@ import {
   loadOrgStorageOnboardingPref,
   saveOrgStorageOnboardingPref,
 } from '../utils/tenantTemplate';
-import { MinimartGateDemoModal } from './MinimartGateDemoModal';
 import {
   OrgStorageGuideCard,
   PlatformVisualArchitecture,
@@ -497,9 +496,9 @@ export const PlatformPortalView: React.FC<PlatformPortalViewProps> = ({
   const [applicationType, setApplicationType] =
     useState<RegistrationApplicationType>('open_organization');
   const [organizationPreset, setOrganizationPreset] =
-    useState<OrganizationPresetId>('autonomous_minimart');
+    useState<OrganizationPresetId>('foundation_care');
   const [automationAddons, setAutomationAddons] = useState<AutomationAddonId[]>(
-    getOrganizationPreset('autonomous_minimart').defaultAddons
+    getOrganizationPreset('foundation_care').defaultAddons
   );
   const [applicantName, setApplicantName] = useState('');
   const [nickname, setNickname] = useState('');
@@ -513,14 +512,8 @@ export const PlatformPortalView: React.FC<PlatformPortalViewProps> = ({
   const [orgWebhookDraft, setOrgWebhookDraft] = useState(appState?.settings.syncWebhookUrl ?? '');
   const [orgDriveDraft, setOrgDriveDraft] = useState(appState?.settings.returnHomeDriveUrl ?? '');
   const [showOwnerVisualPreview, setShowOwnerVisualPreview] = useState(false);
-  const [demoModalOpen, setDemoModalOpen] = useState(false);
 
   const selectedPresetMeta = getOrganizationPreset(organizationPreset);
-
-  const handleSelectOrganizationPreset = (nextId: OrganizationPresetId) => {
-    setOrganizationPreset(nextId);
-    setAutomationAddons(getOrganizationPreset(nextId).defaultAddons);
-  };
 
   const toggleAutomationAddon = (addonId: AutomationAddonId) => {
     setAutomationAddons((prev) =>
@@ -723,13 +716,9 @@ export const PlatformPortalView: React.FC<PlatformPortalViewProps> = ({
         email: 'susan.foundation@gmail.com',
         applicantName: applicantName.trim() || 'คุณสุซาน (ตัวอย่าง)',
         nickname: nickname.trim() || 'พี่สุ',
-        organizationName:
-          organizationName.trim() ||
-          (organizationPreset === 'autonomous_minimart'
-            ? 'ร้านอิ่มสุข มินิมาร์ท 24 ชม.'
-            : 'มูลนิธิบ้านสายใจรักษ์'),
+        organizationName: organizationName.trim() || 'มูลนิธิบ้านสายใจรักษ์',
         applicationType,
-        organizationPreset,
+        organizationPreset: 'foundation_care',
         automationAddons,
         contactInfo: contactInfo.trim() || '08x-xxx-xxxx / LINE: susan',
         experienceOrSize: experienceOrSize.trim() || 'เด็ก 12 คน พี่เลี้ยง 4 คน',
@@ -771,13 +760,13 @@ export const PlatformPortalView: React.FC<PlatformPortalViewProps> = ({
         <div className="space-y-1">
           <h1 className="text-xl sm:text-2xl font-extrabold text-[#114A42]">
             {lang === 'th'
-              ? 'แพลตฟอร์มระบบอัตโนมัติจัดการแทนคน — เลือกเปิดร้าน / ห้องเรียน / SME / มูลนิธิ'
-              : 'Smart Zero-Staff Automation & Organization Portal'}
+              ? 'แพลตฟอร์มสำหรับมูลนิธิ & บ้านพักเด็ก'
+              : 'Foundation & Care Home Portal'}
           </h1>
           <p className="text-xs sm:text-sm text-[#6E5C52]">
             {lang === 'th'
-              ? 'เลือกรูปแบบระบบให้ทำงานแทนคนได้เต็มที่ ทั้งมินิมาร์ทจ่ายเองสแกนใบเสร็จเปิดประตู ห้องเรียน ธุรกิจ SME หรือมูลนิธิ — แยกฐานข้อมูลส่วนตัว 100%'
-              : 'Pick your tailored automation preset—Self-Checkout Minimart with Receipt Door Gate, Classroom, Lean SME, or Foundation—with 100% isolated data.'}
+              ? 'ระบบดูแลกิจวัตรเด็ก ตารางเวรพี่เลี้ยง และการบันทึกประจำวันสำหรับมูลนิธิ — แยกฐานข้อมูลส่วนตัว 100%'
+              : 'Complete routine, staff schedule, and daily care system built exclusively for Foundations—with 100% isolated data.'}
           </p>
         </div>
 
@@ -913,60 +902,6 @@ export const PlatformPortalView: React.FC<PlatformPortalViewProps> = ({
                 </div>
               </div>
             ))}
-          </div>
-
-          {/* Featured Automation Presets Showcase + Live Minimart Receipt-Gate Demo */}
-          <div className="rounded-2xl border-2 border-[#8FD4C6] bg-[#F5FCFA] p-4 sm:p-5 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2.5">
-              <div>
-                <div className="text-sm sm:text-base font-extrabold text-[#114A42]">
-                  ⚡{' '}
-                  {lang === 'th'
-                    ? 'ช้อยส์รูปแบบระบบอัตโนมัติให้เลือกตอนสมัคร (ลดคนดูแลได้มากที่สุด)'
-                    : 'Choose Your Automated Business / Organization Mode at Sign-Up'}
-                </div>
-                <p className="text-xs text-[#4F433C] mt-0.5">
-                  {lang === 'th'
-                    ? 'เลือกสไตล์ที่ตรงกับงานของคุณ ระบบจะปรับบทบาท หน้าตาร้านค้า และกติกาอัตโนมัติให้ทันทีหลังสมัครค่ะ'
-                    : 'Pick the automation workflow matching your venue—roles, store, and rules adapt automatically.'}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setDemoModalOpen(true)}
-                className="min-h-[38px] rounded-xl bg-[#3D322C] hover:bg-[#2B221D] text-white px-3.5 py-2 text-xs font-extrabold cursor-pointer whitespace-nowrap"
-              >
-                🚪 {lang === 'th' ? 'ทดลองเล่น: จ่ายเอง + ใบเสร็จเปิดประตู' : 'Try Self-Checkout Gate Demo'}
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-              {ORGANIZATION_PRESETS.map((preset) => (
-                <div
-                  key={preset.id}
-                  className={`rounded-xl border p-3 bg-white space-y-1 ${
-                    preset.id === 'autonomous_minimart'
-                      ? 'border-[#114A42] ring-1 ring-[#8FD4C6]'
-                      : 'border-[#EBD8C3]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="text-base">{preset.emoji}</span>
-                    {preset.badgeTh && (
-                      <span className="rounded-md bg-[#E8FAF6] px-2 py-0.5 text-[10px] font-extrabold text-[#114A42]">
-                        {lang === 'th' ? preset.badgeTh : preset.badgeEn}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-xs font-extrabold text-[#3D322C]">
-                    {lang === 'th' ? preset.titleTh : preset.titleEn}
-                  </div>
-                  <div className="text-[11px] text-[#6E5C52] leading-snug">
-                    {lang === 'th' ? preset.taglineTh : preset.taglineEn}
-                  </div>
-                </div>
-              ))}
-            </div>
           </div>
 
           <PlatformVisualArchitecture lang={lang} />
@@ -1535,7 +1470,7 @@ export const PlatformPortalView: React.FC<PlatformPortalViewProps> = ({
               <div className="sm:col-span-2 flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[#EFE6DC]">
                 <div>
                   <span className="font-bold">
-                    {lang === 'th' ? 'รูปแบบระบบที่เลือก: ' : 'Selected Automation Preset: '}
+                    {lang === 'th' ? 'ประเภทองค์กร: ' : 'Organization Type: '}
                   </span>
                   <span className="font-extrabold text-[#114A42]">
                     {getOrganizationPreset(activeReg.organizationPreset).emoji}{' '}
@@ -1544,16 +1479,6 @@ export const PlatformPortalView: React.FC<PlatformPortalViewProps> = ({
                       : getOrganizationPreset(activeReg.organizationPreset).titleEn}
                   </span>
                 </div>
-                {(activeReg.organizationPreset === 'autonomous_minimart' ||
-                  activeReg.automationAddons?.includes('receipt_door_gate')) && (
-                  <button
-                    type="button"
-                    onClick={() => setDemoModalOpen(true)}
-                    className="rounded-xl bg-[#3D322C] hover:bg-[#2B221D] text-white px-3 py-1.5 text-[11px] font-extrabold cursor-pointer"
-                  >
-                    🚪 {lang === 'th' ? 'เปิดจำลองระบบใบเสร็จเปิดประตู' : 'Open Receipt Gate Demo'}
-                  </button>
-                )}
               </div>
             )}
             <div>
@@ -1640,21 +1565,21 @@ export const PlatformPortalView: React.FC<PlatformPortalViewProps> = ({
               {[
                 {
                   id: 'open_organization' as const,
-                  emoji: '⚡',
-                  titleTh: 'เปิดระบบอัตโนมัติสำหรับร้าน / โรงเรียน / องค์กรของฉัน',
-                  titleEn: 'Open Automated Shop / School / Organization Workspace',
+                  emoji: '🏡',
+                  titleTh: 'ขอเปิดพื้นที่ใช้งานสำหรับมูลนิธิ / บ้านพักเด็ก',
+                  titleEn: 'Open Isolated Foundation Workspace',
                   descTh:
-                    'เลือกช้อยส์ได้ทั้ง มินิมาร์ทจ่ายเองเปิดประตู, ห้องเรียน, SME ไร้ HR, มูลนิธิ หรือออกแบบเอง (แยกข้อมูลส่วนตัว 100%)',
+                    'ได้ระบบมูลนิธิส่วนตัวครบชุด (แยกฐานข้อมูลเด็ก พี่เลี้ยง และการเงิน 100%)',
                   descEn:
-                    'Choose from Self-Checkout Minimart, Classroom, Lean SME, Foundation, or Custom (100% isolated data)',
+                    'Full Foundation suite with 100% isolated children, staff, and financial data',
                 },
                 {
                   id: 'apply_staff' as const,
                   emoji: '👩‍🏫',
-                  titleTh: 'สมัครงาน / ขอร่วมทีมผู้ดูแล',
-                  titleEn: 'Apply for Staff / Operator Role',
-                  descTh: 'ส่งข้อมูลติดต่อกลับเพื่อสมัครร่วมทีมกับเจ้าของระบบ',
-                  descEn: 'Apply to join as a team member / caregiver',
+                  titleTh: 'สมัครงาน / ขอร่วมทีมพี่เลี้ยงในมูลนิธิ',
+                  titleEn: 'Apply for Foundation Caregiver / Staff Role',
+                  descTh: 'ส่งข้อมูลติดต่อกลับเพื่อสมัครร่วมทีมดูแลน้องๆ กับทางมูลนิธิ',
+                  descEn: 'Apply to join as a caregiver or staff member',
                 },
               ].map((opt) => {
                 const active = applicationType === opt.id;
@@ -1682,83 +1607,27 @@ export const PlatformPortalView: React.FC<PlatformPortalViewProps> = ({
             </div>
           </div>
 
-          {/* Organization Automation Preset Cards + Custom Automation Add-on Checkboxes */}
           {applicationType === 'open_organization' && (
-            <div className="rounded-2xl border-2 border-[#B9E8DF] bg-[#F7FCFA] p-4 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="rounded-2xl border-2 border-[#B9E8DF] bg-[#F7FCFA] p-4 space-y-3">
+              <div className="flex items-center justify-between gap-2">
                 <div>
                   <div className="text-sm font-extrabold text-[#114A42]">
-                    2){' '}
-                    {lang === 'th'
-                      ? 'เลือกช้อยส์รูปแบบระบบอัตโนมัติ (จุดขายจัดการแทนคน)'
-                      : '2) Select Your Automation Preset'}
+                    {selectedPresetMeta.emoji}{' '}
+                    {lang === 'th' ? selectedPresetMeta.titleTh : selectedPresetMeta.titleEn}
                   </div>
-                  <p className="text-xs text-[#4F433C]">
-                    {lang === 'th'
-                      ? 'เลือกได้ตามธุรกิจหรือพื้นที่ของคุณ ระบบจะเตรียมคำเรียกบทบาทและฟีเจอร์ให้พร้อมใช้งานทันทีค่ะ'
-                      : 'Pick a preset—roles, greeting, and starter modules will be tailored automatically.'}
+                  <p className="text-xs text-[#4F433C] mt-0.5">
+                    {lang === 'th' ? selectedPresetMeta.taglineTh : selectedPresetMeta.taglineEn}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setDemoModalOpen(true)}
-                  className="rounded-xl bg-[#3D322C] hover:bg-[#2B221D] text-white px-3 py-1.5 text-xs font-extrabold cursor-pointer whitespace-nowrap"
-                >
-                  🚪 {lang === 'th' ? 'ทดลอง: จ่ายเอง + ใบเสร็จเปิดประตู' : 'Try Receipt Door Gate Demo'}
-                </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {ORGANIZATION_PRESETS.map((preset) => {
-                  const selected = organizationPreset === preset.id;
-                  return (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      onClick={() => handleSelectOrganizationPreset(preset.id)}
-                      className={`rounded-2xl border-2 p-3.5 text-left transition-all cursor-pointer space-y-1.5 ${
-                        selected
-                          ? 'border-[#114A42] bg-white shadow-sm ring-1 ring-[#8FD4C6]'
-                          : 'border-[#E5DDD3] bg-white/75 hover:bg-white'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-lg">{preset.emoji}</span>
-                        {preset.badgeTh && (
-                          <span
-                            className={`rounded-lg px-2 py-0.5 text-[10px] font-extrabold ${
-                              selected
-                                ? 'bg-[#114A42] text-white'
-                                : 'bg-[#E8FAF6] text-[#114A42]'
-                            }`}
-                          >
-                            {lang === 'th' ? preset.badgeTh : preset.badgeEn}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs sm:text-sm font-extrabold text-[#3D322C]">
-                        {lang === 'th' ? preset.titleTh : preset.titleEn}
-                      </div>
-                      <div className="text-[11px] text-[#6E5C52] leading-snug">
-                        {lang === 'th' ? preset.taglineTh : preset.taglineEn}
-                      </div>
-                      <div className="text-[10px] font-bold text-[#114A42] pt-0.5">
-                        👥 {lang === 'th' ? preset.rolesLabelTh : preset.rolesLabelEn}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Add-on Automation Capabilities */}
               <div className="space-y-2 pt-1 border-t border-[#D2EFE8]">
                 <div className="text-xs font-extrabold text-[#114A42]">
-                  3){' '}
                   {lang === 'th'
-                    ? 'ติ๊กเลือกระบบอัตโนมัติที่ต้องการให้ทำงานแทนคน (เลือกผสมได้ตามใจ)'
-                    : '3) Customize Automation Modules (Mix & Match)'}
+                    ? 'โมดูลพื้นฐานสำหรับมูลนิธิที่เปิดใช้งาน:'
+                    : 'Foundation Modules Enabled:'}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   {AUTOMATION_ADDON_OPTIONS.map((addon) => {
                     const checked = automationAddons.includes(addon.id);
                     return (
@@ -1796,8 +1665,8 @@ export const PlatformPortalView: React.FC<PlatformPortalViewProps> = ({
               <label className="block text-xs font-bold text-[#3D322C] mb-1">
                 {applicationType === 'open_organization'
                   ? lang === 'th'
-                    ? 'ชื่อผู้ดูแล / เจ้าของร้าน *'
-                    : 'Owner / Coordinator Name *'
+                    ? 'ชื่อผู้ดูแล / ผู้อำนวยการมูลนิธิ *'
+                    : 'Director / Coordinator Name *'
                   : lang === 'th'
                   ? 'ชื่อ-นามสกุลผู้สมัคร *'
                   : 'Full Name *'}
@@ -1832,8 +1701,8 @@ export const PlatformPortalView: React.FC<PlatformPortalViewProps> = ({
               <label className="block text-xs font-bold text-[#3D322C] mb-1">
                 {applicationType === 'open_organization'
                   ? lang === 'th'
-                    ? 'ชื่อร้าน / โรงเรียน / องค์กรที่จะเปิดใช้งาน *'
-                    : 'Shop / School / Organization Name *'
+                    ? 'ชื่อมูลนิธิ / บ้านพักเด็ก *'
+                    : 'Foundation / Care Home Name *'
                   : lang === 'th'
                   ? 'ตำแหน่งที่ต้องการสมัคร *'
                   : 'Position Applied For *'}
@@ -1850,8 +1719,8 @@ export const PlatformPortalView: React.FC<PlatformPortalViewProps> = ({
                       ? selectedPresetMeta.orgNamePlaceholderTh
                       : selectedPresetMeta.orgNamePlaceholderEn
                     : lang === 'th'
-                    ? 'เช่น ผู้ดูแลระบบ / พี่เลี้ยงประจำ'
-                    : 'e.g. Caregiver / Store Operator'
+                    ? 'เช่น พี่เลี้ยงประจำบ้าน / แม่ครัว / ครูสอนพิเศษ'
+                    : 'e.g. Caregiver / Kitchen Chef / Tutor'
                 }
                 className="w-full rounded-xl border border-[#EBD8C3] bg-white px-3.5 py-2.5 text-sm text-[#3D322C] focus:outline-none focus:ring-2 focus:ring-[#9FE2D6]"
               />
@@ -1876,11 +1745,11 @@ export const PlatformPortalView: React.FC<PlatformPortalViewProps> = ({
               <label className="block text-xs font-bold text-[#3D322C] mb-1">
                 {applicationType === 'open_organization'
                   ? lang === 'th'
-                    ? 'ขนาดสาขา / จำนวนคน / รูปแบบจุดบริการโดยประมาณ'
-                    : 'Estimated Branches / Team Size'
+                    ? 'จำนวนเด็กและพี่เลี้ยงโดยประมาณ'
+                    : 'Estimated Children & Staff Count'
                   : lang === 'th'
-                  ? 'ประสบการณ์ทำงานที่ผ่านมา'
-                  : 'Relevant Experience'}
+                  ? 'ประสบการณ์ดูแลเด็กที่ผ่านมา'
+                  : 'Relevant Childcare Experience'}
               </label>
               <input
                 type="text"
@@ -1893,8 +1762,8 @@ export const PlatformPortalView: React.FC<PlatformPortalViewProps> = ({
                       ? selectedPresetMeta.sizePlaceholderTh
                       : selectedPresetMeta.sizePlaceholderEn
                     : lang === 'th'
-                    ? 'เช่น เคยดูแลร้านมินิมาร์ท / ดูแลเด็กอนุบาล 3 ปี'
-                    : 'e.g. 3 years in retail / classroom support'
+                    ? 'เช่น เคยดูแลเด็กประถม-มัธยมในมูลนิธิ 3 ปี'
+                    : 'e.g. 3 years caring for school-age youth'
                 }
                 className="w-full rounded-xl border border-[#EBD8C3] bg-white px-3.5 py-2.5 text-sm text-[#3D322C] focus:outline-none focus:ring-2 focus:ring-[#9FE2D6]"
               />
@@ -1902,7 +1771,7 @@ export const PlatformPortalView: React.FC<PlatformPortalViewProps> = ({
 
             <div className="sm:col-span-2">
               <label className="block text-xs font-bold text-[#3D322C] mb-1">
-                {lang === 'th' ? 'ไอเดีย / เงื่อนไขพิเศษที่อยากให้ระบบช่วยจัดการแทนคน' : 'Automation Goals / Notes'}
+                {lang === 'th' ? 'รายละเอียดเพิ่มเติมสำหรับมูลนิธิ' : 'Additional Notes'}
               </label>
               <textarea
                 rows={3}
@@ -1911,8 +1780,8 @@ export const PlatformPortalView: React.FC<PlatformPortalViewProps> = ({
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder={
                   lang === 'th'
-                    ? 'เช่น อยากให้ลูกค้าสแกนจ่ายเองแล้วใช้ QR ใบเสร็จเปิดประตูออกอัตโนมัติ หรือสรุปยอดส่ง LINE ทุกวัน'
-                    : 'Tell us briefly what tasks you want automated'
+                    ? 'เช่น ต้องการใช้เช็คชื่อกิจวัตรเช้า-เย็น จัดตารางเวรพี่เลี้ยง และส่งสรุปประจำสัปดาห์ค่ะ'
+                    : 'Tell us briefly about your care home needs'
                 }
                 className="w-full rounded-xl border border-[#EBD8C3] bg-white px-3.5 py-2.5 text-sm text-[#3D322C] focus:outline-none focus:ring-2 focus:ring-[#9FE2D6]"
               />
@@ -1994,13 +1863,6 @@ export const PlatformPortalView: React.FC<PlatformPortalViewProps> = ({
           </div>
         </form>
       )}
-
-      <MinimartGateDemoModal
-        open={demoModalOpen}
-        orgName={organizationName}
-        lang={lang}
-        onClose={() => setDemoModalOpen(false)}
-      />
     </div>
   );
 };

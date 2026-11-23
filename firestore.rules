@@ -150,7 +150,8 @@ service cloud.firestore {
           'activeFestivalOverride', 'dailyAllowanceThb', 'schoolDaysPerWeek',
           'early15MinBonusStars', 'starToCoinStars', 'starToCoinThb', 'lastWeeklyClearedAt',
           'useOwnStorageOnly', 'enableCoinsAndPiggyBank', 'organizationPreset', 'automationAddons',
-          'ownerUid', 'sharedEmails', 'updatedAt'
+          'customQuickCommands', 'timedCommandSchedule', 'homeworkCurfewMins',
+          'kidsWithoutPhoneIds', 'commandPermissions', 'ownerUid', 'sharedEmails', 'updatedAt'
         ]) &&
         isValidId(data.id) &&
         (!('syncWebhookUrl' in data) || (data.syncWebhookUrl is string && data.syncWebhookUrl.size() <= 500)) &&
@@ -171,6 +172,11 @@ service cloud.firestore {
         (!('enableCoinsAndPiggyBank' in data) || data.enableCoinsAndPiggyBank is bool) &&
         (!('organizationPreset' in data) || (data.organizationPreset is string && data.organizationPreset.size() <= 40)) &&
         (!('automationAddons' in data) || (data.automationAddons is list && data.automationAddons.size() <= 10 && (data.automationAddons.size() == 0 || data.automationAddons[0] is string))) &&
+        (!('customQuickCommands' in data) || (data.customQuickCommands is list && data.customQuickCommands.size() <= 20 && (data.customQuickCommands.size() == 0 || data.customQuickCommands[0] is map))) &&
+        (!('timedCommandSchedule' in data) || (data.timedCommandSchedule is map && data.timedCommandSchedule.keys().size() <= 15)) &&
+        (!('homeworkCurfewMins' in data) || (data.homeworkCurfewMins is number && data.homeworkCurfewMins >= 0 && data.homeworkCurfewMins <= 1439)) &&
+        (!('kidsWithoutPhoneIds' in data) || (data.kidsWithoutPhoneIds is list && data.kidsWithoutPhoneIds.size() <= 100 && (data.kidsWithoutPhoneIds.size() == 0 || data.kidsWithoutPhoneIds[0] is string))) &&
+        (!('commandPermissions' in data) || (data.commandPermissions is map && data.commandPermissions.keys().size() <= 40)) &&
         isValidSharedMetadata(data);
     }
 
@@ -200,9 +206,7 @@ service cloud.firestore {
         data.nickname is string && data.nickname.size() >= 1 && data.nickname.size() <= 64 &&
         data.organizationName is string && data.organizationName.size() >= 1 && data.organizationName.size() <= 140 &&
         data.applicationType in ['open_organization', 'apply_staff'] &&
-        (!('organizationPreset' in data) || data.organizationPreset in [
-          'autonomous_minimart', 'kindergarten_classroom', 'lean_sme_shop', 'foundation_care', 'custom_automation'
-        ]) &&
+        (!('organizationPreset' in data) || data.organizationPreset in ['foundation_care']) &&
         (!('automationAddons' in data) || (data.automationAddons is list && data.automationAddons.size() <= 10 && (data.automationAddons.size() == 0 || data.automationAddons[0] is string))) &&
         data.contactInfo is string && data.contactInfo.size() >= 1 && data.contactInfo.size() <= 160 &&
         data.experienceOrSize is string && data.experienceOrSize.size() <= 240 &&
@@ -315,7 +319,8 @@ service cloud.firestore {
               'activeFestivalOverride', 'dailyAllowanceThb', 'schoolDaysPerWeek',
               'early15MinBonusStars', 'starToCoinStars', 'starToCoinThb', 'lastWeeklyClearedAt',
               'useOwnStorageOnly', 'enableCoinsAndPiggyBank', 'organizationPreset', 'automationAddons',
-              'sharedEmails', 'updatedAt'
+              'customQuickCommands', 'timedCommandSchedule', 'homeworkCurfewMins',
+              'kidsWithoutPhoneIds', 'commandPermissions', 'sharedEmails', 'updatedAt'
             ])
           )
         );

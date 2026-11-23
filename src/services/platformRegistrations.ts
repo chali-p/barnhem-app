@@ -40,13 +40,7 @@ function mapDocToRegistration(raw: Record<string, unknown>, docId: string): Plat
     applicationType:
       raw.applicationType === 'apply_staff' ? 'apply_staff' : 'open_organization',
     organizationPreset:
-      raw.organizationPreset === 'autonomous_minimart' ||
-      raw.organizationPreset === 'kindergarten_classroom' ||
-      raw.organizationPreset === 'lean_sme_shop' ||
-      raw.organizationPreset === 'foundation_care' ||
-      raw.organizationPreset === 'custom_automation'
-        ? raw.organizationPreset
-        : undefined,
+      raw.organizationPreset === 'foundation_care' ? 'foundation_care' : undefined,
     automationAddons: Array.isArray(raw.automationAddons)
       ? (raw.automationAddons.filter((x): x is AutomationAddonId => typeof x === 'string') as AutomationAddonId[])
       : undefined,

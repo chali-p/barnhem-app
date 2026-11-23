@@ -1,4 +1,12 @@
-import { Language, Member, ModalAlertPayload } from '../types/barnhem';
+import { AppSettings, Language, Member, ModalAlertPayload } from '../types/barnhem';
+import {
+  canKidUseCommand,
+  doesKidHavePhone,
+  formatThaiCurfewClock,
+  getEffectiveHomeworkCurfewMins,
+  getEffectiveHomeworkPermissionWindow,
+  minsToHHMM,
+} from './expressKiosk';
 import { isKidAwayOnDate } from './piggyBank';
 import { getDateKey, getMinutesOfDay, isPublicHoliday } from './timeRules';
 
@@ -70,7 +78,8 @@ export function evaluateKidStepReminders(
   kid: Member,
   now: Date,
   isSickToday: boolean,
-  isPublicHolidayToday = false
+  isPublicHolidayToday = false,
+  settings?: Partial<AppSettings>
 ): KidStepReminderSnapshot {
   const mins = getMinutesOfDay(now);
   const day = now.getDay(); // 0 Sun, 5 Fri, 6 Sat
@@ -81,6 +90,11 @@ export function evaluateKidStepReminders(
   const isSchoolDay = day >= 1 && day <= 5 && !isHoliday;
   const SCHOOL_MORNING_CEILING = 8 * 60; // 08:00 น. เพดานเวลาสายวันไปโรงเรียน
   const PHONE_RETURN_CEILING = 23 * 60; // 23:00 น. เพดานคืนโทรศัพท์หลัง 22:45
+
+  const kidHasPhone = doesKidHavePhone(kid.id, settings);
+  const canEveningPhone = kidHasPhone && canKidUseCommand('evening_uniform_phone', kid, settings);
+  const canHwPerm = kidHasPhone && canKidUseCommand('night_homework_permission', kid, settings);
+  const canReturnPhone = kidHasPhone && canKidUseCommand('night_return_phone', kid, settings);
 
   // --- 1. Determine completion status of the 3 core daily shifts ---
   const morningDone =
@@ -96,6 +110,10 @@ export function evaluateKidStepReminders(
   const nightDone =
     kid.group === 1
       ? Boolean(kid.daily.bossStageUnlocked)
+      : !canReturnPhone
+      ? kid.group === 2
+        ? kid.daily.eveningChecklist.every(Boolean)
+        : true
       : Boolean(kid.daily.phoneReturnedChecked);
 
   // --- 2. Compute ordered next step actions across the 3 shifts ---
@@ -436,7 +454,7 @@ export function evaluateKidStepReminders(
       });
     }
   } else if (kid.group === 2) {
-    if (!kid.daily.eveningPhoneUnlocked) {
+    if (canEveningPhone && !kid.daily.eveningPhoneUnlocked) {
       const deadline = 18 * 60 + 30;
       const delta = mins - deadline;
       pendingSteps.push({
@@ -460,69 +478,86 @@ export function evaluateKidStepReminders(
         ctaTh: '✅ ไปทำเช็คลิสต์ 4 ข้อ',
         ctaEn: '✅ Open Checklist',
       });
-    } else if (!kid.daily.phoneReturnedChecked) {
-      // Check homework window (20:30-20:45) vs phone return curfew (21:00 or 22:45)
-      const hasHw = Boolean(kid.daily.homeworkRegisteredSubject) && day !== 0;
+    } else if (!canEveningPhone && !kid.daily.eveningChecklist.every(Boolean)) {
+      const deadline = 18 * 60 + 30;
+      const delta = mins - deadline;
+      pendingSteps.push({
+        id: 'g2_evening_checklist_nophone',
+        shift: 'shift_night',
+        targetModal: 'shift_night',
+        urgent: false,
+        approachingDeadline: mins >= 17 * 60 + 45 && delta <= 0,
+        deadlineMinutes: deadline,
+        minutesDelta: delta,
+        titleTh: 'กะค่ำ (18:30 น.): เช็คลิสต์ 4 ข้อ (ซัก-รีด-ตรวจชุด-อาบน้ำ)',
+        titleEn: 'Evening (18:30): 4-Item Hygiene & Uniform Checklist',
+        instructionTh: 'อย่าลืมติ๊กเช็คลิสต์ 4 ข้อ (ซักชุด รีดชุด ตรวจชุด อาบน้ำ) ให้ครบนะคะ',
+        instructionEn: 'Remember to finish all 4 checklist items (wash, iron, inspect uniform, shower).',
+        ctaTh: '✅ ไปทำเช็คลิสต์ 4 ข้อ',
+        ctaEn: '✅ Open Checklist',
+      });
+    } else if (canReturnPhone && !kid.daily.phoneReturnedChecked) {
+      // Check dynamic homework permission window & phone return curfew
+      const hwWin = getEffectiveHomeworkPermissionWindow(settings);
+      const curfew = getEffectiveHomeworkCurfewMins(settings);
+      const curfewTh = formatThaiCurfewClock(curfew);
+      const curfewEn = minsToHHMM(curfew);
+      const hasHw = Boolean(kid.daily.homeworkRegisteredSubject);
       const canAskHwWindow =
-        day !== 5 && day !== 0 && !kid.daily.homeworkRegisteredSubject && mins >= 20 * 60 && mins <= 20 * 60 + 45;
+        canHwPerm &&
+        !kid.daily.homeworkRegisteredSubject &&
+        (hwWin.startMins <= hwWin.endMins
+          ? mins >= hwWin.startMins && mins <= hwWin.endMins
+          : mins >= hwWin.startMins || mins <= hwWin.endMins);
       if (canAskHwWindow) {
-        const hwClose = 20 * 60 + 45;
+        const hwClose = hwWin.endMins;
         pendingSteps.push({
           id: 'g2_hw_register',
           shift: 'shift_night',
           targetModal: 'shift_night',
-          urgent: mins >= 20 * 60 + 30,
+          urgent: true,
           approachingDeadline: true,
           deadlineMinutes: hwClose,
           minutesDelta: mins - hwClose,
-          titleTh: 'กะค่ำ (20:30–20:45 น.): ลงทะเบียนทำการบ้าน (ถ้ามี)',
-          titleEn: 'Night (20:30–20:45): Register Homework (If Any)',
-          instructionTh: `หากมีการบ้าน ให้ลงทะเบียนวิชาก่อน 20:45 น. (เหลือ ${Math.max(0, hwClose - mins)} นาที) เพื่อขยายเวลาคืนมือถือเป็น 22:45 น. (ห้ามทำในห้องนอน!)`,
-          instructionEn: `Register homework subject before 20:45 (${Math.max(0, hwClose - mins)} min left) to extend phone curfew to 22:45.`,
-          ctaTh: '📚 ไปลงทะเบียนการบ้าน',
-          ctaEn: '📚 Register Homework',
+          titleTh: `กะค่ำ (${hwWin.labelTh}): ปุ่มขออนุญาตทำการบ้านเปิดแล้ว`,
+          titleEn: `Night (${hwWin.labelEn}): Homework Permission Open`,
+          instructionTh: `กดขออนุญาต (ทำการบ้าน / หาข้อมูล / เรียนพิเศษ) ในช่องที่ 3 ก่อน ${minsToHHMM(hwClose)} น. (เหลือ ${Math.max(0, hwClose - mins)} นาที) เพื่อใช้งานต่อได้ถึง ${curfewTh}`,
+          instructionEn: `Request homework permission in Channel 3 before ${minsToHHMM(hwClose)} (${Math.max(0, hwClose - mins)} min left) to extend until ${curfewEn}.`,
+          ctaTh: '📝 ไปช่อง 3 ขออนุญาตทำการบ้าน',
+          ctaEn: '📝 Open Channel 3',
         });
       }
 
-      const curfew = hasHw ? 22 * 60 + 45 : 21 * 60;
-      const withinPhoneReturnCeiling = !hasHw || mins <= PHONE_RETURN_CEILING;
-      if (withinPhoneReturnCeiling) {
-        const delta = mins - curfew;
-        const minsLeftToCeiling = Math.max(0, PHONE_RETURN_CEILING - mins);
-        pendingSteps.push({
-          id: 'g2_phone_return',
-          shift: 'shift_night',
-          targetModal: 'shift_night',
-          urgent: delta > 0,
-          approachingDeadline: delta >= -30 && delta <= 0,
-          deadlineMinutes: curfew,
-          minutesDelta: delta,
-          titleTh: hasHw
-            ? 'กะค่ำ: ส่งคืนมือถือหลังทำการบ้าน (22:45 น. · เพดาน 23:00 น.)'
-            : 'กะค่ำ: ส่งคืนมือถือ (ไม่มีการบ้าน / วันอาทิตย์ — ไม่เกิน 21:00 น.)',
-          titleEn: hasHw
-            ? 'Night: Return Phone After Homework (22:45 · Ceiling 23:00)'
-            : 'Night: Return Phone (By 21:00)',
-          instructionTh:
-            delta <= 0
-              ? `ต้องส่งคืนมือถือเข้าตู้พี่เลี้ยงภายในเวลา ${formatHHMM(curfew)} (เหลือเวลาอีก ${Math.abs(delta)} นาที)`
-              : hasHw
-              ? `🚨 เลยเวลา 22:45 น. มาแล้ว ${delta} นาที (ตั้งเพดานคืนโทรศัพท์ถึง 23:00 น. — เหลือ ${minsLeftToCeiling} นาที · งดใช้มือถือรอบเย็นวันพรุ่งนี้ 1 วัน)`
-              : `🚨 เลยเวลา 21:00 น. มาแล้ว ${delta} นาที (ผิดกฎ: หักสิทธิ์ Free Day วันศุกร์ 1 วัน) รีบส่งคืนเครื่องทันที!`,
-          instructionEn:
-            delta <= 0
-              ? `Return phone to staff locker by ${formatHHMM(curfew)} (${Math.abs(delta)} min left).`
-              : hasHw
-              ? `Past 22:45 by ${delta} min (ceiling 23:00 — ${minsLeftToCeiling} min left). Return your phone immediately!`
-              : `Past ${formatHHMM(curfew)} curfew by ${delta} min! Return your phone immediately.`,
-          ctaTh: '📱 ไปส่งคืนมือถือ',
-          ctaEn: '📱 Return Phone',
-        });
-      }
+      const delta = mins - curfew;
+      pendingSteps.push({
+        id: 'g2_phone_return',
+        shift: 'shift_night',
+        targetModal: 'shift_night',
+        urgent: delta > 0,
+        approachingDeadline: delta >= -30 && delta <= 0,
+        deadlineMinutes: curfew,
+        minutesDelta: delta,
+        titleTh: hasHw
+          ? `กะค่ำ: นำมือถือมาเก็บ (ต่อเวลาถึง ${curfewTh})`
+          : `กะค่ำ: ส่งคืนมือถือเข้าตู้พี่เลี้ยง (ไม่เกิน ${curfewTh})`,
+        titleEn: hasHw
+          ? `Night: Store Phone (Extension — By ${curfewEn})`
+          : `Night: Return Phone to Locker (By ${curfewEn})`,
+        instructionTh:
+          delta <= 0
+            ? `ต้องนำมือถือมาเก็บภายในเวลา ${curfewTh} (เหลือเวลาอีก ${Math.abs(delta)} นาที) หากเกินเวลานี้ ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วัน`
+            : `🚨 เลยเวลา ${curfewTh} มาแล้ว ${delta} นาที! หากยังไม่นำมาเก็บมือถือ ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วัน รีบส่งคืนทันที`,
+        instructionEn:
+          delta <= 0
+            ? `Store your phone by ${curfewEn} (${Math.abs(delta)} min left). Past ${curfewEn} forfeits 1 Free Day phone privilege.`
+            : `Past ${curfewEn} by ${delta} min! Keeping phone past ${curfewEn} forfeits 1 Free Day phone privilege. Return immediately!`,
+        ctaTh: '📱 ไปส่งคืนมือถือ',
+        ctaEn: '📱 Return Phone',
+      });
     }
   } else {
     // Group 3
-    if (!kid.daily.phoneReturnedChecked && mins <= PHONE_RETURN_CEILING) {
+    if (canReturnPhone && !kid.daily.phoneReturnedChecked && mins <= PHONE_RETURN_CEILING) {
       const curfew = 22 * 60 + 45;
       const delta = mins - curfew;
       const minsLeftToCeiling = Math.max(0, PHONE_RETURN_CEILING - mins);
@@ -600,12 +635,12 @@ export function evaluateKidStepReminders(
     penaltyInstructions.push({
       id: 'pen_fri_deduct',
       severity: 'warning',
-      titleTh: `🗓️ สะสมหักสิทธิ์ Free Day วันศุกร์ ${kid.penalty.fridayFreeDayDeductedCount} วัน`,
-      titleEn: `🗓️ Friday Free Day Deductions: ${kid.penalty.fridayFreeDayDeductedCount}`,
+      titleTh: `🗓️ สะสมงดใช้โทรศัพท์วัน Free Day ${kid.penalty.fridayFreeDayDeductedCount} วัน`,
+      titleEn: `🗓️ Free Day Phone Deductions: ${kid.penalty.fridayFreeDayDeductedCount}`,
       ruleInstructionTh:
-        'อย่าลืมส่งคืนมือถือตรงเวลาไม่เกิน 21:00 น. (หรือ 22:45 น. กรณีลงทะเบียนการบ้าน) เพื่อไม่ให้ถูกหักสิทธิ์เพิ่มนะ',
+        'อย่าลืมนำมือถือมาเก็บให้ตรงเวลาไม่เกิน 21:00 น. (3 ทุ่ม) เพื่อไม่ให้ถูกงดใช้โทรศัพท์วัน Free Day เพิ่มนะ',
       ruleInstructionEn:
-        'Return phone on time (21:00 or 22:45 with homework) to avoid further Friday Free Day deductions.',
+        'Store phone by 21:00 to avoid additional Free Day phone deductions.',
       targetModal: 'penalty_status',
     });
   }

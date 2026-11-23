@@ -26,6 +26,8 @@ import {
   Announcement,
   AppMode,
   AppState,
+  CommandAccessRule,
+  CustomQuickCommand,
   DeedRedemption,
   FriendVisitRequest,
   GoldenPoolLog,
@@ -45,15 +47,18 @@ import {
   SnackBill,
   StaffLeaveRecord,
   SupplyRequest,
+  TimedScheduleSlot,
   WeeklyActivityLog,
   WeeklyActivityStatus,
 } from './types/barnhem';
 import {
   evaluateExpressKioskScan,
+  evaluateOneTapCustomCommand,
   evaluateOneTapGoToSchool,
   evaluateOneTapHomeAction,
   HOME_QUICK_ACTIONS,
   HomeQuickActionId,
+  isCustomCommandDoneForKid,
   isHomeActionDoneForKid,
   playKioskChime,
 } from './utils/expressKiosk';
@@ -92,7 +97,11 @@ export default function App() {
       const raw = sessionStorage.getItem(ACTIVE_TENANT_STORAGE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw) as ActiveTenantContext;
-      return parsed?.orgId ? parsed : null;
+      if (!parsed?.orgId || parsed.orgId === 'org_minimart_studio') {
+        sessionStorage.removeItem(ACTIVE_TENANT_STORAGE_KEY);
+        return null;
+      }
+      return parsed;
     } catch {
       return null;
     }
@@ -102,8 +111,13 @@ export default function App() {
       const raw = sessionStorage.getItem(ACTIVE_TENANT_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as ActiveTenantContext;
-        if (parsed?.orgId) {
-          return loadTenantAppState(parsed.orgId, parsed.orgName, parsed.ownerName);
+        if (parsed?.orgId && parsed.orgId !== 'org_minimart_studio') {
+          return loadTenantAppState(
+            parsed.orgId,
+            parsed.orgName,
+            parsed.ownerName,
+            parsed.organizationPreset
+          );
         }
       }
     } catch {
@@ -1456,7 +1470,7 @@ export default function App() {
   );
 
   const handleOneTapHomeAction = useCallback(
-    (actionId: HomeQuickActionId, kidId: string) => {
+    (actionId: HomeQuickActionId, kidId: string, detailOverride?: string) => {
       if (actionId === 'morning_school') {
         return handleOneTapGoToSchool(kidId);
       }
@@ -1476,7 +1490,8 @@ export default function App() {
         now,
         lang,
         currentState.settings,
-        isSickToday
+        isSickToday,
+        detailOverride
       );
       playKioskChime(result.success);
       if (result.updatedKid) {
@@ -1484,7 +1499,9 @@ export default function App() {
         commitStateChange((prev) => {
           const freshKid = prev.members.find((m) => m.id === kidId && m.role === 'kid');
           if (!freshKid) return prev;
-          if (isHomeActionDoneForKid(actionId, freshKid)) return prev;
+          if (actionId !== 'night_homework_permission' && isHomeActionDoneForKid(actionId, freshKid)) {
+            return prev;
+          }
           const freshSick = prev.sickReports.some(
             (r) => r.kidId === freshKid.id && r.dateKey === todayKey && !r.resolved
           );
@@ -1494,7 +1511,8 @@ export default function App() {
             now,
             lang,
             prev.settings,
-            freshSick
+            freshSick,
+            detailOverride
           );
           const updated = freshRes.updatedKid;
           if (!updated) return prev;
@@ -1502,7 +1520,8 @@ export default function App() {
             updated,
             actionMeta?.titleTh ?? actionId,
             'on_time',
-            'ปุ่มด่วนหน้าแรก'
+            'ปุ่มด่วนหน้าแรก',
+            detailOverride
           );
           return {
             ...prev,
@@ -1514,6 +1533,111 @@ export default function App() {
       return result;
     },
     [commitStateChange, handleOneTapGoToSchool, lang, makeWeeklyLog, now]
+  );
+
+  const handleRunCustomQuickCommand = useCallback(
+    (cmd: CustomQuickCommand, kidId: string, subjectOrNote?: string) => {
+      const currentState = stateRef.current;
+      const kid = currentState.members.find((m) => m.role === 'kid' && m.id === kidId);
+      if (!kid) {
+        playKioskChime(false);
+        return null;
+      }
+      const result = evaluateOneTapCustomCommand(
+        cmd,
+        kid,
+        now,
+        lang,
+        subjectOrNote,
+        currentState.settings
+      );
+      playKioskChime(result.success);
+      if (result.updatedKid) {
+        commitStateChange((prev) => {
+          const freshKid = prev.members.find((m) => m.id === kidId && m.role === 'kid');
+          if (!freshKid) return prev;
+          const allowHomeworkEdit = cmd.kind === 'homework_permission' && Boolean(subjectOrNote?.trim());
+          if (!allowHomeworkEdit && isCustomCommandDoneForKid(cmd, freshKid, now)) return prev;
+          const freshRes = evaluateOneTapCustomCommand(
+            cmd,
+            freshKid,
+            now,
+            lang,
+            subjectOrNote,
+            prev.settings
+          );
+          const updated = freshRes.updatedKid;
+          if (!updated) return prev;
+          const logEntry = makeWeeklyLog(
+            updated,
+            `${cmd.emoji} ${cmd.titleTh}`,
+            'on_time',
+            'คีย์ลัดหน้าแรก',
+            subjectOrNote || cmd.defaultNote
+          );
+          return {
+            ...prev,
+            weeklyActivityLogs: [logEntry, ...(prev.weeklyActivityLogs ?? [])].slice(0, 300),
+            members: prev.members.map((m) => (m.id === updated.id ? updated : m)),
+          };
+        }, `Custom Quick Command (${cmd.titleTh}): ${kid.nickname}`);
+      }
+      return result;
+    },
+    [commitStateChange, lang, makeWeeklyLog, now]
+  );
+
+  const handleSaveCustomQuickCommands = useCallback(
+    (nextCommands: CustomQuickCommand[]) => {
+      commitStateChange(
+        (prev) => ({
+          ...prev,
+          settings: {
+            ...prev.settings,
+            customQuickCommands: nextCommands.slice(0, 20),
+          },
+        }),
+        'Update Custom Quick Commands'
+      );
+    },
+    [commitStateChange]
+  );
+
+  const handleSaveTimedSchedule = useCallback(
+    (nextSchedule: Record<string, TimedScheduleSlot>, nextCurfewMins: number) => {
+      commitStateChange(
+        (prev) => ({
+          ...prev,
+          settings: {
+            ...prev.settings,
+            timedCommandSchedule: nextSchedule,
+            homeworkCurfewMins: nextCurfewMins,
+          },
+        }),
+        'Update Timed Command Schedule'
+      );
+    },
+    [commitStateChange]
+  );
+
+  const handleSaveCommandPermissions = useCallback(
+    (
+      nextKidsWithoutPhoneIds: string[],
+      nextCommandPermissions: Record<string, CommandAccessRule>
+    ) => {
+      commitStateChange(
+        (prev) => ({
+          ...prev,
+          settings: {
+            ...prev.settings,
+            kidsWithoutPhoneIds: nextKidsWithoutPhoneIds.slice(0, 100),
+            commandPermissions: nextCommandPermissions,
+          },
+        }),
+        'Update Kid Phone Status & Command Permissions'
+      );
+    },
+    [commitStateChange]
   );
 
   const handleAddWeeklyActivityLog = useCallback(
@@ -1829,26 +1953,26 @@ export default function App() {
   const isCleanHomeScreen = mode === 'magic_door' && !selectedKid;
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col overflow-x-hidden">
       {/* Clean minimal brand bar on Home screen matching screenshot */}
       {isCleanHomeScreen && (
         <header
           className="no-print sticky top-0 z-30 border-b bg-white/85 backdrop-blur-md"
           style={{ borderColor: 'var(--theme-border-alt)' }}
         >
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2 text-sm sm:text-base font-extrabold text-[#3D322C] truncate">
-              <span>🏡</span>
+          <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between gap-2 sm:gap-4">
+            <div className="flex items-center gap-1.5 sm:gap-2 text-sm sm:text-base font-extrabold text-[#3D322C] truncate min-w-0">
+              <span className="shrink-0">🏡</span>
               <span className="truncate">
                 {activeTenant ? activeTenant.orgName : 'Barnhem Care & Kids'}
               </span>
             </div>
-            <div className="flex items-center gap-3 shrink-0">
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
               {linkedKidSession ? (
                 <button
                   type="button"
                   onClick={() => void signOutCloud()}
-                  className="min-h-[36px] rounded-xl border border-[#F3B7C0] bg-[#FFF0F3] hover:bg-[#FFE0E7] px-3 py-1.5 text-xs font-extrabold text-[#8B1D36] whitespace-nowrap cursor-pointer transition-colors"
+                  className="min-h-[36px] rounded-xl border border-[#F3B7C0] bg-[#FFF0F3] hover:bg-[#FFE0E7] px-2.5 sm:px-3 py-1.5 text-xs font-extrabold text-[#8B1D36] whitespace-nowrap cursor-pointer transition-colors"
                 >
                   🚪 {lang === 'th' ? 'ออกจากระบบน้อง' : 'Sign Out Kid'}
                 </button>
@@ -1856,7 +1980,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setMode('portal')}
-                  className="min-h-[36px] rounded-xl border border-[#8FD4C6] bg-[#E8FAF6] hover:bg-[#D5F4EE] px-3 py-1.5 text-xs font-extrabold text-[#114A42] whitespace-nowrap cursor-pointer transition-colors"
+                  className="min-h-[36px] rounded-xl border border-[#8FD4C6] bg-[#E8FAF6] hover:bg-[#D5F4EE] px-2.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-extrabold text-[#114A42] whitespace-nowrap cursor-pointer transition-colors"
                 >
                   {activeTenant
                     ? lang === 'th'
@@ -1867,8 +1991,8 @@ export default function App() {
                       ? '🛡️ เปิดสิทธิ์มูลนิธิอื่น'
                       : '🛡️ Org Approvals'
                     : lang === 'th'
-                    ? '🏛️ สำหรับมูลนิธิอื่น: ขอเปิดใช้งานฟรี'
-                    : '🏛️ For Other Foundations (Free)'}
+                    ? '🏛️ สมัครใช้ระบบฟรี'
+                    : '🏛️ Free Org Trial'}
                 </button>
               )}
               <button
@@ -1920,7 +2044,7 @@ export default function App() {
       )}
 
       {/* Main Content Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-8">
         {mode === 'magic_door' && !selectedKid && (
           <MagicDoorView
             members={state.members}
@@ -1942,6 +2066,10 @@ export default function App() {
             onExpressKioskScan={handleExpressKioskScan}
             onQuickGoToSchool={handleOneTapGoToSchool}
             onQuickHomeAction={handleOneTapHomeAction}
+            onRunCustomQuickCommand={handleRunCustomQuickCommand}
+            onSaveCustomQuickCommands={handleSaveCustomQuickCommands}
+            onSaveTimedSchedule={handleSaveTimedSchedule}
+            onSaveCommandPermissions={handleSaveCommandPermissions}
             onShowAlert={showAlert}
             organizationName={activeTenant?.orgName}
             linkedKidSession={linkedKidSession}
@@ -2329,6 +2457,7 @@ export default function App() {
                 ownerName: reg.nickname || reg.applicantName,
                 ownerUid: reg.uid,
                 ownerEmail: reg.email,
+                organizationPreset: reg.organizationPreset,
               };
               sessionStorage.setItem(ACTIVE_TENANT_STORAGE_KEY, JSON.stringify(ctx));
               activeTenantRef.current = ctx;

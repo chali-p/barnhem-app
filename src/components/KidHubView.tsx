@@ -22,6 +22,7 @@ import {
   ModalAlertPayload,
   OutfitMode,
   OutingTrip,
+  PetCompanionConfig,
   PrivateCareMessage,
   ReturnHomePhoto,
   SecretPoll,
@@ -61,12 +62,29 @@ import {
   isPublicHoliday,
 } from '../utils/timeRules';
 import { getStaffScheduleForDate } from '../data/staffSchedule';
-import { computeLivePetStats } from '../utils/petCare';
+import {
+  computeLivePetStats,
+  createAdoptedPet,
+  getNextFedPetState,
+  getPetFeedStarStatus,
+  getPetSpeciesInfo,
+  PET_DAILY_FEED_STAR_CAP,
+  PET_FEED_STAR_REWARD,
+  PET_SPECIES_CATALOG,
+} from '../utils/petCare';
+import {
+  canKidUseCommand,
+  doesKidHavePhone,
+  formatThaiCurfewClock,
+  getEffectiveHomeworkCurfewMins,
+  getEffectiveHomeworkPermissionWindow,
+  minsToHHMM,
+} from '../utils/expressKiosk';
 import { evaluateKidStepReminders } from '../utils/stepReminders';
-import { AvatarCanvas, VisitingBuddyDisplay } from './AvatarCanvas';
 import { PinPadModal } from './CenteredAlertModal';
 import { CustomOutfitStudio } from './CustomOutfitStudio';
 import { KidDutySchedulesPanel } from './KidDutySchedulesPanel';
+import { PetCanvasSvg } from './PetCanvasSvg';
 import { PetTamagotchiModal } from './PetTamagotchiModal';
 import { PiggyBankModals } from './PiggyBankModals';
 import { StaffRosterPanel } from './StaffRosterPanel';
@@ -127,6 +145,7 @@ interface KidHubViewProps {
 
 type ActiveSubModal =
   | null
+  | 'all_tools_modal'
   | 'shift_morning'
   | 'shift_afternoon'
   | 'shift_night'
@@ -202,6 +221,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   const [piggyModal, setPiggyModal] = useState<'pink' | 'gold' | null>(null);
   const [shopFilter, setShopFilter] = useState<'all' | 'snack' | 'wardrobe' | 'festival' | 'scene' | 'history'>('all');
   const [hwSubject, setHwSubject] = useState('');
+  const [hwPermPopupOpen, setHwPermPopupOpen] = useState(false);
   const [sickSymptoms, setSickSymptoms] = useState('มีไข้ / ตัวร้อน');
   const [sickDetails, setSickDetails] = useState('');
   const [pendingSickLineText, setPendingSickLineText] = useState<string | null>(null);
@@ -212,6 +232,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   const [mySpaceForm, setMySpaceForm] = useState(kid.mySpace);
   const [linkedEmailForm, setLinkedEmailForm] = useState(kid.linkedEmail ?? '');
   const [emailLoginBusy, setEmailLoginBusy] = useState(false);
+  const [petHeroToast, setPetHeroToast] = useState<string | null>(null);
   const [pinRequestAction, setPinRequestAction] = useState<null | { type: 'boss_stage' | 'g2_evening_phone' }>(null);
   const claimedLocalBonusKidIdsRef = useRef<Set<string>>(new Set());
 
@@ -307,8 +328,6 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   const [visitTargetKidId, setVisitTargetKidId] = useState('');
   const [visitActivity, setVisitActivity] = useState<FriendVisitActivity>('study');
   const [visitNote, setVisitNote] = useState('');
-  const [showExtraTools, setShowExtraTools] = useState(false);
-  const [showCoverStages, setShowCoverStages] = useState(false);
   const [stepPopupOpen, setStepPopupOpen] = useState(false);
   const actionLockRef = useRef<{ key: string; at: number }>({ key: '', at: 0 });
   const staffPinGuard = usePinGuard('kid_staff_pin');
@@ -514,7 +533,15 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   const laundry = getLaundryQueueInfo(now, lang);
   const isSickToday = sickReports.some((r) => r.kidId === kid.id && r.dateKey === todayKey && !r.resolved);
   const isAwayToday = isKidAwayOnDate(kid, todayKey);
-  const stepReminder = evaluateKidStepReminders(kid, now, isSickToday, isPublicHolidayToday);
+  const stepReminder = evaluateKidStepReminders(kid, now, isSickToday, isPublicHolidayToday, settings);
+  const kidHasPhone = doesKidHavePhone(kid.id, settings);
+  const allowEveningPhone = kidHasPhone && canKidUseCommand('evening_uniform_phone', kid, settings);
+  const allowHwPerm = kidHasPhone && canKidUseCommand('night_homework_permission', kid, settings);
+  const allowReturnPhone = kidHasPhone && canKidUseCommand('night_return_phone', kid, settings);
+  const hwPermWin = getEffectiveHomeworkPermissionWindow(settings);
+  const hwCurfewMins = getEffectiveHomeworkCurfewMins(settings);
+  const hwCurfewTh = formatThaiCurfewClock(hwCurfewMins);
+  const hwCurfewEn = minsToHHMM(hwCurfewMins);
 
   // Reminder stays quietly on top header badge (no auto-popup modal); only opens when clicked
   useEffect(() => {
@@ -1266,55 +1293,99 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
     });
   };
 
-  const handleGroup2RegisterHomework = () => {
-    const day = now.getDay();
-    if (day === 5) {
+  const handleSelectHomeworkPermission = (category: 'ทำการบ้าน' | 'หาข้อมูล' | 'เรียนพิเศษ') => {
+    if (!allowHwPerm) {
+      setHwPermPopupOpen(false);
       onShowAlert({
-        icon: '🎉',
-        title: lang === 'th' ? 'วันศุกร์ Free Day!' : 'Friday Free Day!',
-        message: lang === 'th' ? 'วันศุกร์ไม่ต้องลงทะเบียนทำการบ้าน ขอให้มีความสุขกับเวลาพักผ่อน' : 'No homework registration needed on Fridays!',
-        tone: 'lavender',
-      });
-      return;
-    }
-    if (day === 0) {
-      onShowAlert({
-        icon: '🚫',
-        title: lang === 'th' ? 'คืนวันอาทิตย์งดต่อเวลา' : 'No Sunday Extension',
-        message: lang === 'th' ? 'วันอาทิตย์งดต่อเวลาทำการบ้าน ต้องคืนมือถือไม่เกิน 21:00 น. นะ' : 'No homework extensions on Sundays. Return phone by 21:00.',
-        tone: 'pink',
-      });
-      return;
-    }
-    if (!hwSubject.trim()) {
-      onShowAlert({
-        icon: '📝',
-        title: lang === 'th' ? 'กรุณาระบุชื่อวิชา' : 'Enter Subject Name',
-        message: lang === 'th' ? 'พิมพ์ชื่อวิชาที่ต้องทำการบ้านก่อนกดลงทะเบียนนะ (ห้ามทำในห้องนอน)' : 'Please enter the homework subject (no homework in bedroom).',
+        icon: kidHasPhone ? '🚫' : '📵',
+        title: !kidHasPhone
+          ? lang === 'th'
+            ? 'ไม่มีมือถือในโปรไฟล์นี้'
+            : 'No Mobile Phone Assigned'
+          : lang === 'th'
+          ? 'ปุ่มนี้ไม่ได้เปิดสิทธิ์ให้น้อง'
+          : 'Permission Not Enabled',
+        message: !kidHasPhone
+          ? lang === 'th'
+            ? `น้อง${kid.nickname} ถูกตั้งค่าว่า "ไม่มีมือถือ" จึงไม่สามารถใช้ปุ่มขออนุญาตใช้มือถือทำการบ้านได้ค่ะ`
+            : `${kid.nickname} is marked as having no mobile phone.`
+          : lang === 'th'
+          ? `ผู้ดูแลตั้งค่าไม่ให้โปรไฟล์นี้กดปุ่ม "ขออนุญาตทำการบ้าน" ค่ะ`
+          : 'This button is restricted for your profile.',
         tone: 'yellow',
       });
       return;
     }
+    const mins = getMinutesOfDay(now);
+    const inAllowedWindow =
+      hwPermWin.startMins <= hwPermWin.endMins
+        ? mins >= hwPermWin.startMins && mins <= hwPermWin.endMins
+        : mins >= hwPermWin.startMins || mins <= hwPermWin.endMins;
+    if (!inAllowedWindow) {
+      setHwPermPopupOpen(false);
+      onShowAlert({
+        icon: '⏰',
+        title: lang === 'th' ? `อยู่นอกเวลาขออนุญาต (${hwPermWin.labelTh})` : `Outside Permission Window (${hwPermWin.labelEn})`,
+        message:
+          lang === 'th'
+            ? `ปุ่มขออนุญาตทำการบ้านเปิดให้กดเฉพาะช่วงเวลา ${hwPermWin.labelTh} ค่ะ`
+            : `Homework permission is only available between ${hwPermWin.labelEn}.`,
+        tone: 'yellow',
+      });
+      return;
+    }
+
+    const detail = hwSubject.trim();
+    const recordedLabel = detail ? `${category} (${detail})` : category;
+
     onUpdateKid(
       kid.id,
       (prev) => ({
         ...prev,
-        daily: { ...prev.daily, homeworkRegisteredSubject: hwSubject.trim() },
+        daily: { ...prev.daily, homeworkRegisteredSubject: recordedLabel },
       }),
-      'Register Homework'
+      `Homework Permission: ${recordedLabel}`
     );
+
+    setHwSubject('');
+    setHwPermPopupOpen(false);
+
     onShowAlert({
-      icon: '✍️✨',
-      title: lang === 'th' ? 'ลงทะเบียนทำการบ้านสำเร็จ!' : 'Homework Registered!',
+      icon: '📝✨',
+      title:
+        lang === 'th'
+          ? `ขออนุญาต "${category}" สำเร็จ!`
+          : `"${category}" Permission Approved!`,
       message:
         lang === 'th'
-          ? `วิชา: ${hwSubject.trim()}\nขยายเวลาคืนเครื่องถึง 22:45 น. (ห้ามทำการบ้านในห้องนอนนะ!)`
-          : `Subject: ${hwSubject.trim()}\nCurfew extended to 22:45 (No homework in bedroom!)`,
+          ? `บันทึกเรียบร้อย: ${recordedLabel}\n⏰ ใช้มือถือเพิ่มได้จนถึงเวลา ${hwCurfewTh}\n⚖️ หากเกิน ${hwCurfewTh} ยังไม่นำมือถือมาเก็บ จะถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วัน`
+          : `Recorded: ${recordedLabel}\nExtended until ${hwCurfewEn}. Keeping phone past ${hwCurfewEn} forfeits 1 Free Day phone privilege.`,
       tone: 'blue',
     });
   };
 
   const handleReturnPhoneCurfew = () => {
+    if (!allowReturnPhone) {
+      onShowAlert({
+        icon: kidHasPhone ? '🚫' : '📵',
+        title: !kidHasPhone
+          ? lang === 'th'
+            ? 'ไม่มีมือถือในโปรไฟล์นี้'
+            : 'No Mobile Phone Assigned'
+          : lang === 'th'
+          ? 'ไม่มีสิทธิ์ใช้ปุ่มคืนมือถือ'
+          : 'Command Restricted',
+        message: !kidHasPhone
+          ? lang === 'th'
+            ? `น้อง${kid.nickname} ถูกตั้งค่าว่าไม่มีมือถือ จึงไม่ต้องกดปุ่มคืนมือถือค่ะ`
+            : `${kid.nickname} has no mobile phone assigned.`
+          : lang === 'th'
+          ? 'ผู้ดูแลตั้งค่าจำกัดสิทธิ์ปุ่มนี้ไว้ค่ะ'
+          : 'This button is restricted for your profile.',
+        tone: 'yellow',
+      });
+      return;
+    }
     if (kid.daily.phoneReturnedChecked) {
       onShowAlert({
         icon: '📱',
@@ -1325,17 +1396,15 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
       return;
     }
     const mins = getMinutesOfDay(now);
-    const day = now.getDay();
 
-    if (kid.group === 2) {
-      const hasHw = Boolean(kid.daily.homeworkRegisteredSubject) && day !== 0;
-      const deadlineMins = hasHw ? 22 * 60 + 45 : 21 * 60;
+    if (kid.group === 1 || kid.group === 2 || Boolean(kid.daily.homeworkRegisteredSubject)) {
+      const deadlineMins = hwCurfewMins;
       const onTime = mins <= deadlineMins;
 
       if (onTime) {
         const applied = addStars(
           5,
-          'ส่งคืนมือถือตรงเวลา Curfew (+5 ⭐)',
+          `ส่งคืนมือถือตรงเวลาภายใน ${hwCurfewEn} น. (+5 ⭐)`,
           (prev) => ({
             daily: { ...prev.daily, phoneReturnedChecked: true },
           }),
@@ -1345,11 +1414,13 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
         onShowAlert({
           icon: '📱💚',
           title: lang === 'th' ? 'ส่งคืนมือถือตรงเวลา! (+5 ⭐)' : 'Phone Returned On Time! (+5 ⭐)',
-          message: lang === 'th' ? 'มีวินัยยอดเยี่ยม รับ +5 ดาว นอนหลับฝันดีนะ' : 'Great discipline! +5 stars added. Good night!',
+          message:
+            lang === 'th'
+              ? `ส่งคืนเข้าตู้พี่เลี้ยงไม่เกินเวลา ${hwCurfewTh} ยอดเยี่ยมมาก รับ +5 ดาว ฝันดีนะ!`
+              : `Returned phone before ${hwCurfewEn}. Great discipline! +5 stars added.`,
           tone: 'mint',
         });
       } else {
-        const tomorrow = getTomorrowDateKey(now);
         let applied = false;
         onUpdateKid(
           kid.id,
@@ -1361,13 +1432,11 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
               penalty:
                 isSickToday || isAwayToday
                   ? prev.penalty
-                  : hasHw
-                  ? { ...prev.penalty, noEveningPhoneTomorrowDate: tomorrow }
                   : { ...prev.penalty, fridayFreeDayDeductedCount: prev.penalty.fridayFreeDayDeductedCount + 1 },
               daily: { ...prev.daily, phoneReturnedChecked: true },
             };
           },
-          'Group 2 Late Phone Return'
+          `Late Phone Return >${hwCurfewEn} (Free Day Forfeit)`
         );
         if (!applied) return;
         onShowAlert({
@@ -1378,27 +1447,23 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                 ? 'บันทึกคืนมือถือ (ยกเว้นโทษป่วย/ลาพัก)'
                 : 'Phone Returned (Penalty Waived)'
               : lang === 'th'
-              ? 'ส่งคืนมือถือเกินเวลา Curfew!'
-              : 'Late Phone Return Penalty!',
+              ? `เกินเวลา ${hwCurfewTh}!`
+              : `Past ${hwCurfewEn} Curfew!`,
           message:
             isSickToday || isAwayToday
               ? lang === 'th'
                 ? 'บันทึกการคืนมือถือเรียบร้อย และยกเว้นโทษเนื่องจากป่วย/ลาพักค่ะ'
                 : 'Phone return recorded and penalty waived due to sick leave or away status.'
-              : hasHw
-              ? lang === 'th'
-                ? `เกิน 22:45 น. (ตั้งเพดานคืนโทรศัพท์ถึง 23:00 น.) ระบบบันทึกโทษงดใช้มือถือรอบเย็น 18:30 น. วันพรุ่งนี้ 1 วันอัตโนมัติ`
-                : 'Past 22:45 (23:00 ceiling)! Automatically restricted from 18:30 phone usage tomorrow.'
               : lang === 'th'
-              ? 'เกิน 21:00 น. ระบบบันทึกโทษหักสิทธิ์ Free Day วันศุกร์ 1 วันอัตโนมัติ'
-              : 'Past 21:00! Deducted 1 Friday Free Day privilege automatically.',
+              ? `เลยเวลา ${hwCurfewTh} แล้วยังไม่นำมาเก็บมือถือ ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วัน (บันทึกเรียบร้อย)`
+              : `Past ${hwCurfewEn}! Automatically recorded as consent to forfeit 1 Free Day phone privilege.`,
           tone: isSickToday || isAwayToday ? 'mint' : 'pink',
         });
       }
       return;
     }
 
-    // Group 3: 22:45 Curfew every day (late ceiling 23:00)
+    // Group 3 (without 20:30-20:45 homework extension): 22:45 Curfew every day (late ceiling 23:00)
     const onTime = mins <= 22 * 60 + 45;
     if (onTime) {
       const applied = addStars(
@@ -1815,12 +1880,6 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   );
 
   const kidBills = snackBills.filter((b) => b.kidId === kid.id);
-  const currentStageItems = shopItems.filter(
-    (s) => s.subType === 'scene_item' && s.sceneStage === kid.activeCoverStage
-  );
-  const currentStageCollectedCount = currentStageItems.filter((s) =>
-    kid.collectedSceneItems.includes(s.id)
-  ).length;
   const hasKitchenDuty =
     kid.kitchenDuty.evening1530 || kid.kitchenDuty.sat0930 || kid.kitchenDuty.sun0915;
 
@@ -1840,8 +1899,6 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   const unvotedOpenPolls = polls.filter((p) => !p.closed && !p.votedKidIds.includes(kid.id));
   const myPrivateMessages = privateMessages.filter((m) => m.kidId === kid.id);
   const repliedCount = myPrivateMessages.filter((m) => Boolean(m.staffReply)).length;
-  const activeCoverScene =
-    COVER_SCENES.find((s) => s.stage === kid.activeCoverStage) ?? COVER_SCENES[0];
   const kidsList = allMembers.filter((m) => m.role === 'kid');
   const dailyHouseChore = getDailyHouseChoreForKid(kid, kidsList, now, isPublicHolidayToday);
   const trashDutyInfo = getTrashDutyInfoForDate(now);
@@ -1886,7 +1943,11 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
       (v) => v.status === 'accepted' && (v.toKidId === kid.id || v.fromKidId === kid.id)
     ) ?? null;
 
-  const visitingBuddy: VisitingBuddyDisplay | null = (() => {
+  const visitingBuddy: {
+    member: Member;
+    activity: FriendVisitActivity;
+    isHost: boolean;
+  } | null = (() => {
     if (!activeAcceptedVisit) return null;
     const isHost = activeAcceptedVisit.toKidId === kid.id;
     const buddyId = isHost ? activeAcceptedVisit.fromKidId : activeAcceptedVisit.toKidId;
@@ -1898,6 +1959,36 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
       isHost,
     };
   })();
+
+  const handleSavePetWithStars = (
+    nextPet: PetCompanionConfig,
+    actionLabel: string,
+    bonusStars?: number,
+    starReason?: string
+  ) => {
+    const earned = bonusStars && bonusStars > 0 ? bonusStars : 0;
+    onUpdateKid(
+      kid.id,
+      (prev) => ({
+        ...prev,
+        pet: nextPet,
+        stars: earned > 0 ? Math.max(0, prev.stars + earned) : prev.stars,
+        starHistory:
+          earned > 0
+            ? [
+                {
+                  id: `tx_pet_feed_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                  timestamp: now.toISOString(),
+                  reason: starReason || `🐾 ให้อาหารสัตว์เลี้ยง (+${earned} ⭐)`,
+                  amount: earned,
+                },
+                ...prev.starHistory,
+              ].slice(0, 60)
+            : prev.starHistory,
+      }),
+      actionLabel
+    );
+  };
 
   const handleCopyText = async (text: string): Promise<boolean> => {
     try {
@@ -1934,13 +2025,13 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
         }`}
         aria-hidden={isPrivacyBlurred}
       >
-      {/* Top Bar Inside Kid Hub: Left Back / Logout Button, Right Group & Shop Button */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      {/* Top Bar Inside Kid Hub: Mobile-Friendly Header */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={onBack}
-            className="min-h-[46px] rounded-[20px] bg-white hover:bg-[#FADADD]/40 border-2 border-[#EBD8C3] px-5 py-2 text-sm font-bold text-[#3D322C] shadow-sm cursor-pointer whitespace-nowrap"
+            className="min-h-[42px] sm:min-h-[46px] rounded-[18px] sm:rounded-[20px] bg-white hover:bg-[#FADADD]/40 border-2 border-[#EBD8C3] px-3.5 sm:px-5 py-1.5 text-xs sm:text-sm font-bold text-[#3D322C] shadow-sm cursor-pointer whitespace-nowrap"
           >
             ←{' '}
             {openedFromManager
@@ -1953,610 +2044,403 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
           </button>
 
           {linkedKidSession && (
-            <>
-              <span className="inline-flex items-center gap-1.5 rounded-2xl border border-[#8FD4C6] bg-[#E8FAF6] px-3 py-1.5 text-xs font-extrabold text-[#114A42]">
-                <span>☁️</span>
-                <span>
-                  {lang === 'th'
-                    ? `ซิงค์ตัวการ์ตูนสด (${cloudUserEmail || linkedKidSession.email})`
-                    : `Live Sync (${cloudUserEmail || linkedKidSession.email})`}
-                </span>
+            <span className="inline-flex items-center gap-1 rounded-2xl border border-[#8FD4C6] bg-[#E8FAF6] px-2.5 py-1 text-[11px] font-extrabold text-[#114A42]">
+              <span>☁️</span>
+              <span className="truncate max-w-[160px] sm:max-w-none">
+                {cloudUserEmail || linkedKidSession.email}
               </span>
-              {onSignOutLinkedKid && (
-                <button
-                  type="button"
-                  onClick={onSignOutLinkedKid}
-                  className="min-h-[42px] rounded-2xl border border-[#F3B7C0] bg-[#FFF0F3] hover:bg-[#FFE0E7] px-3.5 py-1.5 text-xs font-bold text-[#8B1D36] cursor-pointer whitespace-nowrap"
-                >
-                  🚪 {lang === 'th' ? 'ออกจากระบบ (ซ่อนตัวการ์ตูน)' : 'Sign Out'}
-                </button>
-              )}
-            </>
+            </span>
           )}
         </div>
 
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <span className="text-sm font-semibold text-[#6E5C52]">{groupLabel}</span>
-          <button
-            type="button"
-            onClick={() => setStepPopupOpen(true)}
-            className={`min-h-[42px] rounded-[18px] border-2 px-3.5 py-1.5 text-xs font-bold shadow-sm cursor-pointer whitespace-nowrap flex items-center gap-1.5 transition-colors ${
-              stepReminder.penaltyInstructions.length > 0 || stepReminder.nextStep?.urgent
-                ? 'bg-[#FFE8EC] hover:bg-[#FFD7DF] border-[#F0A4B4] text-[#7D2234]'
-                : stepReminder.allDoneClean
-                ? 'bg-[#E6FAF5] hover:bg-[#D5F5ED] border-[#8DD6C7] text-[#17554B]'
-                : 'bg-[#EEF6FF] hover:bg-[#DFEEFF] border-[#B6D5F2] text-[#1B4A73]'
-            }`}
-          >
-            <span>🔔</span>
-            <span>{lang === 'th' ? stepReminder.badgeTextTh : stepReminder.badgeTextEn}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setShopFilter('all');
-              setSubModal('shop_modal');
-            }}
-            className="min-h-[44px] rounded-[20px] bg-[#FFF5BA] hover:bg-[#FCEB8E] border-2 border-[#F3D86B] px-4 sm:px-5 py-2 text-sm font-bold text-[#3D322C] shadow-sm cursor-pointer whitespace-nowrap inline-flex items-center gap-1.5"
-          >
-            <span>🏪 {lang === 'th' ? 'มินิมาร์ท & ร้านค้าดาว' : 'Minimart & Star Shop'}</span>
-            <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" aria-hidden="true">
-              <path
-                d="M12 2.2l2.85 5.78 6.38.93-4.61 4.5 1.09 6.35L12 16.77l-5.71 2.99 1.09-6.35-4.61-4.5 6.38-.93L12 2.2z"
-                fill="#FFD23F"
-                stroke="#B87A00"
-                strokeWidth="1.6"
-                strokeLinejoin="round"
-              />
-              <circle cx="9.6" cy="10.2" r="0.9" fill="#5A3B00" />
-              <circle cx="14.4" cy="10.2" r="0.9" fill="#5A3B00" />
-              <path d="M10.4 13.1c.9.8 2.3.8 3.2 0" stroke="#5A3B00" strokeWidth="1.2" strokeLinecap="round" fill="none" />
-            </svg>
-          </button>
+        <div className="flex items-center gap-2 flex-wrap text-xs sm:text-sm font-semibold text-[#6E5C52]">
+          <span className="hidden sm:inline">{groupLabel}</span>
+          <span className="text-xs font-bold tabular-nums text-[#7B695F] bg-white/90 border border-[#EBD8C3] rounded-xl px-2.5 py-1">
+            🕒 {formatDigitalClock(now)}
+          </span>
         </div>
       </div>
 
-      {/* UNOBSTRUCTED WIDE PANORAMIC COVER BANNER */}
-      <div className="rounded-[32px] border-2 border-[#FADADD] bg-[#FFFDF9] p-3.5 sm:p-5 pastel-shadow space-y-3">
-        {(() => {
-          const livePet = kid.pet ? computeLivePetStats(kid.pet, now) : null;
-          return (
-            <AvatarCanvas
-              panoramic={true}
-              gender={kid.gender}
-              avatar={kid.avatar}
-              activeStage={kid.activeCoverStage}
-              collectedSceneItems={kid.collectedSceneItems}
-              shopItems={shopItems}
-              lang={lang}
-              kidEmoji={kid.emoji}
-              kidNickname={kid.nickname}
-              kidFullName={kid.fullName}
-              kidId={kid.id}
-              stars={displayStars}
-              visitingBuddy={visitingBuddy}
-              pet={kid.pet}
-              petMood={livePet?.mood}
-              petHunger={livePet?.hunger}
-              activeFestival={activeFestival}
-              emailLocked={!isKidSignedInWithEmail}
-              emailBonusClaimed={Boolean(kid.emailLoginBonusClaimed)}
-              linkedEmail={kid.linkedEmail}
-              emailLoginBusy={emailLoginBusy}
-              onOpenLinkEmailModal={() => {
-                setMySpaceForm(kid.mySpace);
-                setLinkedEmailForm(kid.linkedEmail ?? '');
-                setSubModal('profile_modal');
-              }}
-              onSignInKidEmail={async () => {
-                setEmailLoginBusy(true);
-                try {
-                  await signInWithGoogleCloud();
-                } catch (err) {
-                  onShowAlert({
-                    icon: '⚠️',
-                    title: lang === 'th' ? 'เข้าสู่ระบบ Google ไม่สำเร็จ' : 'Google Sign-In Failed',
-                    message: err instanceof Error ? err.message : String(err),
-                    tone: 'pink',
-                  });
-                } finally {
-                  setEmailLoginBusy(false);
-                }
-              }}
-              onOpenWardrobe={() => setSubModal('wardrobe_modal')}
-              onOpenFriendVisits={() => setSubModal('friend_visit_modal')}
-              onOpenPet={() => setSubModal('pet_modal')}
-              onOpenProfile={() => {
-                setMySpaceForm(kid.mySpace);
-                setLinkedEmailForm(kid.linkedEmail ?? '');
-                setSubModal('profile_modal');
-              }}
-              pendingFriendVisitCount={incomingPendingVisits.length}
-              pinkCoins={coinsEnabled ? liveAllowance.coins : undefined}
-              weeklyPenaltyThb={coinsEnabled ? liveAllowance.weeklyPenaltyThb : 0}
-              goldenPoolCoins={coinsEnabled ? goldenPoolBalance : undefined}
-              onOpenPinkPiggy={coinsEnabled ? () => setPiggyModal('pink') : undefined}
-              onOpenGoldPiggy={coinsEnabled ? () => setPiggyModal('gold') : undefined}
-              activeGift={activeProfileGift}
-              onOpenGift={() => {
-                if (!activeProfileGift) return;
-                onShowAlert({
-                  icon: activeProfileGift.emoji,
-                  title: `${activeProfileGift.title}${
-                    activeProfileGift.amountThb && activeProfileGift.amountThb > 0
-                      ? ` (+${activeProfileGift.amountThb.toLocaleString()} ฿)`
-                      : ''
-                  }`,
-                  message: `${lang === 'th' ? 'จาก' : 'From'}: ${activeProfileGift.senderName}\n${
-                    activeProfileGift.message ||
-                    (lang === 'th'
-                      ? 'ขอให้น้องมีความสุขมากๆ นะคะ! (แสดงบนโปรไฟล์วันนี้ 1 วัน)'
-                      : 'Wishing you a wonderful day!')
-                  }`,
-                  tone: 'yellow',
-                });
-              }}
-            />
-          );
-        })()}
-
-        {/* Compact Collapsible Cover Stage & Scene Items Strip */}
-        <div className="rounded-2xl border border-[#EAE1D8] bg-white/95 px-3.5 py-2 space-y-2.5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs font-bold text-[#3D322C]">
-              <span>
-                {activeCoverScene.badgeEmoji}{' '}
-                {lang === 'th'
-                  ? `ฉาก ${kid.activeCoverStage}/7: ${activeCoverScene.titleTh}`
-                  : `Stage ${kid.activeCoverStage}/7: ${activeCoverScene.titleEn}`}
-              </span>
-              <span className="text-[11px] font-semibold text-[#7B695F]">
-                · {lang === 'th' ? `ไอเทม ${currentStageCollectedCount}/7` : `Items ${currentStageCollectedCount}/7`}
-              </span>
-              {visitingBuddy && (
-                <button
-                  type="button"
-                  onClick={() => setSubModal('friend_visit_modal')}
-                  className="text-[11px] font-bold text-[#1D544C] underline cursor-pointer"
-                >
-                  · 🤝 {lang === 'th' ? `อยู่กับ ${visitingBuddy.member.nickname}` : `With ${visitingBuddy.member.nickname}`}
-                </button>
-              )}
-            </div>
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <button
-                type="button"
-                onClick={() => setSubModal('friend_visit_modal')}
-                className={`min-h-[32px] rounded-xl border px-2.5 py-1 text-[11px] font-bold cursor-pointer whitespace-nowrap transition-colors ${
-                  incomingPendingVisits.length > 0
-                    ? 'bg-[#DDF7F0] hover:bg-[#CBEFE6] border-[#6BC7B3] text-[#114A42]'
-                    : 'bg-[#F0FAF8] hover:bg-[#E0F5F1] border-[#B6E2DA] text-[#1C554C]'
-                }`}
-              >
-                🏠 {lang === 'th' ? 'ไปบ้านเพื่อน' : 'Visit Friend'}
-                {incomingPendingVisits.length > 0 && ` (${incomingPendingVisits.length})`}
-              </button>
-              {activeFestival && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (kid.avatar.outfitMode === 'festival') {
-                      handleToggleOutfitMode('uniform');
-                    } else {
-                      handleToggleOutfitMode('festival', activeFestival.defaultOutfitId);
+      {/* TAMAGOTCHI VIRTUAL PET HERO STAGE (Mobile-First, No Childish Cover Banner) */}
+      <div className="rounded-[24px] sm:rounded-[32px] border-2 border-[#F2C6D0] bg-gradient-to-br from-[#FFFDF9] via-[#FFF9FA] to-[#F7FCFB] p-3.5 sm:p-5 pastel-shadow space-y-3.5">
+        {/* Compact Kid Identity, Star Wallet & Google Sign-In Strip */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[#F3E6DE]">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="h-9 w-9 sm:h-10 sm:w-10 rounded-2xl bg-white border border-[#EBD8C3] flex items-center justify-center text-xl shrink-0 shadow-2xs">
+              {kid.emoji}
+            </span>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-base sm:text-lg font-extrabold text-[#3D322C] truncate">
+                  {lang === 'th' ? `น้อง${kid.nickname}` : kid.nickname}
+                </span>
+                {activeProfileGift && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onShowAlert({
+                        icon: activeProfileGift.emoji,
+                        title: `${activeProfileGift.title}${
+                          activeProfileGift.amountThb && activeProfileGift.amountThb > 0
+                            ? ` (+${activeProfileGift.amountThb.toLocaleString()} ฿)`
+                            : ''
+                        }`,
+                        message: `${lang === 'th' ? 'จาก' : 'From'}: ${activeProfileGift.senderName}\n${
+                          activeProfileGift.message ||
+                          (lang === 'th'
+                            ? 'ขอให้น้องมีความสุขมากๆ นะคะ! (แสดงบนโปรไฟล์วันนี้ 1 วัน)'
+                            : 'Wishing you a wonderful day!')
+                        }`,
+                        tone: 'yellow',
+                      })
                     }
-                  }}
-                  className={`min-h-[32px] rounded-xl border px-2.5 py-1 text-[11px] font-bold cursor-pointer whitespace-nowrap transition-colors ${
-                    kid.avatar.outfitMode === 'festival'
-                      ? 'bg-[#DCEEF8] hover:bg-[#C6E2F3] border-[#96C3E6] text-[#1D4D73]'
-                      : 'bg-[#FFF5BA] hover:bg-[#FCEB8E] border-[#F0D568] text-[#5A4614]'
-                  }`}
-                >
-                  {kid.avatar.outfitMode === 'festival'
-                    ? lang === 'th'
-                      ? '👔 สลับชุดนักเรียน'
-                      : '👔 School Uniform'
-                    : `${activeFestival.emoji} ${
-                        lang === 'th' ? `ใส่ชุด${activeFestival.nameTh}` : activeFestival.nameEn
-                      }`}
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => setSubModal('pet_modal')}
-                className="min-h-[32px] rounded-xl bg-[#FFF0F4] hover:bg-[#FFE3EC] border border-[#F3C5CF] px-2.5 py-1 text-[11px] font-bold text-[#7B2E3B] cursor-pointer whitespace-nowrap"
-              >
-                {kid.pet ? (kid.pet.species === 'dog' ? '🐶' : '🐱') : '🐾'}{' '}
-                {kid.pet ? kid.pet.name : lang === 'th' ? 'สัตว์เลี้ยง' : 'Pet'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMySpaceForm(kid.mySpace);
-                  setLinkedEmailForm(kid.linkedEmail ?? '');
-                  setSubModal('profile_modal');
-                }}
-                className={`min-h-[32px] rounded-xl border px-2.5 py-1 text-[11px] font-bold cursor-pointer whitespace-nowrap transition-colors ${
-                  kid.linkedEmail
-                    ? 'bg-[#E8FAF6] hover:bg-[#D5F4EE] border-[#8FD4C6] text-[#114A42]'
-                    : 'bg-[#EEF6FF] hover:bg-[#DFEEFF] border-[#A7D3EC] text-[#1E445C]'
-                }`}
-              >
-                {kid.linkedEmail
-                  ? lang === 'th'
-                    ? '✅ ผูกอีเมลซิงค์แล้ว'
-                    : '✅ Sync Email Linked'
-                  : lang === 'th'
-                  ? '📧 ผูกอีเมลน้อง'
-                  : '📧 Link Kid Email'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowCoverStages((prev) => !prev)}
-                className="min-h-[32px] rounded-xl bg-[#FAF6F1] hover:bg-[#F1EAE2] border border-[#E5DAD0] px-2.5 py-1 text-[11px] font-bold text-[#5E4E45] cursor-pointer whitespace-nowrap"
-              >
-                🗺️{' '}
-                {showCoverStages
-                  ? lang === 'th'
-                    ? 'ซ่อนฉาก ▴'
-                    : 'Hide ▴'
-                  : lang === 'th'
-                  ? 'เปลี่ยนฉาก & ไอเทม ▾'
-                  : 'Stages & Items ▾'}
-              </button>
+                    className="rounded-full bg-[#FFF5BA] border border-[#F0D568] px-2 py-0.5 text-[11px] font-extrabold text-[#5A4614] cursor-pointer"
+                  >
+                    {activeProfileGift.emoji} {lang === 'th' ? 'ของขวัญวันนี้' : 'Gift'}
+                  </button>
+                )}
+              </div>
+              <div className="text-[11px] font-semibold text-[#7B695F] truncate">{groupLabel}</div>
             </div>
           </div>
 
-          {showCoverStages && (
-            <div className="relative pt-2 border-t border-[#F0E6DC]">
-              <div
-                className={`grid grid-cols-1 lg:grid-cols-12 gap-2.5 transition-all ${
-                  !isKidSignedInWithEmail
-                    ? 'filter grayscale-[85%] blur-[4px] opacity-75 pointer-events-none select-none'
-                    : ''
-                }`}
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setSubModal('star_history')}
+              className="min-h-[36px] rounded-xl bg-[#FFF5BA] hover:bg-[#FCEB8E] border border-[#E7C958] px-3 py-1 text-xs sm:text-sm font-extrabold text-[#4A380D] tabular-nums cursor-pointer flex items-center gap-1"
+            >
+              <span>⭐</span>
+              <span>{kid.stars.toLocaleString()}</span>
+              {!isKidSignedInWithEmail && (
+                <span className="text-[10px] font-bold text-[#8A5A00]">
+                  {lang === 'th' ? '(ซิงค์อีเมล)' : '(Sync)'}
+                </span>
+              )}
+            </button>
+
+            {coinsEnabled && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setPiggyModal('pink')}
+                  className="min-h-[36px] rounded-xl bg-[#FFE8EF] hover:bg-[#FFD8E4] border border-[#F3B7C0] px-2.5 py-1 text-xs font-extrabold text-[#7B2E3B] tabular-nums cursor-pointer"
+                >
+                  🐷 {liveAllowance.coins.toLocaleString()} ฿
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPiggyModal('gold')}
+                  className="min-h-[36px] rounded-xl bg-[#FFF7D6] hover:bg-[#FCEFA8] border border-[#E7C958] px-2.5 py-1 text-xs font-extrabold text-[#6B4800] tabular-nums cursor-pointer"
+                >
+                  🪙 {goldenPoolBalance.toLocaleString()}
+                </button>
+              </>
+            )}
+
+            {!isKidSignedInWithEmail && (
+              <button
+                type="button"
+                disabled={emailLoginBusy}
+                onClick={async () => {
+                  if (kid.linkedEmail) {
+                    setEmailLoginBusy(true);
+                    try {
+                      await signInWithGoogleCloud();
+                    } catch (err) {
+                      onShowAlert({
+                        icon: '⚠️',
+                        title: lang === 'th' ? 'เข้าสู่ระบบ Google ไม่สำเร็จ' : 'Google Sign-In Failed',
+                        message: err instanceof Error ? err.message : String(err),
+                        tone: 'pink',
+                      });
+                    } finally {
+                      setEmailLoginBusy(false);
+                    }
+                  } else {
+                    setMySpaceForm(kid.mySpace);
+                    setLinkedEmailForm(kid.linkedEmail ?? '');
+                    setSubModal('profile_modal');
+                  }
+                }}
+                className="min-h-[36px] rounded-xl bg-[#E8FAF6] hover:bg-[#D5F5ED] border border-[#8FD4C6] px-2.5 py-1 text-[11px] font-extrabold text-[#114A42] cursor-pointer whitespace-nowrap disabled:opacity-60"
               >
-                <div className="lg:col-span-5 grid grid-cols-7 gap-1.5 items-center">
-                  {COVER_SCENES.map((sc) => {
-                    const unlocked = kid.unlockedCoverStages.includes(sc.stage);
-                    const isActive = kid.activeCoverStage === sc.stage;
-                    return (
-                      <button
-                        key={sc.stage}
-                        type="button"
-                        title={lang === 'th' ? sc.titleTh : sc.titleEn}
-                        onClick={() => {
-                          if (!unlocked) {
-                            onShowAlert({
-                              icon: '🔒',
-                              title: lang === 'th' ? `ยังไม่ปลดล็อกด่านที่ ${sc.stage}` : `Stage ${sc.stage} Locked`,
-                              message:
-                                lang === 'th'
-                                  ? `สะสมไอเทมประจำด่านที่ ${sc.stage - 1} ให้ครบ 7 ชิ้นในร้านค้า เพื่อเปิด "${sc.titleTh}"`
-                                  : `Collect 7 items in Stage ${sc.stage - 1} to unlock "${sc.titleEn}".`,
-                              tone: 'lavender',
-                            });
-                            return;
-                          }
-                          onUpdateKid(
-                            kid.id,
-                            (prev) => ({ ...prev, activeCoverStage: sc.stage }),
-                            `Switch Cover Stage ${sc.stage}`
-                          );
-                        }}
-                        className={`min-h-[38px] rounded-xl border text-base flex items-center justify-center cursor-pointer transition-all ${
-                          isActive
-                            ? 'bg-[#FFF5BA] border-[#3D322C] shadow-xs scale-105'
-                            : unlocked
-                            ? 'bg-[#FFFDF9] border-[#EBD8C3] hover:bg-[#FADADD]/40'
-                            : 'bg-[#F6F1EC] border-[#EBD8C3] opacity-60'
-                        }`}
-                      >
-                        {unlocked ? sc.badgeEmoji : '🔒'}
-                      </button>
-                    );
-                  })}
+                {emailLoginBusy
+                  ? '⏳...'
+                  : !kid.emailLoginBonusClaimed
+                  ? lang === 'th'
+                    ? '📧 ล็อกอินรับ +1,000 ⭐'
+                    : '📧 Login +1,000 ⭐'
+                  : lang === 'th'
+                  ? '📧 ผูกอีเมล'
+                  : '📧 Sync Email'}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Tamagotchi Virtual Pet Stage */}
+        {(() => {
+          if (!kid.pet) {
+            return (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm sm:text-base font-extrabold text-[#6B3242]">
+                      🐾{' '}
+                      {lang === 'th'
+                        ? 'เลือกเลี้ยงสัตว์ทามาก๊อตจิ (10 สายพันธุ์ · ฟรี!)'
+                        : 'Pick Your Tamagotchi Companion (10 Species · Free!)'}
+                    </div>
+                    <div className="text-xs text-[#7B695F]">
+                      {lang === 'th'
+                        ? `เข้ามาให้อาหารทุกวันรับ +${PET_FEED_STAR_REWARD} ⭐/มื้อ (สูงสุด ${PET_DAILY_FEED_STAR_CAP} มื้อ/วัน = +${PET_FEED_STAR_REWARD * PET_DAILY_FEED_STAR_CAP} ⭐)`
+                        : `Feed daily to earn +${PET_FEED_STAR_REWARD} ⭐/meal (up to ${PET_DAILY_FEED_STAR_CAP}/day)`}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSubModal('pet_modal')}
+                    className="rounded-xl bg-white hover:bg-[#FFF5F7] border border-[#F2C6D0] px-3 py-1.5 text-xs font-bold text-[#7B2E3B] cursor-pointer"
+                  >
+                    ✏️ {lang === 'th' ? 'ตั้งชื่อ & เลือกสีขนเอง' : 'Customize First'}
+                  </button>
                 </div>
 
-                <div className="lg:col-span-7 grid grid-cols-7 gap-1.5">
-                  {currentStageItems.map((item) => {
-                    const owned = kid.collectedSceneItems.includes(item.id);
-                    return (
-                      <div
-                        key={item.id}
-                        title={lang === 'th' ? item.nameTh : item.nameEn}
-                        className={`rounded-xl border px-1 py-1.5 flex flex-col items-center justify-center text-center min-h-[48px] ${
-                          owned
-                            ? 'border-[#7CC6B8] bg-white shadow-xs'
-                            : 'border-dashed border-[#D8C7B8] bg-white/60 opacity-60'
-                        }`}
-                      >
-                        <span className="text-base">{owned ? item.emoji : '🔒'}</span>
-                        <span className="text-[9px] font-medium text-[#5E4E45] truncate w-full mt-0.5">
-                          {lang === 'th' ? item.nameTh : item.nameEn}
-                        </span>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                  {PET_SPECIES_CATALOG.map((sp) => (
+                    <button
+                      key={sp.id}
+                      type="button"
+                      onClick={() => {
+                        const adopted = createAdoptedPet(sp.id, now);
+                        handleSavePetWithStars(
+                          adopted,
+                          `Adopt Tamagotchi: ${sp.nameTh} (${adopted.name})`
+                        );
+                        setPetHeroToast(
+                          lang === 'th'
+                            ? `${sp.soundTh} รับเลี้ยง "${adopted.name}" (${sp.nameTh}) แล้ว! กดให้อาหารเพื่อรับ +${PET_FEED_STAR_REWARD} ⭐ เลย`
+                            : `Adopted ${adopted.name} (${sp.nameEn})!`
+                        );
+                      }}
+                      className="min-h-[52px] rounded-2xl border-2 px-3 py-2 text-left flex items-center gap-2 cursor-pointer transition-transform active:scale-[0.98] hover:shadow-xs"
+                      style={{
+                        backgroundColor: sp.badgeBg,
+                        borderColor: sp.borderColor,
+                        color: sp.badgeText,
+                      }}
+                    >
+                      <span className="text-2xl shrink-0">{sp.emoji}</span>
+                      <div className="min-w-0">
+                        <div className="text-xs font-extrabold truncate">
+                          {lang === 'th' ? sp.nameTh : sp.nameEn}
+                        </div>
+                        <div className="text-[10px] opacity-80 truncate">
+                          {lang === 'th' ? 'แตะรับเลี้ยง' : 'Tap adopt'}
+                        </div>
                       </div>
-                    );
-                  })}
+                    </button>
+                  ))}
                 </div>
               </div>
-              {!isKidSignedInWithEmail && (
-                <div className="absolute inset-0 z-10 flex items-center justify-center">
+            );
+          }
+
+          const pet = kid.pet;
+          const speciesInfo = getPetSpeciesInfo(pet.species);
+          const livePet = computeLivePetStats(pet, now);
+          const feedStars = getPetFeedStarStatus(pet, todayKey);
+          const moodSpeech =
+            petHeroToast ??
+            (livePet.mood === 'hungry'
+              ? lang === 'th'
+                ? `${pet.name} หิวจังเลย~ ป้อนข้าวรับ +${PET_FEED_STAR_REWARD} ⭐ นะ!`
+                : `${pet.name} is hungry! Feed for +${PET_FEED_STAR_REWARD} ⭐!`
+              : livePet.mood === 'lonely'
+              ? lang === 'th'
+                ? `${pet.name} อยากเล่นด้วย~ กดเล่นกันหน่อยสิ 💕`
+                : `${pet.name} wants to play!`
+              : feedStars.canEarnStars
+              ? lang === 'th'
+                ? `${speciesInfo.soundTh} ให้อาหารวันนี้ได้อีก ${feedStars.remainingToday} มื้อ (มื้อละ +${PET_FEED_STAR_REWARD} ⭐)`
+                : `Feed today to earn +${PET_FEED_STAR_REWARD} ⭐ (${feedStars.remainingToday} left)!`
+              : lang === 'th'
+              ? `${pet.name} อิ่มแปล้ & มีความสุขสุดๆ เลยวันนี้ 💖`
+              : `${pet.name} is full & happy today! 💖`);
+
+          return (
+            <div className="flex flex-col md:flex-row items-stretch gap-3.5">
+              {/* LCD Tamagotchi Pod */}
+              <div className="rounded-[22px] border-2 border-[#F2C6D0] bg-white px-4 py-3 flex sm:flex-col items-center justify-between sm:justify-center gap-3 md:w-52 shrink-0 shadow-2xs">
+                <PetCanvasSvg
+                  pet={pet}
+                  mood={livePet.mood}
+                  sizeClass="w-24 h-24 sm:w-28 sm:h-28 shrink-0"
+                />
+                <div className="flex-1 sm:flex-none text-left sm:text-center space-y-1 min-w-0">
+                  <div className="flex sm:justify-center items-center gap-1.5 flex-wrap">
+                    <span className="text-sm sm:text-base font-extrabold text-[#3D322C] truncate">
+                      {pet.name}
+                    </span>
+                    <span className="rounded-full bg-[#FFF0F4] border border-[#F3B7C0] px-2 py-0.5 text-[10px] font-extrabold text-[#7B2E3B]">
+                      Lv.{livePet.level}
+                    </span>
+                  </div>
+                  <div className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-extrabold border"
+                    style={{
+                      backgroundColor: speciesInfo.badgeBg,
+                      color: speciesInfo.badgeText,
+                      borderColor: speciesInfo.borderColor,
+                    }}
+                  >
+                    <span>{speciesInfo.emoji}</span>
+                    <span>{lang === 'th' ? speciesInfo.nameTh : speciesInfo.nameEn}</span>
+                  </div>
+                  <div className="text-[11px] font-bold text-[#8C5262] tabular-nums">
+                    ❤️ {livePet.affection}/{livePet.nextLevelAffection}
+                  </div>
+                </div>
+              </div>
+
+              {/* Bars + Speech + One-Tap Mobile Care Buttons */}
+              <div className="flex-1 flex flex-col justify-between gap-2.5 min-w-0">
+                <div className="space-y-2">
+                  <div className="rounded-2xl bg-[#FFF8CC] border border-[#F5DE93] px-3.5 py-2 text-xs sm:text-sm font-bold text-[#5A4614]">
+                    💬 “{moodSpeech}”
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2.5 text-xs">
+                    <div className="rounded-xl bg-white/90 border border-[#EAE0D8] px-3 py-2 space-y-1">
+                      <div className="flex justify-between font-bold">
+                        <span>🥣 {lang === 'th' ? 'ความอิ่ม' : 'Full'}</span>
+                        <span className="tabular-nums">{livePet.hunger}%</span>
+                      </div>
+                      <div className="h-2 rounded-full bg-[#F3E9DF] overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-[#6CCBC0] transition-all"
+                          style={{ width: `${livePet.hunger}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl bg-white/90 border border-[#EAE0D8] px-3 py-2 space-y-1">
+                      <div className="flex justify-between font-bold">
+                        <span>💖 {lang === 'th' ? 'ความสุข' : 'Happy'}</span>
+                        <span className="tabular-nums">{livePet.happiness}%</span>
+                      </div>
+                      <div className="h-2 rounded-full bg-[#F3E9DF] overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-[#F28B9C] transition-all"
+                          style={{ width: `${livePet.happiness}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Quick Mobile Care Controls */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <button
                     type="button"
                     onClick={() => {
-                      setMySpaceForm(kid.mySpace);
-                      setLinkedEmailForm(kid.linkedEmail ?? '');
-                      setSubModal('profile_modal');
+                      const treatName = lang === 'th' ? speciesInfo.treatTh : speciesInfo.treatEn;
+                      const { nextPet, earnedStars, remainingAfter } = getNextFedPetState(
+                        pet,
+                        25,
+                        15,
+                        6,
+                        now,
+                        todayKey
+                      );
+                      handleSavePetWithStars(
+                        nextPet,
+                        `Quick Feed Pet (${treatName})`,
+                        earnedStars,
+                        earnedStars > 0
+                          ? `🐾 ให้อาหาร ${pet.name} (${treatName}) (+${earnedStars} ⭐)`
+                          : undefined
+                      );
+                      setPetHeroToast(
+                        lang === 'th'
+                          ? earnedStars > 0
+                            ? `${speciesInfo.soundTh} ป้อน${treatName}ให้ ${pet.name} แล้ว! รับ +${earnedStars} ⭐ (เหลือรับดาวได้อีก ${remainingAfter} มื้อวันนี้)`
+                            : `${speciesInfo.soundTh} ${pet.name} กิน${treatName} อร่อยจัง! (+6 ❤️ · วันนี้รับดาวครบ 3 มื้อแล้ว)`
+                          : earnedStars > 0
+                          ? `Fed ${pet.name}! +${earnedStars} ⭐ (${remainingAfter} left today)`
+                          : `Fed ${pet.name}!`
+                      );
                     }}
-                    className="rounded-xl border border-[#EBD8C3] bg-white/95 px-3 py-1.5 text-xs font-extrabold text-[#3D322C] shadow-sm cursor-pointer"
+                    className="min-h-[48px] rounded-2xl border-2 border-[#6CCBC0] bg-[#DCF7F2] hover:bg-[#C9F0E9] px-3 py-2 text-xs sm:text-sm font-extrabold text-[#114A42] cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98]"
                   >
-                    🔒 {lang === 'th' ? 'ล็อกอินอีเมลเพื่อเปิดดูฉากและไอเทม (+1,000 ⭐)' : 'Sign in to view stages & items'}
+                    <span>{speciesInfo.treatEmoji}</span>
+                    <span className="truncate">
+                      {feedStars.canEarnStars
+                        ? lang === 'th'
+                          ? `ให้อาหาร (+${PET_FEED_STAR_REWARD} ⭐)`
+                          : `Feed (+${PET_FEED_STAR_REWARD} ⭐)`
+                        : lang === 'th'
+                        ? `ให้อาหาร (${feedStars.usedToday}/3 ✓)`
+                        : `Feed (${feedStars.usedToday}/3)`}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextPet: PetCompanionConfig = {
+                        ...pet,
+                        hunger: livePet.hunger,
+                        happiness: Math.min(100, livePet.happiness + 18),
+                        affection: livePet.affection + 5,
+                        lastPlayedAt: now.toISOString(),
+                      };
+                      handleSavePetWithStars(nextPet, `Quick Play Pet (${pet.name})`);
+                      setPetHeroToast(
+                        lang === 'th'
+                          ? `${speciesInfo.soundTh} เล่นกับ ${pet.name} สนุกสุดๆ (+18% สุข · +5 ❤️)`
+                          : `Played with ${pet.name}! (+18% Happy)`
+                      );
+                    }}
+                    className="min-h-[48px] rounded-2xl border-2 border-[#F3B7C0] bg-[#FFF0F4] hover:bg-[#FFE3EB] px-3 py-2 text-xs sm:text-sm font-extrabold text-[#7B2E3B] cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98]"
+                  >
+                    <span>🎾</span>
+                    <span>{lang === 'th' ? 'เล่นกับน้อง' : 'Play'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSubModal('pet_modal')}
+                    className="min-h-[48px] rounded-2xl border-2 border-[#C8B7EB] bg-[#EFE8FC] hover:bg-[#E4DAF9] px-3 py-2 text-xs sm:text-sm font-extrabold text-[#3E2B63] cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98]"
+                  >
+                    <span>🐾</span>
+                    <span className="truncate">
+                      {lang === 'th' ? '10 สายพันธุ์ & แต่งตัว' : '10 Breeds & Outfit'}
+                    </span>
                   </button>
                 </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Pinned Top Announcement: Evening Phone Pickup Conditions (Group 2) */}
-        {kid.group === 2 && (
-          <div className="rounded-2xl border-2 border-[#C8B7EB] bg-gradient-to-r from-[#F6F1FF] via-[#FFFDF9] to-[#EAF8F7] px-3.5 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-[#3D322C]">
-            <div className="space-y-1 min-w-0">
-              <div className="font-extrabold text-[#3E2B63] flex items-center gap-1.5 flex-wrap">
-                <span>📌</span>
-                <span>
-                  {lang === 'th'
-                    ? 'ปักประกาศ: เงื่อนไขการมารับโทรศัพท์ช่วงเย็น (18:30 น.)'
-                    : 'Pinned: Conditions for Evening Phone Pickup (18:30)'}
-                </span>
-              </div>
-              <div className="text-[11px] leading-relaxed text-[#4E3F38] space-y-0.5">
-                <div>
-                  {lang === 'th'
-                    ? '1) ถ่ายรูปเช็คอินกลับบ้านให้เรียบร้อย · วันเสาร์-อาทิตย์ เก็บมือถือไม่เกิน 14:00 น. และห้ามนอนกลางวัน'
-                    : '1) Complete Return-Home photo check-in · Weekends: store phone by 14:00 with no daytime naps.'}
-                </div>
-                <div>
-                  {lang === 'th'
-                    ? '2) รอบเย็น 18:30 น. ทำเช็คลิสต์ครบ 4 ข้อ (ซักชุด รีดชุด ตรวจชุด อาบน้ำ) + ให้พี่เลี้ยงตรวจและใส่ PIN (+10 ⭐)'
-                    : '2) At 18:30: finish all 4 items (wash, iron, inspect uniform, shower) + staff PIN (+10 ⭐).'}
-                </div>
-                <div>
-                  {lang === 'th'
-                    ? '3) หากเมื่อคืนคืนมือถือเกิน 22:45 น. งดรับมือถือรอบเย็น 1 วัน · วันเสาร์หากเช็คอินเช้าเกิน 08:45 น. รับได้หลัง 18:30 น.'
-                    : '3) Returned phone past 22:45 last night = suspended 1 evening · Sat morning past 08:45 = held until 18:30.'}
-                </div>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setSubModal('shift_night')}
-              className="min-h-[34px] rounded-xl bg-[#EFE8FC] hover:bg-[#E2D5FA] border border-[#C8B7EB] px-3 py-1.5 text-[11px] font-extrabold text-[#3E2B63] cursor-pointer whitespace-nowrap shrink-0 self-start sm:self-center"
-            >
-              📱 {lang === 'th' ? 'เช็คลิสต์รับมือถือ' : 'Phone Checklist'}
-            </button>
-          </div>
-        )}
-
-        {/* Consolidated 1-Row Compact Daily Info Strip (replaces 4 tall stacked bars) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
-          {/* Tile 1: Laundry, Streak & Time */}
-          <div className="rounded-2xl bg-[#EEF6FC] border border-[#CBE0F2] px-3 py-2 flex flex-col justify-between gap-1 text-xs text-[#2B4358]">
-            <div className="flex items-center justify-between gap-2 font-bold">
-              <span className="truncate">
-                {laundry.emoji} {laundry.label}
-              </span>
-              <span className="tabular-nums text-[11px] font-semibold text-[#5E7388] shrink-0">
-                {formatDigitalClock(now)}
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
-              <span className="font-bold text-[#9E4F16]">
-                🔥{' '}
-                {lang === 'th'
-                  ? `เช้าติด ${streakCount % 5 === 0 && streakCount > 0 ? 5 : streakCount % 5}/5 (${streakCount})`
-                  : `Streak ${streakCount}`}
-              </span>
-              {speedyRemainingSec !== null && (
-                <span className="font-bold text-[#B84A39] tabular-nums">
-                  · 🥷 {speedyMM}:{speedySS}
-                </span>
-              )}
-              {isSickToday && (
-                <span className="font-bold text-[#2F685E]">
-                  · 🤒 {lang === 'th' ? 'พักป่วย' : 'Sick'}
-                </span>
-              )}
-              {isAwayToday && (
-                <span className="font-bold text-[#7C5214]">
-                  · 🏡 {lang === 'th' ? `ลาพักถึง ${kid.allowance?.awayUntilDateKey ?? ''}` : `Away until ${kid.allowance?.awayUntilDateKey ?? ''}`}
-                </span>
-              )}
-              {hasKitchenDuty && (
-                <span className="font-bold text-[#2F685E]">
-                  · 🍳 {lang === 'th' ? 'มีเวรครัว' : 'Kitchen'}
-                </span>
-              )}
-              {isMyTrashWeek && (
-                <span className="font-bold text-[#9A344B]">
-                  · 🗑️ {lang === 'th' ? 'เวรทิ้งขยะสัปดาห์นี้ (พ./อา.)' : 'Trash Week (Wed/Sun)'}
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Tile 2: Daily House Chore & Duty Schedules */}
-          <div className="rounded-2xl border border-[#BFE6E2] bg-[#EAF8F7] px-3 py-2 flex items-center justify-between gap-2 text-xs text-[#214F4B]">
-            <div className="min-w-0">
-              <div className="font-bold truncate">
-                {dailyHouseChore.emoji} {lang === 'th' ? dailyHouseChore.titleTh : dailyHouseChore.titleEn}
-              </div>
-              <div className="text-[10px] text-[#356964] truncate">
-                {isMyTrashWeek
-                  ? lang === 'th'
-                    ? `🗑️ สัปดาห์นี้เวรทิ้งขยะของหนู (พุธ/อาทิตย์)`
-                    : `🗑️ Your weekly trash duty (Wed/Sun)`
-                  : lang === 'th'
-                  ? dailyHouseChore.detailTh
-                  : dailyHouseChore.detailEn}
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={() => setSubModal('kid_duties_modal')}
-                title={lang === 'th' ? 'ดูตารางเวรทั้งหมด (เวรวันหยุด 14 โซน · ครัว · ทิ้งขยะ)' : 'All Duty Schedules'}
-                className="min-h-[34px] rounded-xl bg-white hover:bg-[#DDF5F1] border border-[#96D9CD] px-2 py-1 text-[11px] font-bold text-[#1D544C] cursor-pointer whitespace-nowrap transition-colors"
-              >
-                📋 {lang === 'th' ? 'เวร' : 'Duties'}
-              </button>
-              <button
-                type="button"
-                disabled={Boolean(kid.daily.houseChoreDone)}
-                onClick={() => {
-                  if (kid.daily.houseChoreDone) return;
-                  const applied = addStars(
-                    5,
-                    `ทำเวรประจำบ้าน: ${dailyHouseChore.titleTh} (+5 ⭐)`,
-                    (prev) => ({
-                      daily: { ...prev.daily, houseChoreDone: true },
-                    }),
-                    (prev) => !prev.daily.houseChoreDone
-                  );
-                  if (!applied) return;
-                  onShowAlert({
-                    icon: '🧹✨',
-                    title: lang === 'th' ? 'ทำเวรประจำบ้านเสร็จแล้ว! (+5 ⭐)' : 'House Chore Complete! (+5 ⭐)',
-                    message:
-                      lang === 'th'
-                        ? `รับ +5 ดาวความดี จากภารกิจ "${dailyHouseChore.titleTh}" ขอบคุณที่ช่วยดูแลบ้านนะ!`
-                        : `Earned +5 stars for "${dailyHouseChore.titleEn}"!`,
-                    tone: 'mint',
-                  });
-                }}
-                className={`min-h-[34px] rounded-xl px-2.5 py-1 text-[11px] font-bold cursor-pointer whitespace-nowrap shrink-0 transition-colors ${
-                  kid.daily.houseChoreDone
-                    ? 'bg-white border border-[#96D9CD] text-[#28645B]'
-                    : 'bg-[#B7EFE5] hover:bg-[#A0E8DC] border border-[#6CCBC0] text-[#114A42]'
-                }`}
-              >
-                {kid.daily.houseChoreDone
-                  ? '✅ +5⭐'
-                  : lang === 'th'
-                  ? 'ทำเวร (+5⭐)'
-                  : 'Done (+5⭐)'}
-              </button>
-            </div>
-          </div>
-
-          {/* Tile 3: Today's Staff & Driving Roster */}
-          {(() => {
-            const todaySchedule = getStaffScheduleForDate(now);
-            const morningCarer =
-              todaySchedule.shiftATh !== '—'
-                ? lang === 'th'
-                  ? todaySchedule.shiftATh
-                  : todaySchedule.shiftAEn
-                : lang === 'th'
-                ? todaySchedule.shiftBTh
-                : todaySchedule.shiftBEn;
-            return (
-              <div className="rounded-2xl border border-[#DCEEF8] bg-[#F5FAFF] px-3 py-2 flex items-center justify-between gap-2 text-xs text-[#214B6E]">
-                <div className="min-w-0">
-                  <div className="font-bold truncate">
-                    👩‍🏫 {todaySchedule.dayTh}: {morningCarer}
-                  </div>
-                  <div className="text-[10px] text-[#456D8F] truncate">
-                    🌙 {lang === 'th' ? todaySchedule.nightWatchTh : todaySchedule.nightWatchEn} · 🚐{' '}
-                    {lang === 'th' ? todaySchedule.drivingMorningTh : todaySchedule.drivingMorningEn}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSubModal('staff_roster')}
-                  className="min-h-[34px] rounded-xl bg-white hover:bg-[#EAF4FF] border border-[#BEDBF0] px-2.5 py-1 text-[11px] font-bold text-[#1D4D73] cursor-pointer whitespace-nowrap shrink-0"
-                >
-                  📅 {lang === 'th' ? 'ตาราง' : 'Roster'}
-                </button>
-              </div>
-            );
-          })()}
-
-          {/* Tile 4: Live Time/Festival/Scheduled Announcement */}
-          <div
-            className={`rounded-2xl border px-3 py-2 flex items-center justify-between gap-2 text-xs ${
-              topAnnouncement?.priority === 'urgent'
-                ? 'border-[#F3B7C0] bg-[#FFF2F4]'
-                : !topAnnouncement && dynamicEventAnnouncement.isFestival
-                ? 'border-[#E6B8D0] bg-gradient-to-r from-[#FFF5F9] to-[#FFFDF4]'
-                : 'border-[#EBD8C3] bg-[#FFFDF7]'
-            }`}
-          >
-            <div className="min-w-0">
-              <div className="font-bold text-[#3D322C] truncate">
-                {topAnnouncement
-                  ? `${topAnnouncement.priority === 'urgent' ? '🚨' : '📢'} ${topAnnouncement.title}`
-                  : lang === 'th'
-                  ? dynamicEventAnnouncement.titleTh
-                  : dynamicEventAnnouncement.titleEn}
-              </div>
-              <div className="text-[10px] text-[#6E5C52] truncate">
-                {topAnnouncement
-                  ? topAnnouncement.body
-                  : lang === 'th'
-                  ? dynamicEventAnnouncement.bodyTh
-                  : dynamicEventAnnouncement.bodyEn}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setSubModal('announcements_modal')}
-              className="min-h-[34px] rounded-xl bg-white hover:bg-[#FAF5EF] border border-[#E5DAD0] px-2.5 py-1 text-[11px] font-bold text-[#3D322C] cursor-pointer whitespace-nowrap shrink-0"
-            >
-              📰 {activeScheduledAnnouncements.length + 1}
-            </button>
-          </div>
-        </div>
-
-        {/* Friendly Incoming Home Visit Alert Strip (only shown when there is an active request) */}
-        {incomingPendingVisits.length > 0 && (
-          <div className="rounded-2xl border-2 border-[#7CC6B8] bg-gradient-to-r from-[#EFFAF7] to-[#FFFDF9] px-3.5 py-2 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-xs font-bold text-[#1D544C]">
-              <span className="text-base">💌</span>
-              <span>
-                {lang === 'th'
-                  ? `น้อง${incomingPendingVisits[0].fromKidNickname} ขอมาบ้านหนู! (รอตอบรับ ${incomingPendingVisits.length})`
-                  : `${incomingPendingVisits[0].fromKidNickname} sent you a home visit invite!`}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setSubModal('friend_visit_modal')}
-              className="min-h-[32px] rounded-xl bg-[#B7EFE5] hover:bg-[#A0E8DC] border border-[#6CCBC0] text-[#114A42] px-3 py-1 text-xs font-bold cursor-pointer whitespace-nowrap transition-colors"
-            >
-              🤝 {lang === 'th' ? 'ตอบรับเพื่อน' : 'View & Accept'}
-            </button>
-          </div>
-        )}
+          );
+        })()}
       </div>
 
-      {/* MENU AREA: LESS IS MORE — 3 HERO SHIFTS + 1 CALM MINIMAL QUICK BAR */}
-      <div className="space-y-3.5">
-        {/* Tier 1: 3 Primary Daily Shifts */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      {/* MENU AREA: ONLY 3 CORE BUTTONS (ไปโรงเรียน · กลับบ้าน · ทำการบ้าน) + 1 UNIFIED BUTTON FOR EVERYTHING ELSE */}
+      <div className="space-y-2.5 sm:space-y-3">
+        {/* 3 Primary Daily Buttons */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3">
           <button
             type="button"
             onClick={() => setSubModal('shift_morning')}
-            className="min-h-[68px] rounded-2xl border border-[#F0D98D] bg-[#FFFBEA] hover:bg-[#FFF5CC] px-4 py-3 text-left flex items-center justify-between gap-3 transition-colors active:scale-[0.99] cursor-pointer"
+            className="min-h-[66px] sm:min-h-[72px] rounded-2xl border-2 border-[#F0D98D] bg-[#FFFBEA] hover:bg-[#FFF5CC] px-3.5 sm:px-4 py-2.5 sm:py-3 text-left flex items-center justify-between gap-3 transition-colors active:scale-[0.99] cursor-pointer shadow-xs"
           >
             <div className="flex items-center gap-3 min-w-0">
-              <span className="h-10 w-10 rounded-xl bg-white border border-[#F3E4AF] flex items-center justify-center text-xl shrink-0">
+              <span className="h-10 w-10 sm:h-11 sm:w-11 rounded-xl bg-white border border-[#F3E4AF] flex items-center justify-center text-xl sm:text-2xl shrink-0">
                 🚌
               </span>
               <div className="min-w-0">
-                <div className="text-sm sm:text-[15px] font-bold text-[#4D3B10] leading-tight truncate">
-                  {lang === 'th' ? '1. ไปโรงเรียน (กะเช้า)' : '1. Morning School Shift'}
+                <div className="text-sm sm:text-base font-extrabold text-[#4D3B10] leading-tight truncate">
+                  {lang === 'th' ? 'ไปโรงเรียน' : 'Go to School'}
                 </div>
                 <p className="text-[11px] font-medium text-[#7A6428] mt-0.5 truncate">
                   {kid.group === 1
@@ -2574,22 +2458,22 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
               </div>
             </div>
             {kid.daily.vanOrMorningChecked && (
-              <span className="text-xs font-bold text-[#2F685E] shrink-0">✓</span>
+              <span className="text-sm font-extrabold text-[#2F685E] shrink-0">✓</span>
             )}
           </button>
 
           <button
             type="button"
             onClick={() => setSubModal('shift_afternoon')}
-            className="min-h-[68px] rounded-2xl border border-[#A5DFD4] bg-[#EFFAF7] hover:bg-[#E1F6F1] px-4 py-3 text-left flex items-center justify-between gap-3 transition-colors active:scale-[0.99] cursor-pointer"
+            className="min-h-[66px] sm:min-h-[72px] rounded-2xl border-2 border-[#A5DFD4] bg-[#EFFAF7] hover:bg-[#E1F6F1] px-3.5 sm:px-4 py-2.5 sm:py-3 text-left flex items-center justify-between gap-3 transition-colors active:scale-[0.99] cursor-pointer shadow-xs"
           >
             <div className="flex items-center gap-3 min-w-0">
-              <span className="h-10 w-10 rounded-xl bg-white border border-[#BCE8DF] flex items-center justify-center text-xl shrink-0">
+              <span className="h-10 w-10 sm:h-11 sm:w-11 rounded-xl bg-white border border-[#BCE8DF] flex items-center justify-center text-xl sm:text-2xl shrink-0">
                 🏡
               </span>
               <div className="min-w-0">
-                <div className="text-sm sm:text-[15px] font-bold text-[#19534B] leading-tight truncate">
-                  {lang === 'th' ? '2. กลับบ้าน (กะเย็น)' : '2. Return Home (Afternoon)'}
+                <div className="text-sm sm:text-base font-extrabold text-[#19534B] leading-tight truncate">
+                  {lang === 'th' ? 'กลับบ้าน' : 'Return Home'}
                 </div>
                 <p className="text-[11px] font-medium text-[#326E65] mt-0.5 truncate">
                   {kid.group === 1
@@ -2602,324 +2486,111 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                       : 'Health check · Photo & laundry'
                     : lang === 'th'
                     ? 'เช็คสุขภาพ · เก็บมือถือ & คิวซักผ้า'
-                      : 'Health check · Store phone'}
+                    : 'Health check · Store phone'}
                 </p>
               </div>
             </div>
             {kid.daily.returnedHomeChecked && (
-              <span className="text-xs font-bold text-[#2F685E] shrink-0">✓</span>
+              <span className="text-sm font-extrabold text-[#2F685E] shrink-0">✓</span>
             )}
           </button>
 
           <button
             type="button"
             onClick={() => setSubModal('shift_night')}
-            className="min-h-[68px] rounded-2xl border border-[#CFC2EB] bg-[#F5F1FC] hover:bg-[#ECE4FA] px-4 py-3 text-left flex items-center justify-between gap-3 transition-colors active:scale-[0.99] cursor-pointer"
+            className="min-h-[66px] sm:min-h-[72px] rounded-2xl border-2 border-[#CFC2EB] bg-[#F5F1FC] hover:bg-[#ECE4FA] px-3.5 sm:px-4 py-2.5 sm:py-3 text-left flex items-center justify-between gap-3 transition-colors active:scale-[0.99] cursor-pointer shadow-xs"
           >
             <div className="flex items-center gap-3 min-w-0">
-              <span className="h-10 w-10 rounded-xl bg-white border border-[#DDD3F2] flex items-center justify-center text-xl shrink-0">
+              <span className="h-10 w-10 sm:h-11 sm:w-11 rounded-xl bg-white border border-[#DDD3F2] flex items-center justify-center text-xl sm:text-2xl shrink-0">
                 ✍️
               </span>
               <div className="min-w-0">
-                <div className="text-sm sm:text-[15px] font-bold text-[#3E2B63] leading-tight truncate">
-                  {lang === 'th' ? '3. ทำการบ้าน & เข้านอน' : '3. Homework & Bedtime'}
+                <div className="text-sm sm:text-base font-extrabold text-[#3E2B63] leading-tight truncate">
+                  {lang === 'th' ? 'ทำการบ้าน' : 'Homework'}
                 </div>
                 <p className="text-[11px] font-medium text-[#5B4782] mt-0.5 truncate">
                   {kid.group === 1
                     ? lang === 'th'
-                      ? 'เรียนเสริม งานบ้าน & ด่านบอส'
-                      : 'Study, chores & Boss Stage'
+                      ? 'เรียนเสริม ขออนุญาต & ด่านบอส'
+                      : 'Study, homework & Boss Stage'
                     : kid.group === 2
                     ? lang === 'th'
-                      ? 'เช็คลิสต์ 4 ข้อ & คืนมือถือ'
-                      : '4-item checklist & curfew'
+                      ? `เช็คลิสต์ · ขออนุญาต (${hwPermWin.labelTh}) & คืน ${hwCurfewEn}`
+                      : `Checklist · Homework (${hwPermWin.labelEn}) & ${hwCurfewEn}`
                     : lang === 'th'
-                    ? 'ใช้งานอิสระ & คืนมือถือ 22:45'
-                    : 'Free usage & 22:45 curfew'}
+                    ? 'ขออนุญาตทำการบ้าน & คืนมือถือ Curfew'
+                    : 'Homework permission & phone curfew'}
                 </p>
               </div>
             </div>
             {(kid.daily.bossStageUnlocked || kid.daily.phoneReturnedChecked) && (
-              <span className="text-xs font-bold text-[#2F685E] shrink-0">✓</span>
+              <span className="text-sm font-extrabold text-[#2F685E] shrink-0">✓</span>
             )}
           </button>
         </div>
 
-        {/* Tier 2: Calm 4-Tile Utility Row & Expandable Drawer */}
-        <div className="rounded-2xl border border-[#EAE1D8] bg-[#FFFDF9] p-3 space-y-2.5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+        {/* Single Combined Button Hiding All Other Buttons & Utilities */}
+        {(() => {
+          const allToolsAlertCount =
+            incomingPendingVisits.length +
+            unvotedOpenPolls.length +
+            pendingDeedsCount +
+            (stepReminder.nextStep?.urgent ? 1 : 0);
+          return (
             <button
               type="button"
-              onClick={() => setSubModal('kid_duties_modal')}
-              className={`min-h-[52px] rounded-xl border px-3 py-2 text-left flex items-center gap-2.5 transition-colors cursor-pointer ${
-                isMyTrashWeek
-                  ? 'border-[#E8C563] bg-[#FFF8DF] hover:bg-[#FFF2C7]'
-                  : 'border-[#EDE3DA] bg-white hover:bg-[#F2FBF9]'
-              }`}
+              onClick={() => setSubModal('all_tools_modal')}
+              className="w-full min-h-[54px] rounded-2xl border-2 border-[#E7DAD0] bg-white hover:bg-[#FAF5EF] px-4 sm:px-5 py-2.5 sm:py-3 flex items-center justify-between gap-3 transition-colors active:scale-[0.995] cursor-pointer shadow-xs"
             >
-              <span className="text-lg shrink-0">🧹</span>
-              <div className="min-w-0">
-                <div className="text-xs sm:text-[13px] font-bold text-[#3D322C] truncate">
-                  {lang === 'th' ? 'ตารางเวรต่างๆ' : 'Duty Schedules'}
-                </div>
-                <div className="text-[10px] text-[#5B6B65] truncate">
-                  {isMyTrashWeek
-                    ? lang === 'th'
-                      ? '🗑️ สัปดาห์นี้เวรทิ้งขยะหนู!'
-                      : '🗑️ Your Trash Week!'
-                    : lang === 'th'
-                    ? 'เวรวันหยุด 14 โซน · ครัว · ทิ้งขยะ'
-                    : 'Holiday 14 Zones · Kitchen · Trash'}
-                </div>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setSubModal('penalty_status')}
-              className={`min-h-[52px] rounded-xl border px-3 py-2 text-left flex items-center gap-2.5 transition-colors cursor-pointer ${
-                isCleanPenalty
-                  ? 'border-[#EDE3DA] bg-white hover:bg-[#F4FBF8]'
-                  : 'border-[#F2BFC9] bg-[#FFF5F7] hover:bg-[#FFEBEF]'
-              }`}
-            >
-              <span className="text-lg shrink-0">⚖️</span>
-              <div className="min-w-0">
-                <div className="text-xs sm:text-[13px] font-bold text-[#3D322C] truncate">
-                  {lang === 'th' ? 'สถานะ & กฎวินัย' : 'Discipline Status'}
-                </div>
-                <div
-                  className={`text-[10px] font-semibold truncate ${
-                    isCleanPenalty ? 'text-[#2D6A54]' : 'text-[#9E3C54]'
-                  }`}
-                >
-                  {isCleanPenalty
-                    ? lang === 'th'
-                      ? 'ปกติ ยอดเยี่ยม!'
-                      : 'Clean record'
-                    : coinsEnabled && kid.penalty.lateFineThb > 0
-                    ? lang === 'th'
-                      ? `ค่าปรับ ${kid.penalty.lateFineThb} บ.`
-                      : `Fine ${kid.penalty.lateFineThb} THB`
-                    : lang === 'th'
-                    ? 'มีแจ้งเตือนวินัย'
-                    : 'Discipline alert'}
-                </div>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setSubModal('rules_schedule')}
-              className="min-h-[52px] rounded-xl border border-[#EDE3DA] bg-white hover:bg-[#F7F9FF] px-3 py-2 text-left flex items-center gap-2.5 transition-colors cursor-pointer"
-            >
-              <span className="text-lg shrink-0">📜</span>
-              <div className="min-w-0">
-                <div className="text-xs sm:text-[13px] font-bold text-[#3D322C] truncate">
-                  {lang === 'th' ? 'กฎ & ตารางเวลา' : 'Rules & Schedule'}
-                </div>
-                <div className="text-[10px] text-[#7B695F] truncate">
-                  {lang === 'th' ? 'กติกาประจำกลุ่ม' : 'Group schedule'}
-                </div>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setShowExtraTools((prev) => !prev)}
-              className="min-h-[52px] rounded-xl border border-[#EDE3DA] bg-white hover:bg-[#FAF6F1] px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer"
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <span className="text-lg shrink-0">✨</span>
-                <div className="min-w-0">
-                  <div className="text-xs sm:text-[13px] font-bold text-[#3D322C] truncate">
-                    {lang === 'th' ? 'เมนูบ้านเพิ่มเติม' : 'More House Tools'}
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="h-9 w-9 rounded-xl bg-[#FFF6EA] border border-[#EED8BE] flex items-center justify-center text-lg shrink-0">
+                  🧰
+                </span>
+                <div className="min-w-0 text-left">
+                  <div className="text-sm font-extrabold text-[#3D322C] truncate">
+                    {lang === 'th'
+                      ? 'รวมปุ่มทั้งหมด & เมนูเพิ่มเติม'
+                      : 'All Menus & Extra Tools'}
                   </div>
-                  <div className="text-[10px] text-[#7B695F] truncate">
-                    {unvotedOpenPolls.length > 0 || pendingDeedsCount > 0
-                      ? lang === 'th'
-                        ? 'มีรายการใหม่รอตรวจสอบ'
-                        : 'New items available'
-                      : lang === 'th'
-                      ? 'ไดรฟ์ · โหวต · ประกาศ · สุขภาพ'
-                      : 'Drive · Vote · Health · More'}
+                  <div className="text-[11px] text-[#7B695F] truncate">
+                    {lang === 'th'
+                      ? 'ร้านมินิมาร์ท · สัตว์เลี้ยง 10 สายพันธุ์ · ตารางเวร · แจ้งเตือน · กติกา · แจ้งป่วย'
+                      : 'Minimart · 10-Species Tamagotchi · Duties · Alerts · Rules · Illness'}
                   </div>
                 </div>
               </div>
-              <span className="text-[11px] font-semibold text-[#7B695F] whitespace-nowrap shrink-0">
-                {showExtraTools
-                  ? lang === 'th'
-                    ? 'ซ่อน ▴'
-                    : 'Hide ▴'
-                  : lang === 'th'
-                  ? '9 ▾'
-                  : '9 ▾'}
-              </span>
-            </button>
-          </div>
-
-            {showExtraTools && (
-              <div className="mt-2 pt-2 border-t border-[#F4ECE3] grid grid-cols-2 sm:grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSubModal('drive_docs')}
-                  className="min-h-[46px] rounded-xl border border-[#EDE3DA] bg-white hover:bg-[#F5FAFF] px-3 py-2 text-left flex items-center gap-2 transition-colors cursor-pointer"
-                >
-                  <span className="text-base shrink-0">☁️</span>
-                  <span className="text-xs font-bold text-[#3D322C] truncate">
-                    {lang === 'th' ? 'ไดรฟ์ผลงาน' : 'My Drive'}
+              <div className="flex items-center gap-2 shrink-0">
+                {allToolsAlertCount > 0 && (
+                  <span className="rounded-full bg-[#E86F87] text-white px-2 py-0.5 text-[11px] font-extrabold tabular-nums">
+                    {allToolsAlertCount}
                   </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setSubModal('vote_modal')}
-                  className={`min-h-[46px] rounded-xl border px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer ${
-                    unvotedOpenPolls.length > 0
-                      ? 'border-[#C9BCE3] bg-[#F8F5FC] hover:bg-[#F0EAF8]'
-                      : 'border-[#EDE3DA] bg-white hover:bg-[#FAF5EF]'
-                  }`}
-                >
-                  <span className="flex items-center gap-2 min-w-0">
-                    <span className="text-base shrink-0">🗳️</span>
-                    <span className="text-xs font-bold text-[#3D322C] truncate">
-                      {lang === 'th' ? 'โหวต (ลับ)' : 'Secret Vote'}
-                    </span>
-                  </span>
-                  {unvotedOpenPolls.length > 0 && (
-                    <span className="text-[10px] font-extrabold text-[#5B3E8C] tabular-nums shrink-0">
-                      {unvotedOpenPolls.length}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setSubModal('trips_modal')}
-                  className="min-h-[46px] rounded-xl border border-[#EDE3DA] bg-white hover:bg-[#FAF5EF] px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer"
-                >
-                  <span className="flex items-center gap-2 min-w-0">
-                    <span className="text-base shrink-0">🗺️</span>
-                    <span className="text-xs font-bold text-[#3D322C] truncate">
-                      {lang === 'th' ? 'ทริป & หลังไมค์' : 'Outings & DM'}
-                    </span>
-                  </span>
-                  {repliedCount > 0 && (
-                    <span className="text-[10px] font-bold text-[#2F685E] tabular-nums shrink-0">
-                      {repliedCount}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setSubModal('announcements_modal')}
-                  className="min-h-[46px] rounded-xl border border-[#EDE3DA] bg-white hover:bg-[#FAF5EF] px-3 py-2 text-left flex items-center gap-2 transition-colors cursor-pointer"
-                >
-                  <span className="text-base shrink-0">📢</span>
-                  <span className="text-xs font-bold text-[#3D322C] truncate">
-                    {lang === 'th' ? 'ประกาศบ้าน' : 'Notices'}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setHealthForm(kidHealth);
-                    setSubModal('health_card');
-                  }}
-                  className="min-h-[46px] rounded-xl border border-[#EDE3DA] bg-white hover:bg-[#FAF5EF] px-3 py-2 text-left flex items-center gap-2 transition-colors cursor-pointer"
-                >
-                  <span className="text-base shrink-0">🩺</span>
-                  <span className="text-xs font-bold text-[#3D322C] truncate">
-                    {lang === 'th' ? 'บัตรสุขภาพ' : 'Health Card'}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setSubModal('supply_wishlist')}
-                  className="min-h-[46px] rounded-xl border border-[#EDE3DA] bg-white hover:bg-[#FAF5EF] px-3 py-2 text-left flex items-center gap-2 transition-colors cursor-pointer"
-                >
-                  <span className="text-base shrink-0">📦</span>
-                  <span className="text-xs font-bold text-[#3D322C] truncate">
-                    {lang === 'th' ? 'ขอเบิกของใช้' : 'Supplies'}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setSubModal('lost_found_modal')}
-                  className="min-h-[46px] rounded-xl border border-[#EDE3DA] bg-white hover:bg-[#FAF5EF] px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer"
-                >
-                  <span className="flex items-center gap-2 min-w-0">
-                    <span className="text-base shrink-0">🔎</span>
-                    <span className="text-xs font-bold text-[#3D322C] truncate">
-                      {lang === 'th' ? 'ของหาย / ได้' : 'Lost & Found'}
-                    </span>
-                  </span>
-                  {openLostCount > 0 && (
-                    <span className="text-[10px] font-bold text-[#7B695F] tabular-nums shrink-0">
-                      {openLostCount}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setSubModal('kindness_deed_modal')}
-                  className={`min-h-[46px] rounded-xl border px-3 py-2 text-left flex items-center justify-between gap-2 transition-colors cursor-pointer ${
-                    pendingDeedsCount > 0
-                      ? 'border-[#E66C85] bg-[#FFF5F7]'
-                      : 'border-[#EDE3DA] bg-white hover:bg-[#FAF5EF]'
-                  }`}
-                >
-                  <span className="flex items-center gap-2 min-w-0">
-                    <span className="text-base shrink-0">💛</span>
-                    <span className="text-xs font-bold text-[#3D322C] truncate">
-                      {lang === 'th' ? 'ขอบคุณ & ความดี' : 'Kindness'}
-                    </span>
-                  </span>
-                  {pendingDeedsCount > 0 && (
-                    <span className="text-[10px] font-extrabold text-[#9A344B] tabular-nums shrink-0">
-                      {pendingDeedsCount}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPendingSickLineText(null);
-                    setSickLineCopied(false);
-                    setSubModal('sick_report');
-                  }}
-                  className="min-h-[46px] rounded-xl border border-[#F2CFC9] bg-[#FFF9F7] hover:bg-[#FFEEEA] px-3 py-2 text-left flex items-center gap-2 transition-colors cursor-pointer"
-                >
-                  <span className="text-base shrink-0">🤒</span>
-                  <span className="text-xs font-bold text-[#703021] truncate">
-                    {lang === 'th' ? 'แจ้งเจ็บป่วย' : 'Report Illness'}
-                  </span>
-                </button>
+                )}
+                <span className="rounded-xl bg-[#F6EFE8] border border-[#E7DAD0] px-2.5 sm:px-3 py-1 text-xs font-bold text-[#5E4E45] whitespace-nowrap">
+                  {lang === 'th' ? 'เปิดดูทั้งหมด ▾' : 'Open All ▾'}
+                </span>
               </div>
-            )}
-        </div>
+            </button>
+          );
+        })()}
       </div>
 
       {/* ---------------- SUB-MODALS ---------------- */}
       {subModal && (
         <div
-          className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-[#3D322C]/40 backdrop-blur-sm"
+          className="fixed inset-0 z-40 flex items-center justify-center p-2.5 sm:p-4 bg-[#3D322C]/40 backdrop-blur-sm"
           role="dialog"
           aria-modal="true"
         >
           <div
             className={`w-full ${
-              subModal === 'staff_roster' || subModal === 'kid_duties_modal' ? 'max-w-4xl' : 'max-w-2xl'
-            } max-h-[88vh] overflow-y-auto rounded-[32px] border-4 border-[#FADADD] bg-[#FFFDF9] p-6 sm:p-7 pastel-shadow`}
+              subModal === 'staff_roster' || subModal === 'kid_duties_modal' || subModal === 'all_tools_modal'
+                ? 'max-w-4xl'
+                : 'max-w-2xl'
+            } max-h-[92dvh] overflow-y-auto rounded-[24px] sm:rounded-[32px] border-4 border-[#FADADD] bg-[#FFFDF9] p-4 sm:p-6 pastel-shadow`}
           >
-            <div className="flex items-center justify-between gap-4 mb-5">
-              <h3 className="text-xl font-bold text-[#3D322C]">
+            <div className="flex items-center justify-between gap-3 mb-4 sm:mb-5">
+              <h3 className="text-base sm:text-xl font-bold text-[#3D322C] leading-snug">
+                {subModal === 'all_tools_modal' && (lang === 'th' ? `🧰 รวมปุ่มทั้งหมด · น้อง${kid.nickname}` : `🧰 All Menus · ${kid.nickname}`)}
                 {subModal === 'shift_morning' && (lang === 'th' ? '🚌 1. ไปโรงเรียน (กะเช้า)' : '🚌 1. Morning Shift')}
                 {subModal === 'shift_afternoon' && (lang === 'th' ? '🏡 2. กลับบ้าน (กะเย็น)' : '🏡 2. Return Home')}
                 {subModal === 'shift_night' && (lang === 'th' ? '✍️ 3. ทำการบ้าน & เข้านอน (กะค่ำ)' : '✍️ 3. Night Shift')}
@@ -2930,7 +2601,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                 {subModal === 'penalty_status' && (lang === 'th' ? '⚖️ สถานะบทลงโทษ & สิทธิ์' : '⚖️ Penalty & Privilege Status')}
                 {subModal === 'rules_schedule' && (lang === 'th' ? '📜 กฎและตารางเวลาประจำกลุ่ม' : '📜 Group Rules & Schedule')}
                 {subModal === 'shop_modal' && (lang === 'th' ? '🏪 มินิมาร์ทมูลนิธิ & ร้านค้าดาว' : '🏪 Foundation Minimart & Star Shop')}
-                {subModal === 'wardrobe_modal' && (lang === 'th' ? '🎨 แต่งตัวละคร & 7 หน้าปกสถานที่' : '🎨 Avatar & 7 Cover Scenes')}
+                {subModal === 'wardrobe_modal' && (lang === 'th' ? '🎨 ชุดเทศกาล & คลังไอเทม' : '🎨 Festival Outfits & Items')}
                 {subModal === 'announcements_modal' && (lang === 'th' ? '📢 ประกาศอัปเดตบ้าน Barnhem' : '📢 House Announcements')}
                 {subModal === 'vote_modal' && (lang === 'th' ? '🗳️ โหวตออกเสียง (ความลับไม่ระบุชื่อ)' : '🗳️ Secret-Ballot Voting')}
                 {subModal === 'trips_modal' && (lang === 'th' ? '🗺️ กิจกรรมสถานที่เที่ยว & ข้อความหลังไมค์' : '🗺️ Outings & Private Backchannel')}
@@ -2938,22 +2609,449 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                 {subModal === 'supply_wishlist' && (lang === 'th' ? '📦 กล่องขอเบิกของใช้จำเป็น & อุปกรณ์เรียน' : '📦 Supplies & Study Wishlist')}
                 {subModal === 'lost_found_modal' && (lang === 'th' ? '🔎 กระดานแจ้งของหาย / เก็บของได้' : '🔎 Lost & Found Board')}
                 {subModal === 'kindness_deed_modal' && (lang === 'th' ? '💛 การ์ดขอบคุณเพื่อน & กิจกรรมไถ่ค่าปรับ' : '💛 Kindness Wall & Deed Redemption')}
-                {subModal === 'friend_visit_modal' && (lang === 'th' ? '🏠 ไปบ้านเพื่อน & ยืนข้างกันในโปรไฟล์' : '🏠 Visit a Friend & Hangout')}
+                {subModal === 'friend_visit_modal' && (lang === 'th' ? '🏠 ไปบ้านเพื่อน & ฝากข้อความทักทาย' : '🏠 Visit a Friend & Hangout')}
                 {subModal === 'staff_roster' && (lang === 'th' ? '👩‍🏫🚐 ตารางงานพี่เลี้ยง ไนท์วอช & ตารางขับรถ' : '👩‍🏫🚐 Staff Shift, Night Watch & Driving Roster')}
                 {subModal === 'kid_duties_modal' && (lang === 'th' ? '📋 ช่องตารางเวรต่างๆ ของน้อง (เวรวันหยุด 14 โซน · ห้องครัว · ทิ้งขยะ)' : '📋 Kid Duty Schedules (Holiday Cleaning · Kitchen · Trash)')}
-                {subModal === 'pet_modal' && (lang === 'th' ? '🐾 สัตว์เลี้ยงคู่ใจ (หมา & แมว ทามาก๊อตจิ)' : '🐾 Tamagotchi Pet Companion')}
+                {subModal === 'pet_modal' && (lang === 'th' ? '🐾 สัตว์เลี้ยงทามาก๊อตจิ (10 สายพันธุ์ · ให้อาหารรับดาว)' : '🐾 Tamagotchi Companion (10 Species)')}
                 {subModal === 'profile_modal' && (lang === 'th' ? `🩷 พื้นที่ของฉัน · น้อง${kid.nickname}` : `🩷 My Space · ${kid.nickname}`)}
               </h3>
               {!(subModal === 'sick_report' && pendingSickLineText && !sickLineCopied) && (
                 <button
                   type="button"
                   onClick={() => setSubModal(null)}
-                  className="min-h-[42px] min-w-[42px] rounded-full bg-[#FADADD] hover:bg-[#F3B7C0] font-bold text-[#3D322C] cursor-pointer"
+                  className="min-h-[38px] min-w-[38px] sm:min-h-[42px] sm:min-w-[42px] rounded-full bg-[#FADADD] hover:bg-[#F3B7C0] font-bold text-[#3D322C] cursor-pointer shrink-0"
                 >
                   ✕
                 </button>
               )}
             </div>
+
+            {/* UNIFIED ALL TOOLS / HIDDEN BUTTONS HUB */}
+            {subModal === 'all_tools_modal' && (() => {
+              const todaySchedule = getStaffScheduleForDate(now);
+              const morningCarer =
+                todaySchedule.shiftATh !== '—'
+                  ? lang === 'th'
+                    ? todaySchedule.shiftATh
+                    : todaySchedule.shiftAEn
+                  : lang === 'th'
+                  ? todaySchedule.shiftBTh
+                  : todaySchedule.shiftBEn;
+              return (
+                <div className="space-y-4">
+                  {/* Daily Alerts & Quick Chore Strip */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSubModal(null);
+                        setStepPopupOpen(true);
+                      }}
+                      className={`rounded-2xl border-2 px-4 py-3 text-left flex items-center justify-between gap-2 cursor-pointer ${
+                        stepReminder.penaltyInstructions.length > 0 || stepReminder.nextStep?.urgent
+                          ? 'bg-[#FFE8EC] hover:bg-[#FFD7DF] border-[#F0A4B4] text-[#7D2234]'
+                          : stepReminder.allDoneClean
+                          ? 'bg-[#E6FAF5] hover:bg-[#D5F5ED] border-[#8DD6C7] text-[#17554B]'
+                          : 'bg-[#EEF6FF] hover:bg-[#DFEEFF] border-[#B6D5F2] text-[#1B4A73]'
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="text-xs font-extrabold truncate">
+                          🔔 {lang === 'th' ? 'แจ้งเตือนภารกิจวันนี้' : 'Daily Step Alerts'}
+                        </div>
+                        <div className="text-[11px] font-medium truncate">
+                          {lang === 'th' ? stepReminder.badgeTextTh : stepReminder.badgeTextEn}
+                        </div>
+                      </div>
+                      <span className="text-xs font-bold shrink-0">→</span>
+                    </button>
+
+                    <div className="rounded-2xl border border-[#BFE6E2] bg-[#EAF8F7] px-4 py-3 flex items-center justify-between gap-2 text-xs text-[#214F4B]">
+                      <div className="min-w-0">
+                        <div className="font-extrabold truncate">
+                          {dailyHouseChore.emoji} {lang === 'th' ? dailyHouseChore.titleTh : dailyHouseChore.titleEn}
+                        </div>
+                        <div className="text-[10px] text-[#356964] truncate">
+                          🔥{' '}
+                          {lang === 'th'
+                            ? `เช้าติด ${streakCount % 5 === 0 && streakCount > 0 ? 5 : streakCount % 5}/5 (${streakCount})`
+                            : `Streak ${streakCount}`}{' '}
+                          · {laundry.emoji} {laundry.label}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={Boolean(kid.daily.houseChoreDone)}
+                        onClick={() => {
+                          if (kid.daily.houseChoreDone) return;
+                          const applied = addStars(
+                            5,
+                            `ทำเวรประจำบ้าน: ${dailyHouseChore.titleTh} (+5 ⭐)`,
+                            (prev) => ({
+                              daily: { ...prev.daily, houseChoreDone: true },
+                            }),
+                            (prev) => !prev.daily.houseChoreDone
+                          );
+                          if (!applied) return;
+                          onShowAlert({
+                            icon: '🧹✨',
+                            title: lang === 'th' ? 'ทำเวรประจำบ้านเสร็จแล้ว! (+5 ⭐)' : 'House Chore Complete! (+5 ⭐)',
+                            message:
+                              lang === 'th'
+                                ? `รับ +5 ดาวความดี จากภารกิจ "${dailyHouseChore.titleTh}" ขอบคุณที่ช่วยดูแลบ้านนะ!`
+                                : `Earned +5 stars for "${dailyHouseChore.titleEn}"!`,
+                            tone: 'mint',
+                          });
+                        }}
+                        className={`min-h-[34px] rounded-xl px-3 py-1 text-[11px] font-bold cursor-pointer whitespace-nowrap shrink-0 ${
+                          kid.daily.houseChoreDone
+                            ? 'bg-white border border-[#96D9CD] text-[#28645B]'
+                            : 'bg-[#114A42] text-white'
+                        }`}
+                      >
+                        {kid.daily.houseChoreDone ? '✅ +5⭐' : lang === 'th' ? 'ทำเวร (+5⭐)' : 'Chore (+5⭐)'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Status summary & badges */}
+                  <div className="rounded-2xl border border-[#EAE1D8] bg-white px-4 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-bold text-[#5E4E45]">
+                    {kid.pet ? (() => {
+                      const sp = getPetSpeciesInfo(kid.pet.species);
+                      const lv = computeLivePetStats(kid.pet, now);
+                      const fs = getPetFeedStarStatus(kid.pet, todayKey);
+                      return (
+                        <span>
+                          {sp.emoji}{' '}
+                          {lang === 'th'
+                            ? `${kid.pet.name} (${sp.nameTh} Lv.${lv.level} · ⭐ อาหารวันนี้ ${fs.usedToday}/3)`
+                            : `${kid.pet.name} (${sp.nameEn} Lv.${lv.level} · ⭐ Feed ${fs.usedToday}/3)`}
+                        </span>
+                      );
+                    })() : (
+                      <span>🐾 {lang === 'th' ? 'ยังไม่รับเลี้ยงทามาก๊อตจิ (ฟรี 10 สายพันธุ์)' : 'No Tamagotchi yet (10 free)'}</span>
+                    )}
+                    {speedyRemainingSec !== null && (
+                      <span className="text-[#B84A39] tabular-nums">
+                        · 🥷 Speedy Ninja {speedyMM}:{speedySS}
+                      </span>
+                    )}
+                    {isSickToday && <span className="text-[#2F685E]">· 🤒 {lang === 'th' ? 'แจ้งป่วยวันนี้' : 'Sick Today'}</span>}
+                    {isAwayToday && (
+                      <span className="text-[#7C5214]">
+                        · 🏡 {lang === 'th' ? `ลาพักถึง ${kid.allowance?.awayUntilDateKey ?? ''}` : 'Away'}
+                      </span>
+                    )}
+                    {hasKitchenDuty && <span className="text-[#2F685E]">· 🍳 {lang === 'th' ? 'มีเวรครัว' : 'Kitchen Duty'}</span>}
+                    {isMyTrashWeek && <span className="text-[#9A344B]">· 🗑️ {lang === 'th' ? 'เวรทิ้งขยะสัปดาห์นี้' : 'Trash Week'}</span>}
+                  </div>
+
+                  {incomingPendingVisits.length > 0 && (
+                    <div className="rounded-2xl border-2 border-[#7CC6B8] bg-[#EFFAF7] px-4 py-2.5 flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-[#1D544C]">
+                        💌{' '}
+                        {lang === 'th'
+                          ? `น้อง${incomingPendingVisits[0].fromKidNickname} ขอมาบ้านหนู! (รอตอบรับ ${incomingPendingVisits.length})`
+                          : `${incomingPendingVisits[0].fromKidNickname} sent you a visit invite!`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSubModal('friend_visit_modal')}
+                        className="rounded-xl bg-[#114A42] text-white px-3 py-1.5 text-xs font-bold cursor-pointer shrink-0"
+                      >
+                        🤝 {lang === 'th' ? 'ตอบรับ' : 'Respond'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Section 1: Shop, Tamagotchi & Friends */}
+                  <div className="space-y-2">
+                    <div className="text-xs font-extrabold text-[#6E5C52]">
+                      ✨ {lang === 'th' ? 'ร้านค้า · สัตว์เลี้ยงทามาก๊อตจิ · เพื่อนบ้าน' : 'Shop, Tamagotchi & Friends'}
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShopFilter('all');
+                          setSubModal('shop_modal');
+                        }}
+                        className="min-h-[52px] rounded-xl border-2 border-[#F3D86B] bg-[#FFF5BA] hover:bg-[#FCEB8E] px-3 py-2 text-left flex items-center gap-2 text-xs font-extrabold text-[#3D322C] cursor-pointer"
+                      >
+                        <span className="text-lg">🏪</span>
+                        <span className="truncate">{lang === 'th' ? 'มินิมาร์ท & ร้านค้าดาว' : 'Minimart & Shop'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSubModal('pet_modal')}
+                        className="min-h-[52px] rounded-xl border-2 border-[#F3B7C0] bg-[#FFF0F4] hover:bg-[#FFE3EC] px-3 py-2 text-left flex items-center gap-2 text-xs font-extrabold text-[#7B2E3B] cursor-pointer"
+                      >
+                        <span className="text-lg">
+                          {kid.pet ? getPetSpeciesInfo(kid.pet.species).emoji : '🐾'}
+                        </span>
+                        <span className="truncate">
+                          {kid.pet
+                            ? `${kid.pet.name} (10 สายพันธุ์)`
+                            : lang === 'th'
+                            ? 'ทามาก๊อตจิ (10 สายพันธุ์)'
+                            : 'Tamagotchi (10 Breeds)'}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSubModal('friend_visit_modal')}
+                        className="min-h-[52px] rounded-xl border border-[#B6E2DA] bg-[#F0FAF8] hover:bg-[#E0F5F1] px-3 py-2 text-left flex items-center gap-2 text-xs font-bold text-[#1C554C] cursor-pointer"
+                      >
+                        <span className="text-lg">🏠</span>
+                        <span className="truncate">
+                          {lang === 'th' ? 'ไปบ้านเพื่อน' : 'Visit Friend'}
+                          {incomingPendingVisits.length > 0 ? ` (${incomingPendingVisits.length})` : ''}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMySpaceForm(kid.mySpace);
+                          setLinkedEmailForm(kid.linkedEmail ?? '');
+                          setSubModal('profile_modal');
+                        }}
+                        className="min-h-[52px] rounded-xl border border-[#A7D3EC] bg-[#EEF6FF] hover:bg-[#DFEEFF] px-3 py-2 text-left flex items-center gap-2 text-xs font-bold text-[#1E445C] cursor-pointer"
+                      >
+                        <span className="text-lg">{kid.linkedEmail ? '✅' : '📧'}</span>
+                        <span className="truncate">
+                          {kid.linkedEmail
+                            ? lang === 'th'
+                              ? 'พื้นที่ของฉัน / อีเมลซิงค์'
+                              : 'My Space / Email'
+                            : lang === 'th'
+                            ? 'พื้นที่ของฉัน & ผูกอีเมล'
+                            : 'My Space & Email'}
+                        </span>
+                      </button>
+
+                      {activeFestival && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (kid.avatar.outfitMode === 'festival') {
+                              handleToggleOutfitMode('uniform');
+                            } else {
+                              handleToggleOutfitMode('festival', activeFestival.defaultOutfitId);
+                            }
+                          }}
+                          className="min-h-[52px] rounded-xl border border-[#F0D568] bg-[#FFF5BA] hover:bg-[#FCEB8E] px-3 py-2 text-left flex items-center gap-2 text-xs font-bold text-[#5A4614] cursor-pointer"
+                        >
+                          <span className="text-lg">{activeFestival.emoji}</span>
+                          <span className="truncate">
+                            {kid.avatar.outfitMode === 'festival'
+                              ? lang === 'th'
+                                ? 'สลับเป็นชุดนักเรียน'
+                                : 'Switch Uniform'
+                              : lang === 'th'
+                              ? `ใส่ชุด${activeFestival.nameTh}`
+                              : activeFestival.nameEn}
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Section 2: Duties, Rules & House Tools */}
+                  <div className="space-y-2">
+                    <div className="text-xs font-extrabold text-[#6E5C52]">
+                      📋 {lang === 'th' ? 'ตารางเวร · กติกา · เมนูบ้านทั้งหมด' : 'Duties, Rules & House Utilities'}
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSubModal('kid_duties_modal')}
+                        className="min-h-[48px] rounded-xl border border-[#EDE3DA] bg-white hover:bg-[#F2FBF9] px-3 py-2 text-left flex items-center gap-2 text-xs font-bold text-[#3D322C] cursor-pointer"
+                      >
+                        <span>🧹</span>
+                        <span className="truncate">{lang === 'th' ? 'ตารางเวรต่างๆ' : 'Duty Schedules'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSubModal('staff_roster')}
+                        className="min-h-[48px] rounded-xl border border-[#BEDBF0] bg-[#F5FAFF] hover:bg-[#EAF4FF] px-3 py-2 text-left flex items-center gap-2 text-xs font-bold text-[#1D4D73] cursor-pointer"
+                      >
+                        <span>📅</span>
+                        <span className="truncate">
+                          {lang === 'th' ? `ตารางพี่เลี้ยง (${morningCarer})` : `Roster (${morningCarer})`}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSubModal('penalty_status')}
+                        className={`min-h-[48px] rounded-xl border px-3 py-2 text-left flex items-center gap-2 text-xs font-bold cursor-pointer ${
+                          isCleanPenalty
+                            ? 'border-[#EDE3DA] bg-white hover:bg-[#F4FBF8] text-[#3D322C]'
+                            : 'border-[#F2BFC9] bg-[#FFF5F7] text-[#9E3C54]'
+                        }`}
+                      >
+                        <span>⚖️</span>
+                        <span className="truncate">{lang === 'th' ? 'สถานะ & กฎวินัย' : 'Discipline Status'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSubModal('rules_schedule')}
+                        className="min-h-[48px] rounded-xl border border-[#EDE3DA] bg-white hover:bg-[#F7F9FF] px-3 py-2 text-left flex items-center gap-2 text-xs font-bold text-[#3D322C] cursor-pointer"
+                      >
+                        <span>📜</span>
+                        <span className="truncate">{lang === 'th' ? 'กฎ & ตารางเวลา' : 'Rules & Schedule'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPendingSickLineText(null);
+                          setSickLineCopied(false);
+                          setSubModal('sick_report');
+                        }}
+                        className="min-h-[48px] rounded-xl border border-[#F2CFC9] bg-[#FFF9F7] hover:bg-[#FFEEEA] px-3 py-2 text-left flex items-center gap-2 text-xs font-bold text-[#703021] cursor-pointer"
+                      >
+                        <span>🤒</span>
+                        <span className="truncate">{lang === 'th' ? 'แจ้งเจ็บป่วย' : 'Report Illness'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHealthForm(kidHealth);
+                          setSubModal('health_card');
+                        }}
+                        className="min-h-[48px] rounded-xl border border-[#EDE3DA] bg-white hover:bg-[#FAF5EF] px-3 py-2 text-left flex items-center gap-2 text-xs font-bold text-[#3D322C] cursor-pointer"
+                      >
+                        <span>🩺</span>
+                        <span className="truncate">{lang === 'th' ? 'บัตรสุขภาพ' : 'Health Card'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSubModal('announcements_modal')}
+                        className="min-h-[48px] rounded-xl border border-[#EDE3DA] bg-white hover:bg-[#FAF5EF] px-3 py-2 text-left flex items-center justify-between gap-2 text-xs font-bold text-[#3D322C] cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2 truncate">
+                          <span>📢</span>
+                          <span className="truncate">{lang === 'th' ? 'ประกาศบ้าน' : 'Notices'}</span>
+                        </span>
+                        <span className="text-[10px] text-[#7B695F] shrink-0">
+                          {activeScheduledAnnouncements.length + 1}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSubModal('drive_docs')}
+                        className="min-h-[48px] rounded-xl border border-[#EDE3DA] bg-white hover:bg-[#F5FAFF] px-3 py-2 text-left flex items-center gap-2 text-xs font-bold text-[#3D322C] cursor-pointer"
+                      >
+                        <span>☁️</span>
+                        <span className="truncate">{lang === 'th' ? 'ไดรฟ์ผลงาน' : 'My Drive'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSubModal('vote_modal')}
+                        className={`min-h-[48px] rounded-xl border px-3 py-2 text-left flex items-center justify-between gap-2 text-xs font-bold text-[#3D322C] cursor-pointer ${
+                          unvotedOpenPolls.length > 0
+                            ? 'border-[#C9BCE3] bg-[#F8F5FC]'
+                            : 'border-[#EDE3DA] bg-white hover:bg-[#FAF5EF]'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2 truncate">
+                          <span>🗳️</span>
+                          <span className="truncate">{lang === 'th' ? 'โหวต (ลับ)' : 'Secret Vote'}</span>
+                        </span>
+                        {unvotedOpenPolls.length > 0 && (
+                          <span className="text-[10px] font-extrabold text-[#5B3E8C]">{unvotedOpenPolls.length}</span>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSubModal('trips_modal')}
+                        className="min-h-[48px] rounded-xl border border-[#EDE3DA] bg-white hover:bg-[#FAF5EF] px-3 py-2 text-left flex items-center justify-between gap-2 text-xs font-bold text-[#3D322C] cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2 truncate">
+                          <span>🗺️</span>
+                          <span className="truncate">{lang === 'th' ? 'ทริป & หลังไมค์' : 'Outings & DM'}</span>
+                        </span>
+                        {repliedCount > 0 && (
+                          <span className="text-[10px] font-bold text-[#2F685E]">{repliedCount}</span>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSubModal('supply_wishlist')}
+                        className="min-h-[48px] rounded-xl border border-[#EDE3DA] bg-white hover:bg-[#FAF5EF] px-3 py-2 text-left flex items-center gap-2 text-xs font-bold text-[#3D322C] cursor-pointer"
+                      >
+                        <span>📦</span>
+                        <span className="truncate">{lang === 'th' ? 'ขอเบิกของใช้' : 'Supplies'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSubModal('lost_found_modal')}
+                        className="min-h-[48px] rounded-xl border border-[#EDE3DA] bg-white hover:bg-[#FAF5EF] px-3 py-2 text-left flex items-center justify-between gap-2 text-xs font-bold text-[#3D322C] cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2 truncate">
+                          <span>🔎</span>
+                          <span className="truncate">{lang === 'th' ? 'ของหาย / ได้' : 'Lost & Found'}</span>
+                        </span>
+                        {openLostCount > 0 && (
+                          <span className="text-[10px] font-bold text-[#7B695F]">{openLostCount}</span>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSubModal('kindness_deed_modal')}
+                        className={`min-h-[48px] rounded-xl border px-3 py-2 text-left flex items-center justify-between gap-2 text-xs font-bold text-[#3D322C] cursor-pointer ${
+                          pendingDeedsCount > 0
+                            ? 'border-[#E66C85] bg-[#FFF5F7]'
+                            : 'border-[#EDE3DA] bg-white hover:bg-[#FAF5EF]'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2 truncate">
+                          <span>💛</span>
+                          <span className="truncate">{lang === 'th' ? 'ขอบคุณ & ความดี' : 'Kindness'}</span>
+                        </span>
+                        {pendingDeedsCount > 0 && (
+                          <span className="text-[10px] font-extrabold text-[#9A344B]">{pendingDeedsCount}</span>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSubModal('star_history')}
+                        className="min-h-[48px] rounded-xl border border-[#EDE3DA] bg-white hover:bg-[#FAF5EF] px-3 py-2 text-left flex items-center gap-2 text-xs font-bold text-[#3D322C] cursor-pointer"
+                      >
+                        <span>🧸</span>
+                        <span className="truncate">{lang === 'th' ? 'ประวัติดาว & ขนม' : 'Star Log'}</span>
+                      </button>
+
+                      {linkedKidSession && onSignOutLinkedKid && (
+                        <button
+                          type="button"
+                          onClick={onSignOutLinkedKid}
+                          className="min-h-[48px] rounded-xl border border-[#F3B7C0] bg-[#FFF0F3] hover:bg-[#FFE0E7] px-3 py-2 text-left flex items-center gap-2 text-xs font-bold text-[#8B1D36] cursor-pointer"
+                        >
+                          <span>🚪</span>
+                          <span className="truncate">{lang === 'th' ? 'ออกจากระบบบัญชี Google' : 'Sign Out'}</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* 1. MORNING SHIFT */}
             {subModal === 'shift_morning' && (
@@ -3481,207 +3579,307 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
             )}
 
             {/* 3. NIGHT SHIFT */}
-            {subModal === 'shift_night' && (
-              <div className="space-y-4">
-                {kid.group === 1 && (
-                  <>
+            {subModal === 'shift_night' && (() => {
+              const minsNowNight = getMinutesOfDay(now);
+              const isHwPermWindowOpen =
+                hwPermWin.startMins <= hwPermWin.endMins
+                  ? minsNowNight >= hwPermWin.startMins && minsNowNight <= hwPermWin.endMins
+                  : minsNowNight >= hwPermWin.startMins || minsNowNight <= hwPermWin.endMins;
+              const isPastCurfew = minsNowNight > hwCurfewMins;
+
+              const homeworkPermissionSection = (
+                <div className="rounded-2xl border border-[#BFE6DE] bg-[#F2FCF9] p-4 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-bold text-[#114A42]">
+                      📝 {lang === 'th' ? `ขออนุญาตทำการบ้าน (${hwPermWin.labelTh})` : `Homework Permission (${hwPermWin.labelEn})`}
+                    </div>
+                    <span className="text-[11px] font-bold text-[#2D6A60] tabular-nums">
+                      {lang === 'th' ? `เวลาตอนนี้ ${formatDigitalClock(now)} น.` : `Now ${formatDigitalClock(now)}`}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#2E5D55] leading-relaxed">
+                    {lang === 'th'
+                      ? `ปุ่มนี้แสดงเฉพาะเวลา ${hwPermWin.labelTh} หากขออนุญาตแล้วใช้เพิ่มได้ถึงเวลา ${hwCurfewTh} · ถ้าเกิน ${hwCurfewTh} ยังไม่นำมือถือมาเก็บ ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วัน`
+                      : `Visible ${hwPermWin.labelEn} only. Extends until ${hwCurfewEn}. Keeping phone past ${hwCurfewEn} counts as consenting to forfeit 1 Free Day phone privilege.`}
+                  </p>
+
+                  {isHwPermWindowOpen ? (
                     <button
                       type="button"
-                      onClick={handleGroup1ExtraStudy}
-                      className="w-full min-h-[50px] rounded-2xl bg-[#DCEEF8] hover:bg-[#C6E2F3] px-4 py-3 font-bold text-[#3D322C] flex justify-between items-center cursor-pointer"
+                      onClick={() => setHwPermPopupOpen(true)}
+                      className="w-full min-h-[52px] rounded-2xl border-2 border-[#6BC2B2] bg-[#DCF7F2] hover:bg-[#C6EFE8] px-4 py-3 font-extrabold text-[#114A42] flex items-center justify-between gap-3 shadow-sm cursor-pointer active:scale-[0.99] transition-all"
                     >
-                      <span>📖 {lang === 'th' ? 'เข้าเรียนเสริม (ไม่เกิน 16:50 น.)' : 'Extra Study (by 16:50)'}</span>
-                      <span>{kid.daily.extraStudyChecked ? '✅' : '+10 ⭐'}</span>
+                      <span className="flex items-center gap-2 text-sm sm:text-base">
+                        <span>📝</span>
+                        <span>{lang === 'th' ? 'ขออนุญาตทำการบ้าน' : 'Request Homework Permission'}</span>
+                      </span>
+                      <span className="rounded-xl bg-white border border-[#9CD9CD] px-2.5 py-1 text-xs font-bold text-[#114A42]">
+                        {kid.daily.homeworkRegisteredSubject
+                          ? lang === 'th'
+                            ? 'เลือกใหม่ได้'
+                            : 'Change'
+                          : lang === 'th'
+                          ? 'กดเลือก 3 ปุ่ม'
+                          : 'Choose'}
+                      </span>
                     </button>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-[#A7D9CF] bg-white/80 px-3.5 py-2.5 text-xs font-semibold text-[#4B7069]">
+                      ⏰{' '}
+                      {lang === 'th'
+                        ? `ขณะนี้อยู่นอกเวลา ${hwPermWin.labelTh} ปุ่ม "ขออนุญาตทำการบ้าน" จะแสดงอัตโนมัติในช่วง ${hwPermWin.labelTh}`
+                        : `Outside ${hwPermWin.labelEn} window. The button appears automatically during ${hwPermWin.labelEn}.`}
+                    </div>
+                  )}
 
-                    <button
-                      type="button"
-                      onClick={handleGroup1Chores}
-                      className="w-full min-h-[50px] rounded-2xl bg-[#FFF5BA] hover:bg-[#FCEB8E] px-4 py-3 font-bold text-[#3D322C] flex justify-between items-center cursor-pointer"
-                    >
-                      <span>🧺 {lang === 'th' ? 'งานบ้าน & ตากชุดนักเรียน (ก่อน 18:15 น.)' : 'Chores & Hang Uniform (< 18:15)'}</span>
-                      <span>{kid.daily.choresChecked ? '✅' : '+10 / +3 ⭐'}</span>
-                    </button>
-
-                    <div className="rounded-2xl bg-[#EAE4F2] p-4 space-y-3">
-                      <div className="font-bold text-[#3D322C]">
-                        📺 {lang === 'th' ? 'ด่านบอส 20:00 น. (ปลดล็อกสิทธิ์ดูการ์ตูน)' : '20:00 Boss Stage (Cartoon Unlock)'}
-                      </div>
-                      <div className="text-sm text-[#5E546E] font-semibold">
-                        {getBossStageLanguageLesson(now, lang)}
-                      </div>
-                      <div className="text-xs text-[#6E5C52]">
+                  {kid.daily.homeworkRegisteredSubject && (
+                    <div className="rounded-xl border border-[#8FD4C6] bg-white px-3.5 py-2.5 text-xs font-bold text-[#145349] space-y-0.5">
+                      <div>
+                        ✅{' '}
                         {lang === 'th'
-                          ? '⏰ แจ้งเตือน: หยุดดูการ์ตูนและดื่มน้ำ 20:40 น. | เข้านอน 21:00 น.'
-                          : '⏰ Reminder: Stop cartoons & drink water at 20:40 | Bedtime 21:00'}
+                          ? `ขออนุญาตวันนี้แล้ว: ${kid.daily.homeworkRegisteredSubject} (ใช้เพิ่มถึง ${hwCurfewTh})`
+                          : `Approved today: ${kid.daily.homeworkRegisteredSubject} (Until ${hwCurfewEn})`}
                       </div>
+                      <div className="text-[11px] font-medium text-[#3D6A62]">
+                        {lang === 'th'
+                          ? `กรุณานำมือถือมาเก็บไม่เกิน ${hwCurfewTh} (หากเกินเวลานี้ ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วัน)`
+                          : `Return phone by ${hwCurfewEn} (keeping past ${hwCurfewEn} forfeits 1 Free Day phone privilege).`}
+                      </div>
+                    </div>
+                  )}
+
+                  {isPastCurfew && !kid.daily.phoneReturnedChecked && (kid.group !== 3 || Boolean(kid.daily.homeworkRegisteredSubject)) && (
+                    <div className="rounded-xl border border-[#F3B7C0] bg-[#FFF0F3] px-3.5 py-2 text-xs font-bold text-[#8B1D36]">
+                      ⚖️{' '}
+                      {lang === 'th'
+                        ? `เลยเวลา ${hwCurfewTh} แล้ว — ยังไม่นำมือถือมาเก็บ ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วัน`
+                        : `Past ${hwCurfewEn}! Keeping phone past ${hwCurfewEn} counts as consenting to forfeit 1 Free Day phone privilege.`}
+                    </div>
+                  )}
+                </div>
+              );
+
+              return (
+                <div className="space-y-4">
+                  {!kidHasPhone && (
+                    <div className="rounded-2xl border-2 border-[#D4E3EE] bg-[#F1F7FB] p-3.5 text-xs font-bold text-[#254B6E]">
+                      📵{' '}
+                      {lang === 'th'
+                        ? `น้อง${kid.nickname} ถูกตั้งค่าว่า "ไม่มีมือถือ" (ระบบซ่อนปุ่มรับมือถือ / ขออนุญาตทำการบ้าน / คืนมือถือให้อัตโนมัติ)`
+                        : `${kid.nickname} is marked as having no mobile phone (phone-related buttons are hidden automatically).`}
+                    </div>
+                  )}
+
+                  {kid.group === 1 && (
+                    <>
                       <button
                         type="button"
-                        disabled={kid.daily.bossStageUnlocked}
-                        onClick={() => setPinRequestAction({ type: 'boss_stage' })}
-                        className="w-full min-h-[48px] rounded-2xl bg-[#3D322C] disabled:bg-[#9A8B82] text-white font-bold cursor-pointer"
+                        onClick={handleGroup1ExtraStudy}
+                        className="w-full min-h-[50px] rounded-2xl bg-[#DCEEF8] hover:bg-[#C6E2F3] px-4 py-3 font-bold text-[#3D322C] flex justify-between items-center cursor-pointer"
                       >
-                        {kid.daily.bossStageUnlocked
-                          ? lang === 'th'
-                            ? '✅ ปลดล็อกสิทธิ์ดูการ์ตูนแล้ววันนี้ (+10 ⭐)'
-                            : '✅ Cartoon Unlocked Today (+10 ⭐)'
-                          : lang === 'th'
-                          ? '🔐 ให้พี่เลี้ยงใส่ PIN เพื่อปลดล็อกการ์ตูน (+10 ⭐)'
-                          : '🔐 Staff PIN to Unlock Cartoons (+10 ⭐)'}
+                        <span>📖 {lang === 'th' ? 'เข้าเรียนเสริม (ไม่เกิน 16:50 น.)' : 'Extra Study (by 16:50)'}</span>
+                        <span>{kid.daily.extraStudyChecked ? '✅' : '+10 ⭐'}</span>
                       </button>
-                    </div>
-                  </>
-                )}
-
-                {kid.group === 2 && (
-                  <>
-                    <div className="rounded-2xl bg-[#D4F0F0]/60 p-4 space-y-2.5">
-                      <div className="font-bold text-[#3D322C]">
-                        ✅ {lang === 'th' ? 'เช็คลิสต์รอบเย็น 18:30 น. (ครบ 4 ข้อเพื่อรับมือถือ)' : '18:30 Evening 4-Item Checklist'}
-                      </div>
-                      {[
-                        lang === 'th' ? '1. ซักชุดนักเรียน' : '1. Wash school uniform',
-                        lang === 'th' ? '2. รีดชุดนักเรียน' : '2. Iron school uniform',
-                        lang === 'th' ? '3. ตรวจความเรียบร้อยของชุด' : '3. Inspect uniform',
-                        lang === 'th' ? '4. อาบน้ำเรียบร้อย' : '4. Take a shower',
-                      ].map((label, idx) => (
-                        <label key={idx} className="flex items-center gap-2.5 text-sm font-medium text-[#3D322C] cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={kid.daily.eveningChecklist[idx]}
-                            onChange={(e) => {
-                              const next = [...kid.daily.eveningChecklist] as [boolean, boolean, boolean, boolean];
-                              next[idx] = e.target.checked;
-                              onUpdateKid(
-                                kid.id,
-                                (prev) => ({
-                                  ...prev,
-                                  daily: { ...prev.daily, eveningChecklist: next },
-                                }),
-                                'Toggle Evening Checklist'
-                              );
-                            }}
-                            className="h-4 w-4 accent-[#3D322C]"
-                          />
-                          <span>{label}</span>
-                        </label>
-                      ))}
 
                       <button
                         type="button"
-                        disabled={kid.daily.eveningPhoneUnlocked}
-                        onClick={() => {
-                          if (!kid.daily.eveningChecklist.every(Boolean)) {
-                            onShowAlert({
-                              icon: '📋',
-                              title: lang === 'th' ? 'เช็คลิสต์ยังไม่ครบ 4 ข้อ' : 'Checklist Incomplete',
-                              message: lang === 'th' ? 'กรุณาซักชุด รีดชุด ตรวจชุด และอาบน้ำให้ครบทั้ง 4 ข้อก่อนนะ' : 'Please check all 4 items first.',
-                              tone: 'yellow',
-                            });
-                            return;
-                          }
-                          if (
-                            kid.penalty.phoneConfiscatedUntil1830Date === todayKey &&
-                            getMinutesOfDay(now) < 18 * 60 + 30
-                          ) {
-                            onShowAlert({
-                              icon: '📵',
-                              title: lang === 'th' ? 'ยังไม่ถึง 18:30 น.' : 'Not 18:30 Yet',
-                              message: lang === 'th' ? 'ติดโทษงดใช้มือถือจนถึง 18:30 น. วันนี้' : 'Phone held until 18:30 today.',
-                              tone: 'pink',
-                            });
-                            return;
-                          }
-                          if (kid.penalty.noEveningPhoneTomorrowDate === todayKey) {
-                            onShowAlert({
-                              icon: '📵',
-                              title: lang === 'th' ? 'ติดโทษงดใช้มือถือรอบเย็นวันนี้' : 'No Evening Phone Today',
-                              message: lang === 'th' ? 'เนื่องจากคืนเครื่องเกินเวลาเมื่อคืน วันนี้งดรับมือถือรอบ 18:30 น. 1 วันนะ' : 'Restricted from 18:30 phone today due to late return yesterday.',
-                              tone: 'pink',
-                            });
-                            return;
-                          }
-                          setPinRequestAction({ type: 'g2_evening_phone' });
-                        }}
-                        className="w-full min-h-[48px] rounded-2xl bg-[#3D322C] disabled:bg-[#9A8B82] text-white font-bold cursor-pointer mt-2"
+                        onClick={handleGroup1Chores}
+                        className="w-full min-h-[50px] rounded-2xl bg-[#FFF5BA] hover:bg-[#FCEB8E] px-4 py-3 font-bold text-[#3D322C] flex justify-between items-center cursor-pointer"
                       >
-                        {kid.daily.eveningPhoneUnlocked
-                          ? lang === 'th'
-                            ? '✅ รับมือถือรอบเย็นแล้ว (+10 ⭐)'
-                            : '✅ Evening Phone Unlocked (+10 ⭐)'
-                          : lang === 'th'
-                          ? '🔐 พี่เลี้ยงใส่ PIN เพื่อรับมือถือรอบเย็น (+10 ⭐)'
-                          : '🔐 Staff PIN for Evening Phone (+10 ⭐)'}
+                        <span>🧺 {lang === 'th' ? 'งานบ้าน & ตากชุดนักเรียน (ก่อน 18:15 น.)' : 'Chores & Hang Uniform (< 18:15)'}</span>
+                        <span>{kid.daily.choresChecked ? '✅' : '+10 / +3 ⭐'}</span>
                       </button>
-                    </div>
 
-                    <div className="rounded-2xl bg-[#DCEEF8]/70 p-4 space-y-2.5">
-                      <div className="font-bold text-[#3D322C]">
-                        📚 {lang === 'th' ? 'ลงทะเบียนทำการบ้าน (20:30 - 20:45 น.)' : 'Homework Registration (20:30 - 20:45)'}
-                      </div>
-                      <p className="text-xs text-[#5E4E45]">
-                        {lang === 'th'
-                          ? 'ระบุวิชาเพื่อขยายเวลาคืนมือถือเป็น 22:45 น. (ห้ามทำการบ้านในห้องนอน! วันศุกร์ Free Day / วันอาทิตย์งดต่อเวลา)'
-                          : 'Extends return deadline to 22:45 (No homework in bedroom! No extension on Sunday).'}
-                      </p>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={hwSubject}
-                          onChange={(e) => setHwSubject(e.target.value)}
-                          placeholder={lang === 'th' ? 'ชื่อวิชา เช่น คณิตศาสตร์...' : 'Subject e.g. Math...'}
-                          className="flex-1 rounded-xl border border-[#BEDBF0] bg-white px-3 py-2 text-sm"
-                        />
+                      <div className="rounded-2xl bg-[#EAE4F2] p-4 space-y-3">
+                        <div className="font-bold text-[#3D322C]">
+                          📺 {lang === 'th' ? 'ด่านบอส 20:00 น. (ปลดล็อกสิทธิ์ดูการ์ตูน)' : '20:00 Boss Stage (Cartoon Unlock)'}
+                        </div>
+                        <div className="text-sm text-[#5E546E] font-semibold">
+                          {getBossStageLanguageLesson(now, lang)}
+                        </div>
+                        <div className="text-xs text-[#6E5C52]">
+                          {lang === 'th'
+                            ? '⏰ แจ้งเตือน: หยุดดูการ์ตูนและดื่มน้ำ 20:40 น. | เข้านอน 21:00 น.'
+                            : '⏰ Reminder: Stop cartoons & drink water at 20:40 | Bedtime 21:00'}
+                        </div>
                         <button
                           type="button"
-                          onClick={handleGroup2RegisterHomework}
-                          className="rounded-xl bg-[#3D322C] text-white px-4 py-2 text-sm font-bold cursor-pointer"
+                          disabled={kid.daily.bossStageUnlocked}
+                          onClick={() => setPinRequestAction({ type: 'boss_stage' })}
+                          className="w-full min-h-[48px] rounded-2xl bg-[#3D322C] disabled:bg-[#9A8B82] text-white font-bold cursor-pointer"
                         >
-                          {lang === 'th' ? 'ลงทะเบียน' : 'Register'}
+                          {kid.daily.bossStageUnlocked
+                            ? lang === 'th'
+                              ? '✅ ปลดล็อกสิทธิ์ดูการ์ตูนแล้ววันนี้ (+10 ⭐)'
+                              : '✅ Cartoon Unlocked Today (+10 ⭐)'
+                            : lang === 'th'
+                            ? '🔐 ให้พี่เลี้ยงใส่ PIN เพื่อปลดล็อกการ์ตูน (+10 ⭐)'
+                            : '🔐 Staff PIN to Unlock Cartoons (+10 ⭐)'}
                         </button>
                       </div>
-                      {kid.daily.homeworkRegisteredSubject && (
-                        <div className="text-xs font-bold text-[#2F685E]">
-                          ✅ {lang === 'th' ? `ลงทะเบียนวิชา: ${kid.daily.homeworkRegisteredSubject} (คืนภายใน 22:45 น.)` : `Registered: ${kid.daily.homeworkRegisteredSubject} (Due 22:45)`}
+
+                      {allowHwPerm && homeworkPermissionSection}
+
+                      {allowReturnPhone && kid.daily.homeworkRegisteredSubject && (
+                        <button
+                          type="button"
+                          onClick={handleReturnPhoneCurfew}
+                          className="w-full min-h-[52px] rounded-2xl bg-[#FADADD] hover:bg-[#F5C5CF] font-bold text-[#3D322C] cursor-pointer"
+                        >
+                          📱{' '}
+                          {lang === 'th'
+                            ? `นำมือถือมาเก็บเข้าตู้ (ภายใน ${hwCurfewTh})`
+                            : `Store Phone (By ${hwCurfewEn})`}
+                        </button>
+                      )}
+                    </>
+                  )}
+
+                  {kid.group === 2 && (
+                    <>
+                      <div className="rounded-2xl bg-[#D4F0F0]/60 p-4 space-y-2.5">
+                        <div className="font-bold text-[#3D322C]">
+                          ✅ {lang === 'th' ? 'เช็คลิสต์รอบเย็น 18:30 น. (ครบ 4 ข้อเพื่อรับมือถือ)' : '18:30 Evening 4-Item Checklist'}
+                        </div>
+                        {[
+                          lang === 'th' ? '1. ซักชุดนักเรียน' : '1. Wash school uniform',
+                          lang === 'th' ? '2. รีดชุดนักเรียน' : '2. Iron school uniform',
+                          lang === 'th' ? '3. ตรวจความเรียบร้อยของชุด' : '3. Inspect uniform',
+                          lang === 'th' ? '4. อาบน้ำเรียบร้อย' : '4. Take a shower',
+                        ].map((label, idx) => (
+                          <label key={idx} className="flex items-center gap-2.5 text-sm font-medium text-[#3D322C] cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={kid.daily.eveningChecklist[idx]}
+                              onChange={(e) => {
+                                const next = [...kid.daily.eveningChecklist] as [boolean, boolean, boolean, boolean];
+                                next[idx] = e.target.checked;
+                                onUpdateKid(
+                                  kid.id,
+                                  (prev) => ({
+                                    ...prev,
+                                    daily: { ...prev.daily, eveningChecklist: next },
+                                  }),
+                                  'Toggle Evening Checklist'
+                                );
+                              }}
+                              className="h-4 w-4 accent-[#3D322C]"
+                            />
+                            <span>{label}</span>
+                          </label>
+                        ))}
+
+                        {allowEveningPhone ? (
+                          <button
+                            type="button"
+                            disabled={kid.daily.eveningPhoneUnlocked}
+                            onClick={() => {
+                              if (!kid.daily.eveningChecklist.every(Boolean)) {
+                                onShowAlert({
+                                  icon: '📋',
+                                  title: lang === 'th' ? 'เช็คลิสต์ยังไม่ครบ 4 ข้อ' : 'Checklist Incomplete',
+                                  message: lang === 'th' ? 'กรุณาซักชุด รีดชุด ตรวจชุด และอาบน้ำให้ครบทั้ง 4 ข้อก่อนนะ' : 'Please check all 4 items first.',
+                                  tone: 'yellow',
+                                });
+                                return;
+                              }
+                              if (
+                                kid.penalty.phoneConfiscatedUntil1830Date === todayKey &&
+                                getMinutesOfDay(now) < 18 * 60 + 30
+                              ) {
+                                onShowAlert({
+                                  icon: '📵',
+                                  title: lang === 'th' ? 'ยังไม่ถึง 18:30 น.' : 'Not 18:30 Yet',
+                                  message: lang === 'th' ? 'ติดโทษงดใช้มือถือจนถึง 18:30 น. วันนี้' : 'Phone held until 18:30 today.',
+                                  tone: 'pink',
+                                });
+                                return;
+                              }
+                              if (kid.penalty.noEveningPhoneTomorrowDate === todayKey) {
+                                onShowAlert({
+                                  icon: '📵',
+                                  title: lang === 'th' ? 'ติดโทษงดใช้มือถือรอบเย็นวันนี้' : 'No Evening Phone Today',
+                                  message: lang === 'th' ? 'เนื่องจากคืนเครื่องเกินเวลาเมื่อคืน วันนี้งดรับมือถือรอบ 18:30 น. 1 วันนะ' : 'Restricted from 18:30 phone today due to late return yesterday.',
+                                  tone: 'pink',
+                                });
+                                return;
+                              }
+                              setPinRequestAction({ type: 'g2_evening_phone' });
+                            }}
+                            className="w-full min-h-[48px] rounded-2xl bg-[#3D322C] disabled:bg-[#9A8B82] text-white font-bold cursor-pointer mt-2"
+                          >
+                            {kid.daily.eveningPhoneUnlocked
+                              ? lang === 'th'
+                                ? '✅ รับมือถือรอบเย็นแล้ว (+10 ⭐)'
+                                : '✅ Evening Phone Unlocked (+10 ⭐)'
+                              : lang === 'th'
+                              ? '🔐 พี่เลี้ยงใส่ PIN เพื่อรับมือถือรอบเย็น (+10 ⭐)'
+                              : '🔐 Staff PIN for Evening Phone (+10 ⭐)'}
+                          </button>
+                        ) : (
+                          <div className="rounded-xl border border-[#DCE5EA] bg-white/80 px-3 py-2 text-xs font-semibold text-[#5A6C7A]">
+                            📵{' '}
+                            {lang === 'th'
+                              ? 'ปุ่มรับมือถือรอบเย็นปิดใช้งานสำหรับโปรไฟล์นี้'
+                              : 'Evening phone pickup disabled for this profile'}
+                          </div>
+                        )}
+                      </div>
+
+                      {allowHwPerm && homeworkPermissionSection}
+
+                      {allowReturnPhone && (
+                        <button
+                          type="button"
+                          onClick={handleReturnPhoneCurfew}
+                          className="w-full min-h-[52px] rounded-2xl bg-[#FADADD] hover:bg-[#F5C5CF] font-bold text-[#3D322C] cursor-pointer"
+                        >
+                          📱{' '}
+                          {kid.daily.homeworkRegisteredSubject
+                            ? lang === 'th'
+                              ? `ส่งคืนมือถือ (ขออนุญาตใช้เพิ่ม — ไม่เกิน ${hwCurfewTh})`
+                              : `Return Phone (Extension — By ${hwCurfewEn})`
+                            : lang === 'th'
+                            ? `ส่งคืนมือถือเข้าตู้พี่เลี้ยง (ไม่เกิน ${hwCurfewTh})`
+                            : `Return Phone to Locker (By ${hwCurfewEn})`}
+                        </button>
+                      )}
+                    </>
+                  )}
+
+                  {kid.group === 3 && (
+                    <>
+                      {allowReturnPhone && (
+                        <div className="rounded-2xl bg-[#EAE4F2]/70 p-4 text-sm text-[#3D322C]">
+                          {lang === 'th'
+                            ? `พี่ใหญ่ใช้งานมือถือได้อย่างอิสระ แต่ต้องส่งคืนเข้าตู้พี่เลี้ยงไม่เกินเวลา Curfew 22:45 น. (หรือภายใน ${hwCurfewTh} หากขออนุญาตทำการบ้านช่วง ${hwPermWin.labelTh})`
+                            : `Free usage until 22:45 Curfew (or ${hwCurfewEn} if using the ${hwPermWin.labelEn} homework extension).`}
                         </div>
                       )}
-                    </div>
 
-                    <button
-                      type="button"
-                      onClick={handleReturnPhoneCurfew}
-                      className="w-full min-h-[52px] rounded-2xl bg-[#FADADD] hover:bg-[#F5C5CF] font-bold text-[#3D322C] cursor-pointer"
-                    >
-                      📱{' '}
-                      {kid.daily.homeworkRegisteredSubject && now.getDay() !== 0
-                        ? lang === 'th'
-                          ? 'ส่งคืนมือถือ (มีทำการบ้าน — 22:45 น. · เพดานถึง 23:00 น.)'
-                          : 'Return Phone (Homework — 22:45 · Ceiling 23:00)'
-                        : lang === 'th'
-                        ? 'ส่งคืนมือถือ (ไม่มีการบ้าน / วันอาทิตย์ — ไม่เกิน 21:00 น.)'
-                        : 'Return Phone (No HW / Sunday — By 21:00)'}
-                    </button>
-                  </>
-                )}
+                      {allowHwPerm && homeworkPermissionSection}
 
-                {kid.group === 3 && (
-                  <>
-                    <div className="rounded-2xl bg-[#EAE4F2]/70 p-4 text-sm text-[#3D322C]">
-                      {lang === 'th'
-                        ? 'พี่ใหญ่ใช้งานมือถือได้อย่างอิสระ ไม่ต้องลงทะเบียนวิชา แต่ต้องส่งคืนเข้าตู้พี่เลี้ยงไม่เกินเวลา Curfew 22:45 น. (หลัง 22:45 น. ตั้งเพดานคืนถึง 23:00 น.)'
-                        : 'Free usage without subject registration. Return phone by 22:45 Curfew (post-22:45 ceiling 23:00).'}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleReturnPhoneCurfew}
-                      className="w-full min-h-[54px] rounded-2xl bg-[#3D322C] text-white font-bold cursor-pointer"
-                    >
-                      📱 {lang === 'th' ? 'ส่งคืนมือถือเข้าตู้พี่เลี้ยง (Curfew 22:45 · เพดาน 23:00 น.)' : 'Return Phone to Locker (Curfew 22:45 · Ceiling 23:00)'}
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
+                      {allowReturnPhone && (
+                        <button
+                          type="button"
+                          onClick={handleReturnPhoneCurfew}
+                          className="w-full min-h-[54px] rounded-2xl bg-[#3D322C] text-white font-bold cursor-pointer"
+                        >
+                          📱{' '}
+                          {kid.daily.homeworkRegisteredSubject
+                            ? lang === 'th'
+                              ? `ส่งคืนมือถือเข้าตู้พี่เลี้ยง (ภายใน ${hwCurfewTh})`
+                              : `Return Phone to Locker (By ${hwCurfewEn})`
+                            : lang === 'th'
+                            ? 'ส่งคืนมือถือเข้าตู้พี่เลี้ยง (Curfew 22:45 · เพดาน 23:00 น.)'
+                            : 'Return Phone to Locker (Curfew 22:45 · Ceiling 23:00)'}
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* MY SPACE FORM MERGED INTO PROFILE MODAL BELOW */}
 
@@ -3981,7 +4179,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                     <p>• เช้าอาทิตย์: 08:00-08:15 น. (+15 ⭐) | 08:16-08:20 น. เตือนสาย | เกิน 08:20 น. ลด -5 ⭐ แทนยึดมือถือ (หากมีเหตุสุดวิสัย/พี่เลี้ยงปลุกช้า ยกเว้นคืนดาวได้)</p>
                     <p>• กลับบ้านเก็บมือถือเข้ากล่อง (+5 ⭐) เสาร์-อาทิตย์เก็บไม่เกิน 14:00 น. ห้ามนอนกลางวัน</p>
                     <p>• รอบเย็น 18:30 น. เช็คลิสต์ครบ 4 ข้อ (ซักชุด รีดชุด ตรวจชุด อาบน้ำ) + PIN พี่เลี้ยงรับมือถือ (+10 ⭐)</p>
-                    <p>• ลงทะเบียนการบ้าน 20:30-20:45 น. เพื่อคืนเครื่อง 22:45 น. (ห้ามทำในห้องนอน) คนไม่มีการบ้าน/คืนอาทิตย์ คืนไม่เกิน 21:00 น.</p>
+                    <p>• ขออนุญาตทำการบ้าน / หาข้อมูล / เรียนพิเศษ (ปุ่มแสดง {hwPermWin.labelTh}) ใช้เพิ่มได้ถึง {hwCurfewTh} หากเกิน {hwCurfewTh} ยังไม่นำมือถือมาเก็บ ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วัน</p>
                   </div>
                 )}
                 {kid.group === 3 && (
@@ -4066,8 +4264,8 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                   }
                 }
                 announcementCount={activeScheduledAnnouncements.length + 1}
-                onSavePet={(nextPet, label) =>
-                  onUpdateKid(kid.id, (prev) => ({ ...prev, pet: nextPet }), label)
+                onSavePet={(nextPet, label, bonusStars, starReason) =>
+                  handleSavePetWithStars(nextPet, label, bonusStars, starReason)
                 }
                 onOpenAnnouncementsWithTreat={() => setSubModal('announcements_modal')}
               />
@@ -4234,24 +4432,15 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                     className="min-h-[48px] rounded-2xl bg-[#FFE8EF] hover:bg-[#FFD7E4] border border-[#F3B7C0] px-4 py-2.5 text-left flex items-center justify-between gap-2 text-sm font-bold text-[#7B2E3B] cursor-pointer"
                   >
                     <span>
-                      {kid.pet ? (kid.pet.species === 'dog' ? '🐶' : '🐱') : '🐾'}{' '}
+                      {kid.pet ? getPetSpeciesInfo(kid.pet.species).emoji : '🐾'}{' '}
                       {kid.pet
                         ? lang === 'th'
-                          ? `ดูแลสัตว์เลี้ยง (${kid.pet.name})`
-                          : `Pet Care (${kid.pet.name})`
+                          ? `สัตว์เลี้ยงทามาก๊อตจิ (${kid.pet.name})`
+                          : `Tamagotchi (${kid.pet.name})`
                         : lang === 'th'
-                        ? 'รับเลี้ยงหมา / แมว'
-                        : 'Adopt Dog / Cat'}
+                        ? 'เลือกสัตว์เลี้ยง 10 สายพันธุ์'
+                        : 'Adopt Tamagotchi (10 Breeds)'}
                     </span>
-                    <span className="text-xs opacity-80">→</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setSubModal('wardrobe_modal')}
-                    className="min-h-[48px] rounded-2xl bg-[#F4F0F9] hover:bg-[#EAE4F2] border border-[#DFD5EC] px-4 py-2.5 text-left flex items-center justify-between gap-2 text-sm font-bold text-[#3D322C] cursor-pointer"
-                  >
-                    <span>✂️ {lang === 'th' ? 'เปลี่ยนทรงผม & แต่งตัว' : 'Avatar & Wardrobe'}</span>
                     <span className="text-xs opacity-80">→</span>
                   </button>
 
@@ -6752,6 +6941,108 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
           </div>
         </div>
       )}
+      {/* Pop-up 3 Choices for "ขออนุญาตทำการบ้าน" (20:30-20:45 น.) */}
+      {hwPermPopupOpen && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-[#3D322C]/50 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-md rounded-[28px] border-4 border-[#8FD4C6] bg-[#FFFDF9] p-6 pastel-shadow space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-extrabold text-[#114A42]">
+                  📝 {lang === 'th' ? 'ขออนุญาตทำการบ้าน' : 'Homework Permission'}
+                </h3>
+                <p className="text-xs text-[#4B7069] mt-0.5">
+                  {lang === 'th'
+                    ? `เลือกเหตุผลที่ต้องการใช้มือถือเพิ่ม (แสดงช่วง ${hwPermWin.labelTh})`
+                    : `Choose one reason below (${hwPermWin.labelEn} window)`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHwPermPopupOpen(false)}
+                className="min-h-[38px] min-w-[38px] rounded-full bg-[#FADADD] hover:bg-[#F5C5CF] font-bold text-[#3D322C] cursor-pointer shrink-0"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="rounded-2xl border border-[#F3B7C0] bg-[#FFF0F3] px-3.5 py-2.5 text-xs text-[#8B1D36] space-y-1 leading-relaxed">
+              <div className="font-extrabold">
+                ⏰ {lang === 'th' ? `ใช้เพิ่มได้จนถึงเวลา ${hwCurfewTh}` : `Extension until ${hwCurfewEn}`}
+              </div>
+              <div>
+                ⚖️{' '}
+                {lang === 'th'
+                  ? `หากเกิน ${hwCurfewTh} ยังไม่นำมือถือมาเก็บ จะถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วัน`
+                  : `Keeping phone past ${hwCurfewEn} counts as consenting to forfeit 1 Free Day phone privilege.`}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-[#3D322C] mb-1">
+                {lang === 'th' ? 'รายละเอียด / วิชา (ไม่บังคับ)' : 'Subject / Note (Optional)'}
+              </label>
+              <input
+                type="text"
+                maxLength={80}
+                value={hwSubject}
+                onChange={(e) => setHwSubject(e.target.value)}
+                placeholder={lang === 'th' ? 'เช่น คณิตศาสตร์ / ค้นคว้าโครงงาน...' : 'e.g. Math / Research...'}
+                className="w-full rounded-xl border border-[#BFE6DE] bg-white px-3 py-2 text-sm text-[#3D322C]"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 gap-2.5">
+              <button
+                type="button"
+                onClick={() => handleSelectHomeworkPermission('ทำการบ้าน')}
+                className="w-full min-h-[54px] rounded-2xl border-2 border-[#7EBCE6] bg-[#E8F5FD] hover:bg-[#D5ECFA] px-4 py-3 font-extrabold text-[#1D4D73] flex items-center justify-between gap-3 cursor-pointer active:scale-[0.99] transition-all"
+              >
+                <span className="flex items-center gap-2.5 text-base">
+                  <span className="text-xl">✍️</span>
+                  <span>{lang === 'th' ? 'ปุ่มทำการบ้าน' : 'Do Homework'}</span>
+                </span>
+                <span className="text-xs font-bold bg-white/90 px-2.5 py-1 rounded-xl border border-[#B6DBF2]">
+                  {lang === 'th' ? 'เลือก' : 'Select'} →
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSelectHomeworkPermission('หาข้อมูล')}
+                className="w-full min-h-[54px] rounded-2xl border-2 border-[#7CC6B8] bg-[#E8FAF6] hover:bg-[#D5F4EE] px-4 py-3 font-extrabold text-[#114A42] flex items-center justify-between gap-3 cursor-pointer active:scale-[0.99] transition-all"
+              >
+                <span className="flex items-center gap-2.5 text-base">
+                  <span className="text-xl">🔍</span>
+                  <span>{lang === 'th' ? 'ปุ่มหาข้อมูล' : 'Research Information'}</span>
+                </span>
+                <span className="text-xs font-bold bg-white/90 px-2.5 py-1 rounded-xl border border-[#A5DFD3]">
+                  {lang === 'th' ? 'เลือก' : 'Select'} →
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSelectHomeworkPermission('เรียนพิเศษ')}
+                className="w-full min-h-[54px] rounded-2xl border-2 border-[#C5B2E8] bg-[#F5F1FC] hover:bg-[#EAE1FA] px-4 py-3 font-extrabold text-[#3E2B63] flex items-center justify-between gap-3 cursor-pointer active:scale-[0.99] transition-all"
+              >
+                <span className="flex items-center gap-2.5 text-base">
+                  <span className="text-xl">📚</span>
+                  <span>{lang === 'th' ? 'ปุ่มเรียนพิเศษ' : 'Extra Tutoring'}</span>
+                </span>
+                <span className="text-xs font-bold bg-white/90 px-2.5 py-1 rounded-xl border border-[#D4C5F2]">
+                  {lang === 'th' ? 'เลือก' : 'Select'} →
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <PiggyBankModals
         activeModal={coinsEnabled ? piggyModal : null}
         kid={kid}

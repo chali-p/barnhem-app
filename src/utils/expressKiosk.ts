@@ -1,4 +1,4 @@
-import { AppSettings, Language, Member } from '../types/barnhem';
+import { AppSettings, CustomQuickCommand, Language, Member } from '../types/barnhem';
 import { applyMorningStreakOnTime } from './houseChores';
 import { applyDailySchoolDeduction, getEconomyConfig, isKidAwayOnDate } from './piggyBank';
 import { getDateKey, getMinutesOfDay, getTomorrowDateKey, isPublicHoliday } from './timeRules';
@@ -302,6 +302,16 @@ export function evaluateOneTapGoToSchool(
   settings?: Partial<AppSettings>,
   isSickToday = false
 ): KioskResult {
+  if (!canKidUseCommand('morning_school', kid, settings)) {
+    const denied = getCommandDenialReason('morning_school', kid, lang, settings);
+    return {
+      success: false,
+      emoji: '🚫',
+      starsDelta: 0,
+      bannerTitle: denied.title,
+      bannerSubtitle: denied.subtitle,
+    };
+  }
   if (kid.daily.vanOrMorningChecked) {
     return {
       success: true,
@@ -538,6 +548,7 @@ export type HomeQuickActionId =
   | 'afternoon_home'
   | 'evening_uniform_phone'
   | 'evening_unlock_cartoon'
+  | 'night_homework_permission'
   | 'night_return_phone';
 
 export interface HomeQuickActionConfig {
@@ -627,12 +638,26 @@ export const HOME_QUICK_ACTIONS: HomeQuickActionConfig[] = [
     doneLabelEn: '✅ Unlocked',
   },
   {
+    id: 'night_homework_permission',
+    emoji: '📝',
+    startMins: 20 * 60 + 30,
+    endMins: 20 * 60 + 45,
+    windowLabelTh: '20:30–20:45 น.',
+    windowLabelEn: '20:30–20:45',
+    titleTh: 'ขออนุญาตทำการบ้าน',
+    titleEn: 'Homework Permission',
+    tapLabelTh: '📝 ขออนุญาตทำการบ้าน',
+    tapLabelEn: '📝 Homework Permission',
+    doneLabelTh: '✅ ขออนุญาตแล้ว',
+    doneLabelEn: '✅ Permitted',
+  },
+  {
     id: 'night_return_phone',
     emoji: '🌙',
-    startMins: 21 * 60,
-    endMins: 22 * 60 + 45,
-    windowLabelTh: '21:00–22:45 น.',
-    windowLabelEn: '21:00–22:45',
+    startMins: 20 * 60 + 30,
+    endMins: 23 * 60,
+    windowLabelTh: '20:30–23:00 น. (Curfew 21:00)',
+    windowLabelEn: '20:30–23:00 (21:00 Curfew)',
     titleTh: 'คืนมือถือ',
     titleEn: 'Return Phone',
     tapLabelTh: '🌙 คืนมือถือ',
@@ -642,11 +667,96 @@ export const HOME_QUICK_ACTIONS: HomeQuickActionConfig[] = [
   },
 ];
 
-export function isHomeActionOpenAt(actionId: HomeQuickActionId, now: Date): boolean {
-  const cfg = HOME_QUICK_ACTIONS.find((a) => a.id === actionId);
+export const DEFAULT_HOMEWORK_CURFEW_MINS = 21 * 60; // 21:00 น. (3 ทุ่ม)
+
+export function minsToHHMM(totalMins: number): string {
+  const safe = ((Math.round(totalMins) % 1440) + 1440) % 1440;
+  const h = String(Math.floor(safe / 60)).padStart(2, '0');
+  const m = String(safe % 60).padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+export function getEffectiveHomeworkCurfewMins(settings?: Partial<AppSettings>): number {
+  const raw = settings?.homeworkCurfewMins;
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 && raw < 1440) {
+    return Math.round(raw);
+  }
+  return DEFAULT_HOMEWORK_CURFEW_MINS;
+}
+
+export function formatThaiCurfewClock(totalMins: number): string {
+  const safe = Math.round(totalMins);
+  const hhmm = minsToHHMM(safe);
+  return safe === 21 * 60 ? `${hhmm} น. (3 ทุ่ม)` : `${hhmm} น.`;
+}
+
+export function getEffectiveHomeQuickActions(
+  settings?: Partial<AppSettings>
+): HomeQuickActionConfig[] {
+  const overrides = settings?.timedCommandSchedule;
+  const curfewHHMM = minsToHHMM(getEffectiveHomeworkCurfewMins(settings));
+  return HOME_QUICK_ACTIONS.map((action) => {
+    const ov = overrides?.[action.id];
+    const startMins =
+      ov &&
+      typeof ov.startMins === 'number' &&
+      Number.isFinite(ov.startMins) &&
+      ov.startMins >= 0 &&
+      ov.startMins < 1440
+        ? Math.round(ov.startMins)
+        : action.startMins;
+    const endMins =
+      ov &&
+      typeof ov.endMins === 'number' &&
+      Number.isFinite(ov.endMins) &&
+      ov.endMins >= 0 &&
+      ov.endMins < 1440
+        ? Math.round(ov.endMins)
+        : action.endMins;
+    const sStr = minsToHHMM(startMins);
+    const eStr = minsToHHMM(endMins);
+    const isReturn = action.id === 'night_return_phone';
+    return {
+      ...action,
+      startMins,
+      endMins,
+      windowLabelTh: isReturn
+        ? `${sStr}–${eStr} น. (Curfew ${curfewHHMM})`
+        : `${sStr}–${eStr} น.`,
+      windowLabelEn: isReturn ? `${sStr}–${eStr} (${curfewHHMM} Curfew)` : `${sStr}–${eStr}`,
+    };
+  });
+}
+
+export function getEffectiveHomeworkPermissionWindow(settings?: Partial<AppSettings>): {
+  startMins: number;
+  endMins: number;
+  labelTh: string;
+  labelEn: string;
+} {
+  const found =
+    getEffectiveHomeQuickActions(settings).find((a) => a.id === 'night_homework_permission') ??
+    HOME_QUICK_ACTIONS.find((a) => a.id === 'night_homework_permission')!;
+  return {
+    startMins: found.startMins,
+    endMins: found.endMins,
+    labelTh: found.windowLabelTh,
+    labelEn: found.windowLabelEn,
+  };
+}
+
+export function isHomeActionOpenAt(
+  actionId: HomeQuickActionId,
+  now: Date,
+  settings?: Partial<AppSettings>
+): boolean {
+  const cfg = getEffectiveHomeQuickActions(settings).find((a) => a.id === actionId);
   if (!cfg) return false;
   const mins = getMinutesOfDay(now);
-  return mins >= cfg.startMins && mins <= cfg.endMins;
+  if (cfg.startMins <= cfg.endMins) {
+    return mins >= cfg.startMins && mins <= cfg.endMins;
+  }
+  return mins >= cfg.startMins || mins <= cfg.endMins;
 }
 
 export function isHomeActionDoneForKid(actionId: HomeQuickActionId, kid: Member): boolean {
@@ -661,9 +771,132 @@ export function isHomeActionDoneForKid(actionId: HomeQuickActionId, kid: Member)
       return Boolean(kid.daily.eveningPhoneUnlocked);
     case 'evening_unlock_cartoon':
       return Boolean(kid.daily.bossStageUnlocked);
+    case 'night_homework_permission':
+      return Boolean(kid.daily.homeworkRegisteredSubject);
     case 'night_return_phone':
       return Boolean(kid.daily.phoneReturnedChecked);
   }
+}
+
+export function doesKidHavePhone(
+  kidId: string,
+  settings?: Partial<AppSettings>
+): boolean {
+  const withoutList = settings?.kidsWithoutPhoneIds;
+  if (!Array.isArray(withoutList) || withoutList.length === 0) return true;
+  return !withoutList.includes(kidId);
+}
+
+export function canKidUseCommand(
+  commandId: string,
+  kid: Member,
+  settings?: Partial<AppSettings>
+): boolean {
+  const rule = settings?.commandPermissions?.[commandId];
+  if (!rule) return true;
+  const hasPhone = doesKidHavePhone(kid.id, settings);
+  if (rule.phoneFilter === 'has_phone' && !hasPhone) return false;
+  if (rule.phoneFilter === 'no_phone' && hasPhone) return false;
+  if (rule.restrictToKidIds) {
+    const allowed = Array.isArray(rule.allowedKidIds) ? rule.allowedKidIds : [];
+    return allowed.includes(kid.id);
+  }
+  return true;
+}
+
+export function getCommandDenialReason(
+  commandId: string,
+  kid: Member,
+  lang: Language,
+  settings?: Partial<AppSettings>
+): { title: string; subtitle: string; badgeTh: string; badgeEn: string } {
+  const rule = settings?.commandPermissions?.[commandId];
+  const hasPhone = doesKidHavePhone(kid.id, settings);
+  if (rule?.phoneFilter === 'has_phone' && !hasPhone) {
+    return {
+      badgeTh: '📵 ไม่มีมือถือ',
+      badgeEn: '📵 No Phone',
+      title:
+        lang === 'th'
+          ? `น้อง${kid.nickname} ไม่มีมือถือ (ไม่ใช้ปุ่มนี้)`
+          : `${kid.nickname} has no phone`,
+      subtitle:
+        lang === 'th'
+          ? 'ปุ่มนี้เปิดเฉพาะเด็กที่มีมือถือค่ะ สามารถปรับรายชื่อได้ที่เมนู 👥 สิทธิ์ & มือถือ'
+          : 'This command is enabled for kids with mobile phones only.',
+    };
+  }
+  if (rule?.phoneFilter === 'no_phone' && hasPhone) {
+    return {
+      badgeTh: '📱 มีมือถือ',
+      badgeEn: '📱 Has Phone',
+      title:
+        lang === 'th'
+          ? `น้อง${kid.nickname} มีมือถือ (ปุ่มนี้สำหรับคนไม่มีมือถือ)`
+          : `${kid.nickname} has a phone`,
+      subtitle:
+        lang === 'th'
+          ? 'ปุ่มนี้กำหนดไว้เฉพาะเด็กที่ไม่มีมือถือค่ะ'
+          : 'This command is set for kids without phones only.',
+    };
+  }
+  return {
+    badgeTh: '🚫 ไม่มีสิทธิ์',
+    badgeEn: '🚫 Not Eligible',
+    title:
+      lang === 'th'
+        ? `น้อง${kid.nickname} ยังไม่ได้เปิดสิทธิ์กดปุ่มนี้`
+        : `${kid.nickname} is not enabled for this button`,
+    subtitle:
+      lang === 'th'
+        ? 'สามารถติ๊กเพิ่มชื่อน้องได้ที่เมนู 👥 สิทธิ์ & มือถือ ค่ะ'
+        : 'Enable this child in the Permissions & Phones editor.',
+  };
+}
+
+export function getCommandPermissionSummary(
+  commandId: string,
+  kids: Member[],
+  lang: Language,
+  settings?: Partial<AppSettings>
+): { restricted: boolean; eligibleCount: number; badge: string } {
+  const rule = settings?.commandPermissions?.[commandId];
+  const eligibleCount = kids.filter((k) => canKidUseCommand(commandId, k, settings)).length;
+  if (!rule || ((rule.phoneFilter ?? 'all') === 'all' && !rule.restrictToKidIds)) {
+    return {
+      restricted: false,
+      eligibleCount: kids.length,
+      badge: lang === 'th' ? 'ทุกคน' : 'All',
+    };
+  }
+  if (rule.phoneFilter === 'has_phone' && !rule.restrictToKidIds) {
+    return {
+      restricted: true,
+      eligibleCount,
+      badge:
+        lang === 'th'
+          ? `📱 เฉพาะมีมือถือ (${eligibleCount}/${kids.length})`
+          : `📱 Phone Only (${eligibleCount}/${kids.length})`,
+    };
+  }
+  if (rule.phoneFilter === 'no_phone' && !rule.restrictToKidIds) {
+    return {
+      restricted: true,
+      eligibleCount,
+      badge:
+        lang === 'th'
+          ? `📵 เฉพาะไม่มีมือถือ (${eligibleCount}/${kids.length})`
+          : `📵 No Phone (${eligibleCount}/${kids.length})`,
+    };
+  }
+  return {
+    restricted: true,
+    eligibleCount,
+    badge:
+      lang === 'th'
+        ? `🎯 เลือกรายชื่อ (${eligibleCount}/${kids.length})`
+        : `🎯 Custom (${eligibleCount}/${kids.length})`,
+  };
 }
 
 export function evaluateOneTapHomeAction(
@@ -672,10 +905,11 @@ export function evaluateOneTapHomeAction(
   now: Date,
   lang: Language,
   settings?: Partial<AppSettings>,
-  isSickToday = false
+  isSickToday = false,
+  detailOverride?: string
 ): KioskResult {
-  const cfg = HOME_QUICK_ACTIONS.find((a) => a.id === actionId)!;
-  if (!isHomeActionOpenAt(actionId, now)) {
+  const cfg = getEffectiveHomeQuickActions(settings).find((a) => a.id === actionId)!;
+  if (!isHomeActionOpenAt(actionId, now, settings)) {
     return {
       success: false,
       emoji: '🔒',
@@ -688,6 +922,17 @@ export function evaluateOneTapHomeAction(
         lang === 'th'
           ? `เปิดให้กดเฉพาะช่วงเวลา ${cfg.windowLabelTh} เท่านั้นค่ะ`
           : `Only open during ${cfg.windowLabelEn}.`,
+    };
+  }
+
+  if (!canKidUseCommand(actionId, kid, settings)) {
+    const denied = getCommandDenialReason(actionId, kid, lang, settings);
+    return {
+      success: false,
+      emoji: '🚫',
+      starsDelta: 0,
+      bannerTitle: denied.title,
+      bannerSubtitle: denied.subtitle,
     };
   }
 
@@ -964,7 +1209,39 @@ export function evaluateOneTapHomeAction(
     };
   }
 
-  // 'night_return_phone' (21:00 - 22:45)
+  if (actionId === 'night_homework_permission') {
+    const cleanChoice = (detailOverride ?? '').trim().slice(0, 100) || 'ทำการบ้าน';
+    const curfewMins = getEffectiveHomeworkCurfewMins(settings);
+    const curfewTh = formatThaiCurfewClock(curfewMins);
+    const curfewEn = minsToHHMM(curfewMins);
+    const updated = appendStarTx(
+      kid,
+      0,
+      `📝 ปุ่มด่วนหน้าแรก "ขออนุญาตทำการบ้าน": ${cleanChoice}`,
+      {
+        daily: {
+          ...kid.daily,
+          homeworkRegisteredSubject: cleanChoice,
+        },
+      }
+    );
+    return {
+      success: true,
+      emoji: '📝✨',
+      starsDelta: 0,
+      bannerTitle:
+        lang === 'th'
+          ? `น้อง${kid.nickname} ขออนุญาต "${cleanChoice}" สำเร็จ!`
+          : `${kid.nickname}: "${cleanChoice}" Approved!`,
+      bannerSubtitle:
+        lang === 'th'
+          ? `ใช้เพิ่มได้จนถึงเวลา ${curfewTh} · หากเกิน ${curfewTh} ยังไม่นำมือถือมาเก็บ ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วัน`
+          : `Extended until ${curfewEn} (past ${curfewEn} forfeits 1 Free Day phone privilege).`,
+      updatedKid: updated,
+    };
+  }
+
+  // 'night_return_phone'
   if (kid.daily.phoneReturnedChecked) {
     return {
       success: true,
@@ -975,9 +1252,11 @@ export function evaluateOneTapHomeAction(
     };
   }
 
-  const day = now.getDay();
-  const hasHw = Boolean(kid.daily.homeworkRegisteredSubject) && day !== 0;
-  const deadlineMins = kid.group === 2 && !hasHw ? 21 * 60 : 22 * 60 + 45;
+  const curfewMins = getEffectiveHomeworkCurfewMins(settings);
+  const curfewTh = formatThaiCurfewClock(curfewMins);
+  const curfewEn = minsToHHMM(curfewMins);
+  const use21Curfew = kid.group === 1 || kid.group === 2 || Boolean(kid.daily.homeworkRegisteredSubject);
+  const deadlineMins = use21Curfew ? curfewMins : 22 * 60 + 45;
   const onTime = mins <= deadlineMins;
 
   if (onTime) {
@@ -1012,7 +1291,9 @@ export function evaluateOneTapHomeAction(
     penalty:
       isSickToday || isAwayToday
         ? kid.penalty
-        : { ...kid.penalty, fridayFreeDayDeductedCount: kid.penalty.fridayFreeDayDeductedCount + 1 },
+        : use21Curfew
+        ? { ...kid.penalty, fridayFreeDayDeductedCount: kid.penalty.fridayFreeDayDeductedCount + 1 }
+        : { ...kid.penalty, noEveningPhoneTomorrowDate: tomorrow },
     daily: { ...kid.daily, phoneReturnedChecked: true },
   };
   return {
@@ -1024,18 +1305,206 @@ export function evaluateOneTapHomeAction(
         ? lang === 'th'
           ? `น้อง${kid.nickname} คืนมือถือแล้ว (ยกเว้นโทษป่วย/ลาพัก)`
           : `${kid.nickname} Phone Returned (Waived)`
+        : use21Curfew
+        ? lang === 'th'
+          ? `น้อง${kid.nickname} คืนมือถือเกิน ${curfewTh}`
+          : `${kid.nickname} Returned Past ${curfewEn}`
         : lang === 'th'
-        ? `น้อง${kid.nickname} คืนมือถือเลย 21:00 น. (ยังไม่ลงทะเบียนการบ้าน)`
-        : `${kid.nickname} Returned Past 21:00`,
+        ? `น้อง${kid.nickname} คืนมือถือเกิน 22:45 น.`
+        : `${kid.nickname} Returned Past 22:45`,
     bannerSubtitle:
       isSickToday || isAwayToday
         ? lang === 'th'
           ? `บันทึกคืนมือถือเรียบร้อย (วันหยุด/ป่วยไม่หักสิทธิ์, พรุ่งนี้ ${tomorrow})`
           : 'Recorded without penalty.'
+        : use21Curfew
+        ? lang === 'th'
+          ? `เลยเวลา ${curfewTh} แล้ว — ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วันค่ะ`
+          : `Past ${curfewEn} — recorded as consent to forfeit 1 Free Day phone privilege.`
         : lang === 'th'
-        ? 'บันทึกคืนมือถือแล้ว และหักสิทธิ์ Free Day วันศุกร์ 1 วันค่ะ'
-        : 'Recorded late return penalty (1 Friday Free Day).',
+        ? 'เกิน 22:45 น. บันทึกงดใช้มือถือช่วงเย็นวันพรุ่งนี้ 1 วันค่ะ'
+        : 'Past 22:45 — restricted from evening phone use tomorrow.',
     updatedKid: updated,
   };
 }
+
+export const DEFAULT_EXTRA_QUICK_COMMANDS: CustomQuickCommand[] = [];
+
+export function getEffectiveCustomQuickCommands(
+  settings?: Partial<AppSettings>
+): CustomQuickCommand[] {
+  if (Array.isArray(settings?.customQuickCommands)) {
+    return settings.customQuickCommands;
+  }
+  return DEFAULT_EXTRA_QUICK_COMMANDS;
+}
+
+export function isCustomCommandOpenAt(cmd: CustomQuickCommand, now: Date): boolean {
+  if (cmd.alwaysOpen) return true;
+  if (typeof cmd.startMins !== 'number' || typeof cmd.endMins !== 'number') return true;
+  const mins = getMinutesOfDay(now);
+  if (cmd.startMins <= cmd.endMins) {
+    return mins >= cmd.startMins && mins <= cmd.endMins;
+  }
+  return mins >= cmd.startMins || mins <= cmd.endMins;
+}
+
+function fmtMinsClock(totalMins: number): string {
+  const safe = ((Math.round(totalMins) % 1440) + 1440) % 1440;
+  const h = String(Math.floor(safe / 60)).padStart(2, '0');
+  const m = String(safe % 60).padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+export function formatCustomCommandWindow(cmd: CustomQuickCommand, lang: Language): string {
+  if (cmd.alwaysOpen) {
+    return lang === 'th' ? 'เปิดกดได้ตลอดเวลา (ตอนรีบ/ด่วน)' : 'Open Anytime (Quick Mode)';
+  }
+  const s = fmtMinsClock(cmd.startMins ?? 0);
+  const e = fmtMinsClock(cmd.endMins ?? 23 * 60 + 59);
+  return lang === 'th' ? `${s}–${e} น.` : `${s}–${e}`;
+}
+
+export function isCustomCommandDoneForKid(
+  cmd: CustomQuickCommand,
+  kid: Member,
+  now: Date
+): boolean {
+  if (cmd.kind === 'homework_permission') {
+    return Boolean(kid.daily.homeworkRegisteredSubject);
+  }
+  const todayKey = getDateKey(now);
+  const marker = `[cmd:${cmd.id}]`;
+  return (kid.starHistory ?? []).some(
+    (tx) => tx.timestamp.slice(0, 10) === todayKey && tx.reason.includes(marker)
+  );
+}
+
+export function evaluateOneTapCustomCommand(
+  cmd: CustomQuickCommand,
+  kid: Member,
+  now: Date,
+  lang: Language,
+  subjectOrNoteOverride?: string,
+  settings?: Partial<AppSettings>
+): KioskResult {
+  if (!isCustomCommandOpenAt(cmd, now)) {
+    return {
+      success: false,
+      emoji: '🔒',
+      starsDelta: 0,
+      bannerTitle:
+        lang === 'th'
+          ? `คำสั่ง "${cmd.titleTh}" ล็อกอยู่นอกเวลา`
+          : `"${cmd.titleEn}" is Locked`,
+      bannerSubtitle:
+        lang === 'th'
+          ? `เปิดให้กดช่วงเวลา ${formatCustomCommandWindow(cmd, lang)} ค่ะ`
+          : `Open during ${formatCustomCommandWindow(cmd, lang)}.`,
+    };
+  }
+
+  if (!canKidUseCommand(cmd.id, kid, settings)) {
+    const denied = getCommandDenialReason(cmd.id, kid, lang, settings);
+    return {
+      success: false,
+      emoji: '🚫',
+      starsDelta: 0,
+      bannerTitle: denied.title,
+      bannerSubtitle: denied.subtitle,
+    };
+  }
+
+  const noteText = (subjectOrNoteOverride ?? cmd.defaultNote ?? '').trim().slice(0, 100);
+  const stars = Math.max(0, Math.min(20, Math.round(Number(cmd.starsDelta ?? 0))));
+
+  if (cmd.kind === 'homework_permission') {
+    const subjectLabel = noteText || 'ทำการบ้าน';
+    if (kid.daily.homeworkRegisteredSubject && !subjectOrNoteOverride?.trim()) {
+      return {
+        success: true,
+        emoji: '✅',
+        starsDelta: 0,
+        bannerTitle:
+          lang === 'th'
+            ? `น้อง${kid.nickname} ขออนุญาตไว้แล้ว (${kid.daily.homeworkRegisteredSubject})`
+            : `${kid.nickname} Already Registered Homework`,
+        bannerSubtitle:
+          lang === 'th'
+            ? 'ใช้เพิ่มได้อีก 15 นาที ถึง 21:00 น. (3 ทุ่ม) · หากเกิน 21:00 น. ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วันค่ะ'
+            : 'Extension active until 21:00 (past 21:00 forfeits 1 Free Day phone privilege).',
+      };
+    }
+
+    const updated: Member = {
+      ...kid,
+      stars: Math.max(0, kid.stars + stars),
+      daily: {
+        ...kid.daily,
+        homeworkRegisteredSubject: subjectLabel,
+      },
+      starHistory: [
+        {
+          id: `tx_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+          timestamp: now.toISOString(),
+          reason: `${cmd.emoji} คีย์ลัด "${cmd.titleTh}": ${subjectLabel}${
+            stars > 0 ? ` (+${stars} ⭐)` : ''
+          } [cmd:${cmd.id}]`,
+          amount: stars,
+        },
+        ...(kid.starHistory ?? []),
+      ].slice(0, 60),
+    };
+
+    return {
+      success: true,
+      emoji: cmd.emoji || '📝',
+      starsDelta: stars,
+      bannerTitle:
+        lang === 'th'
+          ? `น้อง${kid.nickname} ${cmd.titleTh}สำเร็จ! (${subjectLabel})${
+              stars > 0 ? ` +${stars} ⭐` : ''
+            }`
+          : `${kid.nickname}: ${cmd.titleEn} (${subjectLabel})`,
+      bannerSubtitle:
+        lang === 'th'
+          ? 'ใช้เพิ่มได้อีก 15 นาที ถึงเวลา 21:00 น. (3 ทุ่ม) · หากเกิน 21:00 น. ยังไม่นำมือถือมาเก็บ ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วัน'
+          : 'Extended +15 min until 21:00 (past 21:00 forfeits 1 Free Day phone privilege).',
+      updatedKid: updated,
+    };
+  }
+
+  const updated: Member = {
+    ...kid,
+    stars: Math.max(0, kid.stars + stars),
+    starHistory: [
+      {
+        id: `tx_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+        timestamp: now.toISOString(),
+        reason: `${cmd.emoji} คีย์ลัด "${cmd.titleTh}"${noteText ? `: ${noteText}` : ''}${
+          stars > 0 ? ` (+${stars} ⭐)` : ''
+        } [cmd:${cmd.id}]`,
+        amount: stars,
+      },
+      ...(kid.starHistory ?? []),
+    ].slice(0, 60),
+  };
+
+  return {
+    success: true,
+    emoji: cmd.emoji || '⚡',
+    starsDelta: stars,
+    bannerTitle:
+      lang === 'th'
+        ? `น้อง${kid.nickname}: ${cmd.titleTh} เรียบร้อย!${stars > 0 ? ` +${stars} ⭐` : ''}`
+        : `${kid.nickname}: ${cmd.titleEn} Recorded!${stars > 0 ? ` +${stars} ⭐` : ''}`,
+    bannerSubtitle:
+      noteText ||
+      (lang === 'th'
+        ? 'บันทึกลงประวัติคีย์ลัดประจำวันเรียบร้อยแล้วค่ะ'
+        : 'Recorded via custom quick shortcut.'),
+    updatedKid: updated,
+  };
+}
+
 

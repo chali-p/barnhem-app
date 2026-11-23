@@ -16,6 +16,7 @@ import {
   Announcement,
   AppSettings,
   AppState,
+  CustomQuickCommand,
   DeedRedemption,
   FriendVisitRequest,
   GoldenPoolLog,
@@ -232,6 +233,33 @@ function serializeConfigDoc(
     ...(settings.organizationPreset ? { organizationPreset: settings.organizationPreset } : {}),
     ...(Array.isArray(settings.automationAddons)
       ? { automationAddons: settings.automationAddons.slice(0, 10) }
+      : {}),
+    ...(Array.isArray(settings.customQuickCommands)
+      ? {
+          customQuickCommands: stripUndefined(settings.customQuickCommands.slice(0, 20)),
+        }
+      : {}),
+    ...(settings.timedCommandSchedule && typeof settings.timedCommandSchedule === 'object'
+      ? {
+          timedCommandSchedule: stripUndefined(settings.timedCommandSchedule),
+        }
+      : {}),
+    ...(typeof settings.homeworkCurfewMins === 'number'
+      ? {
+          homeworkCurfewMins: Math.min(1439, Math.max(0, Math.round(settings.homeworkCurfewMins))),
+        }
+      : {}),
+    ...(Array.isArray(settings.kidsWithoutPhoneIds)
+      ? {
+          kidsWithoutPhoneIds: settings.kidsWithoutPhoneIds
+            .filter((x): x is string => typeof x === 'string')
+            .slice(0, 100),
+        }
+      : {}),
+    ...(settings.commandPermissions && typeof settings.commandPermissions === 'object'
+      ? {
+          commandPermissions: stripUndefined(settings.commandPermissions),
+        }
       : {}),
     ...makeSharedMeta(user, orgId, extraEmails),
   };
@@ -725,6 +753,28 @@ export function subscribeFoundationCloud(
                     typeof x === 'string'
                 ) as AppSettings['automationAddons'])
               : undefined,
+            customQuickCommands: Array.isArray(d.customQuickCommands)
+              ? (d.customQuickCommands.slice(0, 20) as CustomQuickCommand[])
+              : undefined,
+            timedCommandSchedule:
+              d.timedCommandSchedule &&
+              typeof d.timedCommandSchedule === 'object' &&
+              !Array.isArray(d.timedCommandSchedule)
+                ? (d.timedCommandSchedule as AppSettings['timedCommandSchedule'])
+                : undefined,
+            homeworkCurfewMins:
+              typeof d.homeworkCurfewMins === 'number'
+                ? Math.min(1439, Math.max(0, Math.round(d.homeworkCurfewMins)))
+                : undefined,
+            kidsWithoutPhoneIds: Array.isArray(d.kidsWithoutPhoneIds)
+              ? d.kidsWithoutPhoneIds.filter((x): x is string => typeof x === 'string').slice(0, 100)
+              : undefined,
+            commandPermissions:
+              d.commandPermissions &&
+              typeof d.commandPermissions === 'object' &&
+              !Array.isArray(d.commandPermissions)
+                ? (d.commandPermissions as AppSettings['commandPermissions'])
+                : undefined,
           });
         }
       });
@@ -960,6 +1010,28 @@ export function subscribeLinkedKidCloud(
                           typeof x === 'string'
                       ) as AppSettings['automationAddons'])
                     : undefined,
+                  customQuickCommands: Array.isArray(d.customQuickCommands)
+                    ? (d.customQuickCommands.slice(0, 20) as CustomQuickCommand[])
+                    : undefined,
+                  timedCommandSchedule:
+                    d.timedCommandSchedule &&
+                    typeof d.timedCommandSchedule === 'object' &&
+                    !Array.isArray(d.timedCommandSchedule)
+                      ? (d.timedCommandSchedule as AppSettings['timedCommandSchedule'])
+                      : undefined,
+                  homeworkCurfewMins:
+                    typeof d.homeworkCurfewMins === 'number'
+                      ? Math.min(1439, Math.max(0, Math.round(d.homeworkCurfewMins)))
+                      : undefined,
+                  kidsWithoutPhoneIds: Array.isArray(d.kidsWithoutPhoneIds)
+                    ? d.kidsWithoutPhoneIds.filter((x): x is string => typeof x === 'string').slice(0, 100)
+                    : undefined,
+                  commandPermissions:
+                    d.commandPermissions &&
+                    typeof d.commandPermissions === 'object' &&
+                    !Array.isArray(d.commandPermissions)
+                      ? (d.commandPermissions as AppSettings['commandPermissions'])
+                      : undefined,
                 });
               });
             },

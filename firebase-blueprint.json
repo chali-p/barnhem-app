@@ -96,6 +96,11 @@
         "enableCoinsAndPiggyBank": { "type": "boolean" },
         "organizationPreset": { "type": "string", "maxLength": 40 },
         "automationAddons": { "type": "array" },
+        "customQuickCommands": { "type": "array" },
+        "timedCommandSchedule": { "type": "object" },
+        "homeworkCurfewMins": { "type": "number" },
+        "kidsWithoutPhoneIds": { "type": "array" },
+        "commandPermissions": { "type": "object" },
         "ownerUid": { "type": "string", "maxLength": 128 },
         "sharedEmails": { "type": "array" },
         "updatedAt": { "type": "string", "format": "date-time" }
@@ -127,11 +132,7 @@
         "organizationPreset": {
           "type": "string",
           "enum": [
-            "autonomous_minimart",
-            "kindergarten_classroom",
-            "lean_sme_shop",
-            "foundation_care",
-            "custom_automation"
+            "foundation_care"
           ]
         },
         "automationAddons": { "type": "array" },
