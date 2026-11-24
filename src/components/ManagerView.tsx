@@ -90,6 +90,8 @@ interface ManagerViewProps {
   onUpdateLeaveSubstitute: (leaveId: string, substituteName: string) => void;
   onAcknowledgeLeave: (leaveId: string, byName: string) => void;
   onCancelLeave: (leaveId: string) => void;
+  onAddSickReport?: (report: SickReport) => void;
+  onResolveSick?: (reportId: string) => void;
   onShowAlert: (payload: ModalAlertPayload) => void;
 }
 
@@ -137,6 +139,8 @@ export const ManagerView: React.FC<ManagerViewProps> = ({
   onUpdateLeaveSubstitute,
   onAcknowledgeLeave,
   onCancelLeave,
+  onAddSickReport,
+  onResolveSick,
   onShowAlert,
 }) => {
   const [pinInput, setPinInput] = useState('');
@@ -887,6 +891,7 @@ export const ManagerView: React.FC<ManagerViewProps> = ({
         supplyRequests={supplyRequests}
         kindnessCards={kindnessCards}
         deedRedemptions={deedRedemptions}
+        sickReports={sickReports}
         lang={lang}
         onAddAnnouncement={onAddAnnouncement}
         onTogglePinAnnouncement={onTogglePinAnnouncement}
@@ -904,6 +909,8 @@ export const ManagerView: React.FC<ManagerViewProps> = ({
         onUpdateSupplyStatus={onUpdateSupplyStatus}
         onAssignDeedRedemption={onAssignDeedRedemption}
         onApproveDeedRedemption={onApproveDeedRedemption}
+        onAddSickReport={onAddSickReport}
+        onResolveSick={onResolveSick}
         onShowAlert={onShowAlert}
       />
     </div>

@@ -795,6 +795,28 @@ export default function App() {
     [commitStateChange]
   );
 
+  const handleToggleStaffTaskDone = useCallback(
+    (annId: string, actorName: string) => {
+      commitStateChange(
+        (prev) => ({
+          ...prev,
+          announcements: prev.announcements.map((a) =>
+            a.id === annId
+              ? {
+                  ...a,
+                  taskCompleted: !a.taskCompleted,
+                  taskCompletedBy: !a.taskCompleted ? actorName : undefined,
+                  taskCompletedAt: !a.taskCompleted ? now.toISOString() : undefined,
+                }
+              : a
+          ),
+        }),
+        'Toggle Staff Work Task Status'
+      );
+    },
+    [commitStateChange, now]
+  );
+
   const handleCreatePoll = useCallback(
     (poll: SecretPoll) => {
       commitStateChange(
@@ -1690,6 +1712,39 @@ export default function App() {
     });
   }, [commitStateChange, lang, now, showAlert]);
 
+  const handleResetAllKidsPenalties = useCallback(() => {
+    commitStateChange(
+      (prev) => ({
+        ...prev,
+        members: prev.members.map((m) =>
+          m.role === 'kid'
+            ? {
+                ...m,
+                penalty: {
+                  lateFineThb: 0,
+                  phoneConfiscatedUntil1830Date: null,
+                  fridayFreeDayDeductedCount: 0,
+                  noEveningPhoneTomorrowDate: null,
+                  cartoonPrivilegeActive: true,
+                  phonePrivilegeActive: true,
+                },
+              }
+            : m
+        ),
+      }),
+      'Creator Reset All Kids Penalties'
+    );
+    showAlert({
+      icon: '🧹',
+      title: lang === 'th' ? 'ล้างความผิด & ค่าปรับทุกคนเรียบร้อย!' : 'All Kid Penalties Cleared!',
+      message:
+        lang === 'th'
+          ? 'รีเซตค่าปรับเป็น 0 บาท และคืนสิทธิ์การ์ตูน/มือถือให้น้องทุกคนเป็นปกติแล้วค่ะ'
+          : 'All kids fines and device restrictions have been reset to normal.',
+      tone: 'mint',
+    });
+  }, [commitStateChange, lang, showAlert]);
+
   const handleSendManagerGift = useCallback(
     (params: {
       target: 'all' | 'group1' | 'group2' | 'group3' | string;
@@ -2071,6 +2126,14 @@ export default function App() {
             onSaveTimedSchedule={handleSaveTimedSchedule}
             onSaveCommandPermissions={handleSaveCommandPermissions}
             onAddSickReport={handleAddSickReport}
+            onUpdateKid={handleUpdateKid}
+            onSubmitStaffLeave={handleSubmitStaffLeave}
+            onUpdateLeaveSubstitute={handleUpdateStaffLeaveSubstitute}
+            onAcknowledgeLeave={handleAcknowledgeStaffLeave}
+            onCancelLeave={handleCancelStaffLeave}
+            onAddAnnouncement={handleAddAnnouncement}
+            onDeleteAnnouncement={handleDeleteAnnouncement}
+            onToggleStaffTaskDone={handleToggleStaffTaskDone}
             onShowAlert={showAlert}
             organizationName={activeTenant?.orgName}
             linkedKidSession={linkedKidSession}
@@ -2186,6 +2249,7 @@ export default function App() {
                 'Delete Kid'
               )
             }
+            onAddSickReport={handleAddSickReport}
             onResolveSick={(reportId) =>
               commitStateChange(
                 (prev) => ({
@@ -2333,6 +2397,20 @@ export default function App() {
             onUpdateLeaveSubstitute={handleUpdateStaffLeaveSubstitute}
             onAcknowledgeLeave={handleAcknowledgeStaffLeave}
             onCancelLeave={handleCancelStaffLeave}
+            onAddSickReport={handleAddSickReport}
+            onResolveSick={(reportId) =>
+              commitStateChange(
+                (prev) => ({
+                  ...prev,
+                  sickReports: prev.sickReports.map((r) =>
+                    r.id === reportId
+                      ? { ...r, resolved: true, resolvedAt: now.toISOString() }
+                      : r
+                  ),
+                }),
+                'Resolve Sick Case'
+              )
+            }
             onShowAlert={showAlert}
           />
         )}
@@ -2432,6 +2510,25 @@ export default function App() {
             onCancelLeave={handleCancelStaffLeave}
             onShowAlert={showAlert}
             isExternalTenant={Boolean(activeTenant)}
+            orgName={activeTenant?.orgName ?? 'Barnhem Care & Kids'}
+            onResetAllKidsPenalties={handleResetAllKidsPenalties}
+            onAddWeeklyActivityLog={handleAddWeeklyActivityLog}
+            onDeleteWeeklyActivityLog={handleDeleteWeeklyActivityLog}
+            onClearWeeklyActivityLogs={handleClearWeeklyActivityLogs}
+            onAddSickReport={handleAddSickReport}
+            onResolveSick={(reportId) =>
+              commitStateChange(
+                (prev) => ({
+                  ...prev,
+                  sickReports: prev.sickReports.map((r) =>
+                    r.id === reportId
+                      ? { ...r, resolved: true, resolvedAt: now.toISOString() }
+                      : r
+                  ),
+                }),
+                'Resolve Sick Case'
+              )
+            }
           />
         )}
 

@@ -20,6 +20,7 @@ import {
   TRASH_DUTY_RULE_EN,
   TRASH_DUTY_RULE_TH,
 } from '../utils/trashDuty';
+import { getDateKey } from '../utils/timeRules';
 
 type DutySubTab = 'weekend_cleaning' | 'kitchen' | 'trash';
 type TrashZoneFilter = 'boys' | 'girls' | 'both';
@@ -75,6 +76,7 @@ export const KidDutySchedulesPanel: React.FC<KidDutySchedulesPanelProps> = ({
       : ''
   );
 
+  const todayKey = getDateKey(now);
   const trashToday = useMemo(() => getTrashDutyInfoForDate(now), [now]);
 
   // Keep baseline 16 weeks starting from week 1 if current date is in or before week 16,
@@ -596,37 +598,73 @@ export const KidDutySchedulesPanel: React.FC<KidDutySchedulesPanelProps> = ({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
-              <div className="rounded-xl bg-[#E8F4FA] border border-[#BBDDF0] px-3.5 py-2.5 flex items-center justify-between gap-2">
-                <div>
-                  <div className="text-[11px] font-semibold text-[#2B5878]">
-                    👨 {lang === 'th' ? 'เขตเด็กผู้ชาย (อาทิตย์ & พุธเย็น)' : 'Boys Zone (Sun & Wed Evening)'}
-                  </div>
-                  <div className="text-base font-extrabold text-[#163B59]">
-                    {lang === 'th'
-                      ? trashToday.boyAssignee.displayNameTh
-                      : trashToday.boyAssignee.displayNameEn}
-                  </div>
-                </div>
-                <span className="text-xs font-bold text-[#3D5B7A]">
-                  {trashToday.sundayLabelTh} · {trashToday.wednesdayLabelTh}
-                </span>
-              </div>
+              {(() => {
+                const boyMember = kids.find((k) => k.id === trashToday.boyAssignee.kidId);
+                const girlMember = kids.find((k) => k.id === trashToday.girlAssignee.kidId);
+                const boyDone = Boolean(
+                  boyMember && boyMember.daily.dateKey === todayKey && boyMember.daily.trashDutyDone
+                );
+                const girlDone = Boolean(
+                  girlMember && girlMember.daily.dateKey === todayKey && girlMember.daily.trashDutyDone
+                );
+                const formatDoneTime = (iso?: string | null) =>
+                  iso
+                    ? new Date(iso).toLocaleTimeString(lang === 'th' ? 'th-TH' : 'en-US', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })
+                    : '';
 
-              <div className="rounded-xl bg-[#FCEEF3] border border-[#F3C6D6] px-3.5 py-2.5 flex items-center justify-between gap-2">
-                <div>
-                  <div className="text-[11px] font-semibold text-[#87324F]">
-                    👩 {lang === 'th' ? 'เขตเด็กผู้หญิง (อาทิตย์ & พุธเย็น)' : 'Girls Zone (Sun & Wed Evening)'}
-                  </div>
-                  <div className="text-base font-extrabold text-[#6E1F3A]">
-                    {lang === 'th'
-                      ? trashToday.girlAssignee.displayNameTh
-                      : trashToday.girlAssignee.displayNameEn}
-                  </div>
-                </div>
-                <span className="text-xs font-bold text-[#87324F]">
-                  {trashToday.sundayLabelTh} · {trashToday.wednesdayLabelTh}
-                </span>
-              </div>
+                return (
+                  <>
+                    <div className="rounded-xl bg-[#E8F4FA] border border-[#BBDDF0] px-3.5 py-2.5 flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[11px] font-semibold text-[#2B5878]">
+                          👨 {lang === 'th' ? 'เขตเด็กผู้ชาย (อาทิตย์ & พุธเย็น)' : 'Boys Zone (Sun & Wed Evening)'}
+                        </div>
+                        <div className="text-base font-extrabold text-[#163B59]">
+                          {lang === 'th'
+                            ? trashToday.boyAssignee.displayNameTh
+                            : trashToday.boyAssignee.displayNameEn}
+                        </div>
+                        <div className={`text-[11px] font-bold mt-0.5 tabular-nums ${boyDone ? 'text-[#156950]' : 'text-[#8B5312]'}`}>
+                          {boyDone
+                            ? `✅ ${lang === 'th' ? 'ทิ้งขยะแล้ว' : 'Cleared'}${boyMember?.daily.trashDutyDoneAt ? ` · ${formatDoneTime(boyMember.daily.trashDutyDoneAt)}` : ''}`
+                            : trashToday.isTrashDayToday
+                            ? `⏳ ${lang === 'th' ? 'รอทิ้งขยะวันนี้' : 'Pending today'}`
+                            : `🕒 ${lang === 'th' ? 'รอรอบถัดไป' : 'Upcoming'}`}
+                        </div>
+                      </div>
+                      <span className="text-xs font-bold text-[#3D5B7A] text-right">
+                        {trashToday.sundayLabelTh} · {trashToday.wednesdayLabelTh}
+                      </span>
+                    </div>
+
+                    <div className="rounded-xl bg-[#FCEEF3] border border-[#F3C6D6] px-3.5 py-2.5 flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[11px] font-semibold text-[#87324F]">
+                          👩 {lang === 'th' ? 'เขตเด็กผู้หญิง (อาทิตย์ & พุธเย็น)' : 'Girls Zone (Sun & Wed Evening)'}
+                        </div>
+                        <div className="text-base font-extrabold text-[#6E1F3A]">
+                          {lang === 'th'
+                            ? trashToday.girlAssignee.displayNameTh
+                            : trashToday.girlAssignee.displayNameEn}
+                        </div>
+                        <div className={`text-[11px] font-bold mt-0.5 tabular-nums ${girlDone ? 'text-[#156950]' : 'text-[#8B5312]'}`}>
+                          {girlDone
+                            ? `✅ ${lang === 'th' ? 'ทิ้งขยะแล้ว' : 'Cleared'}${girlMember?.daily.trashDutyDoneAt ? ` · ${formatDoneTime(girlMember.daily.trashDutyDoneAt)}` : ''}`
+                            : trashToday.isTrashDayToday
+                            ? `⏳ ${lang === 'th' ? 'รอทิ้งขยะวันนี้' : 'Pending today'}`
+                            : `🕒 ${lang === 'th' ? 'รอรอบถัดไป' : 'Upcoming'}`}
+                        </div>
+                      </div>
+                      <span className="text-xs font-bold text-[#87324F] text-right">
+                        {trashToday.sundayLabelTh} · {trashToday.wednesdayLabelTh}
+                      </span>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             {currentKid && (

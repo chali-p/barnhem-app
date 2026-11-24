@@ -79,6 +79,7 @@ interface StaffViewProps {
   onUpdateKid: (kidId: string, updater: (prev: Member) => Member, eventLabel: string) => void;
   onAddKid: (kid: Member) => void;
   onDeleteKid: (kidId: string) => void;
+  onAddSickReport?: (report: SickReport) => void;
   onResolveSick: (reportId: string) => void;
   onFulfillBill: (billId: string) => void;
   onAddAnnouncement: (ann: Announcement) => void;
@@ -145,6 +146,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
   onUpdateKid,
   onAddKid,
   onDeleteKid,
+  onAddSickReport,
   onResolveSick,
   onFulfillBill,
   onAddAnnouncement,
@@ -2010,6 +2012,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
         supplyRequests={supplyRequests}
         kindnessCards={kindnessCards}
         deedRedemptions={deedRedemptions}
+        sickReports={sickReports}
         lang={lang}
         onAddAnnouncement={onAddAnnouncement}
         onTogglePinAnnouncement={onTogglePinAnnouncement}
@@ -2027,6 +2030,8 @@ export const StaffView: React.FC<StaffViewProps> = ({
         onUpdateSupplyStatus={onUpdateSupplyStatus}
         onAssignDeedRedemption={onAssignDeedRedemption}
         onApproveDeedRedemption={onApproveDeedRedemption}
+        onAddSickReport={onAddSickReport}
+        onResolveSick={onResolveSick}
         onShowAlert={onShowAlert}
       />
 

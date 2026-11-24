@@ -13,7 +13,9 @@ import {
   SecretPoll,
   ShopCategory,
   ShopItem,
+  SickReport,
   StaffLeaveRecord,
+  WeeklyActivityLog,
 } from '../types/barnhem';
 import {
   formatLeaveKindTh,
@@ -47,6 +49,7 @@ import { StaffLeavePanel } from './StaffLeavePanel';
 import { StaffRosterPanel } from './StaffRosterPanel';
 import { TimedScheduleEditorCard } from './TimedScheduleEditorCard';
 import { CommandPermissionsEditorCard } from './CommandPermissionsEditorCard';
+import { WeeklyActivityLogPanel } from './WeeklyActivityLogPanel';
 
 interface CreatorViewProps {
   state: AppState;
@@ -89,6 +92,13 @@ interface CreatorViewProps {
   onCancelLeave: (leaveId: string) => void;
   onShowAlert: (payload: ModalAlertPayload) => void;
   isExternalTenant?: boolean;
+  orgName?: string;
+  onResetAllKidsPenalties?: () => void;
+  onAddWeeklyActivityLog?: (entry: WeeklyActivityLog) => void;
+  onDeleteWeeklyActivityLog?: (logId: string) => void;
+  onClearWeeklyActivityLogs?: () => void;
+  onAddSickReport?: (report: SickReport) => void;
+  onResolveSick?: (reportId: string) => void;
 }
 
 export const CreatorView: React.FC<CreatorViewProps> = ({
@@ -132,6 +142,13 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
   onCancelLeave,
   onShowAlert,
   isExternalTenant = false,
+  orgName = 'Barnhem Care & Kids',
+  onResetAllKidsPenalties,
+  onAddWeeklyActivityLog,
+  onDeleteWeeklyActivityLog,
+  onClearWeeklyActivityLogs,
+  onAddSickReport,
+  onResolveSick,
 }) => {
   const [pinInput, setPinInput] = useState('');
   const [pinModalOpen, setPinModalOpen] = useState(false);
@@ -167,6 +184,12 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
     state.settings.kidAwaySecretDateKey ?? getDateKey(now)
   );
   const [showRosterRadar, setShowRosterRadar] = useState(false);
+  const [penaltyFilter, setPenaltyFilter] = useState<'all' | 'with_penalty'>('all');
+  const [penaltySearch, setPenaltySearch] = useState('');
+  const [communityTabRequest, setCommunityTabRequest] = useState<{
+    tab: 'announcements' | 'polls' | 'trips' | 'inbox' | 'lost_found' | 'supplies' | 'deeds' | 'sick';
+    seq: number;
+  } | null>(null);
   const pinGuard = usePinGuard('creator');
 
   const todayDateStr = getDateKey(now);
@@ -179,7 +202,9 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
     | 'awaySecret'
     | 'piggyRates'
     | 'piggyKids'
+    | 'kidPenalties'
     | 'community'
+    | 'weeklyLogs'
     | 'staffLeave'
     | 'registrations'
     | 'pins'
@@ -193,7 +218,9 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
     'awaySecret',
     'piggyRates',
     'piggyKids',
+    'kidPenalties',
     'community',
+    'weeklyLogs',
     'staffLeave',
     'registrations',
     'pins',
@@ -1231,8 +1258,325 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
         )}
       </section>
 
+      {/* 1C. Kid Offense, Penalty & Fine Reset Center (Creator Mode) */}
+      {(() => {
+        const hasAnyPenalty = (kid: Member) =>
+          kid.penalty.lateFineThb > 0 ||
+          Boolean(kid.penalty.phoneConfiscatedUntil1830Date) ||
+          Boolean(kid.penalty.noEveningPhoneTomorrowDate) ||
+          kid.penalty.fridayFreeDayDeductedCount > 0 ||
+          !kid.penalty.cartoonPrivilegeActive ||
+          !kid.penalty.phonePrivilegeActive;
+
+        const kidsWithPenalty = allKids.filter(hasAnyPenalty);
+        const totalLateFinesThb = allKids.reduce((sum, k) => sum + k.penalty.lateFineThb, 0);
+        const qPenalty = penaltySearch.trim().toLowerCase();
+        const filteredPenaltyKids = allKids.filter((k) => {
+          if (penaltyFilter === 'with_penalty' && !hasAnyPenalty(k)) return false;
+          if (!qPenalty) return true;
+          return (
+            k.nickname.toLowerCase().includes(qPenalty) ||
+            k.fullName.toLowerCase().includes(qPenalty) ||
+            k.id.toLowerCase().includes(qPenalty)
+          );
+        });
+
+        const describePenalties = (kid: Member): string[] => {
+          const items: string[] = [];
+          if (kid.penalty.phoneConfiscatedUntil1830Date) {
+            items.push(
+              kid.penalty.phoneConfiscatedUntil1830Date === todayKey
+                ? lang === 'th'
+                  ? 'ยึดมือถือถึง 18:30 น. วันนี้'
+                  : 'Phone held until 18:30 today'
+                : lang === 'th'
+                ? `ยึดมือถือ (${kid.penalty.phoneConfiscatedUntil1830Date})`
+                : `Phone held (${kid.penalty.phoneConfiscatedUntil1830Date})`
+            );
+          }
+          if (kid.penalty.noEveningPhoneTomorrowDate) {
+            items.push(
+              lang === 'th'
+                ? `งดมือถือรอบเย็น (${kid.penalty.noEveningPhoneTomorrowDate})`
+                : `No evening phone (${kid.penalty.noEveningPhoneTomorrowDate})`
+            );
+          }
+          if (kid.penalty.fridayFreeDayDeductedCount > 0) {
+            items.push(
+              lang === 'th'
+                ? `หักสิทธิ์ Free Day ${kid.penalty.fridayFreeDayDeductedCount} วัน`
+                : `Free Day -${kid.penalty.fridayFreeDayDeductedCount}`
+            );
+          }
+          if (!kid.penalty.cartoonPrivilegeActive) {
+            items.push(lang === 'th' ? 'งดสิทธิ์การ์ตูน' : 'Cartoon paused');
+          }
+          if (!kid.penalty.phonePrivilegeActive) {
+            items.push(lang === 'th' ? 'งดสิทธิ์มือถือ' : 'Phone paused');
+          }
+          return items;
+        };
+
+        const handleClearSingleKidPenalty = (kid: Member) => {
+          onUpdateKid(
+            kid.id,
+            (prev) => ({
+              ...prev,
+              penalty: {
+                lateFineThb: 0,
+                phoneConfiscatedUntil1830Date: null,
+                fridayFreeDayDeductedCount: 0,
+                noEveningPhoneTomorrowDate: null,
+                cartoonPrivilegeActive: true,
+                phonePrivilegeActive: true,
+              },
+            }),
+            'Creator Reset Kid Penalties'
+          );
+          onShowAlert({
+            icon: '🧹',
+            title: lang === 'th' ? 'ล้างความผิด & เคลียร์ค่าปรับแล้ว!' : 'Kid Penalties Cleared!',
+            message:
+              lang === 'th'
+                ? `น้อง${kid.nickname}: รีเซตค่าปรับเป็น 0 บาท และคืนสิทธิ์การ์ตูน/มือถือเป็นปกติเรียบร้อยค่ะ`
+                : `${kid.nickname}: Fine reset to 0 THB and all privileges restored.`,
+            tone: 'mint',
+          });
+        };
+
+        const handleConfirmResetAllPenalties = () => {
+          onShowAlert({
+            icon: '🧹',
+            title:
+              lang === 'th'
+                ? `ยืนยันล้างโทษ & ค่าปรับให้น้องทุกคน (${kidsWithPenalty.length} คน)?`
+                : `Clear penalties for all kids (${kidsWithPenalty.length})?`,
+            message:
+              lang === 'th'
+                ? `ระบบจะรีเซตค่าปรับสายรวม ${totalLateFinesThb.toLocaleString()} บาท เป็น 0 บาท และคืนสิทธิ์การ์ตูน/มือถือให้น้องทุกคนเป็นปกติทันทีค่ะ`
+                : `This will reset ${totalLateFinesThb.toLocaleString()} THB in fines to 0 and restore all device/cartoon privileges.`,
+            tone: 'yellow',
+            confirmLabel: lang === 'th' ? 'ยืนยันเคลียร์โทษทุกคน' : 'Confirm Clear All',
+            onConfirm: () => {
+              if (onResetAllKidsPenalties) {
+                onResetAllKidsPenalties();
+              } else {
+                kidsWithPenalty.forEach((k) => {
+                  onUpdateKid(
+                    k.id,
+                    (prev) => ({
+                      ...prev,
+                      penalty: {
+                        lateFineThb: 0,
+                        phoneConfiscatedUntil1830Date: null,
+                        fridayFreeDayDeductedCount: 0,
+                        noEveningPhoneTomorrowDate: null,
+                        cartoonPrivilegeActive: true,
+                        phonePrivilegeActive: true,
+                      },
+                    }),
+                    'Creator Reset Kid Penalties'
+                  );
+                });
+              }
+            },
+          });
+        };
+
+        const handleJumpToDeeds = () => {
+          if (hiddenSections.community) {
+            setHiddenSections((prev) => {
+              const next = { ...prev, community: false };
+              persistHiddenSections(next);
+              return next;
+            });
+          }
+          setCommunityTabRequest({ tab: 'deeds', seq: Date.now() });
+          window.setTimeout(() => {
+            document
+              .getElementById('creator-care-community')
+              ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }, 50);
+        };
+
+        return (
+          <section className="no-print rounded-[28px] border-2 border-[#BCE5DC] bg-[#FFFDF9] p-5 pastel-shadow space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base sm:text-lg font-extrabold text-[#114A42]">
+                  🧹 {lang === 'th' ? 'จัดการความผิด · เคลียร์โทษ & ค่าปรับน้องรายคน' : 'Kid Offense & Penalty Reset Center'}
+                </h3>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-[#6E5C52] mt-0.5 tabular-nums">
+                  <span>
+                    {lang === 'th'
+                      ? `มีโทษ/ค่าปรับค้าง ${kidsWithPenalty.length} จาก ${allKids.length} คน`
+                      : `${kidsWithPenalty.length} of ${allKids.length} kids have active penalties`}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span className={totalLateFinesThb > 0 ? 'font-bold text-[#B84A39]' : 'font-semibold text-[#114A42]'}>
+                    {lang === 'th'
+                      ? `ค่าปรับสายรวม ฿${totalLateFinesThb.toLocaleString()}`
+                      : `Total Fines: ฿${totalLateFinesThb.toLocaleString()}`}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {!hiddenSections.kidPenalties && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleJumpToDeeds}
+                      className="min-h-[38px] rounded-xl border border-[#DFD2C3] bg-[#FAF6F0] hover:bg-[#F0E6DA] px-3 py-1.5 text-xs font-bold text-[#3D322C] cursor-pointer whitespace-nowrap"
+                    >
+                      ⚖️ {lang === 'th' ? 'ไถ่ค่าปรับด้วยความดี ↓' : 'Good-Deed Redemption ↓'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={kidsWithPenalty.length === 0}
+                      onClick={handleConfirmResetAllPenalties}
+                      className="min-h-[38px] rounded-xl border border-[#F3B7C0] bg-[#FFE8ED] hover:bg-[#FADADD] disabled:opacity-45 disabled:cursor-not-allowed px-3.5 py-1.5 text-xs font-extrabold text-[#8B1D36] cursor-pointer whitespace-nowrap"
+                    >
+                      🧹 {lang === 'th' ? `เคลียร์โทษทุกคน (${kidsWithPenalty.length})` : `Clear All (${kidsWithPenalty.length})`}
+                    </button>
+                  </>
+                )}
+                {renderSectionToggleButton('kidPenalties', 'bg-[#E8FAF6] hover:bg-[#D5F4EE] border-[#8FD4C6] text-[#114A42]')}
+              </div>
+            </div>
+
+            {!hiddenSections.kidPenalties && (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <div className="flex items-center gap-1 rounded-xl bg-[#F4ECE4] p-1">
+                    <button
+                      type="button"
+                      onClick={() => setPenaltyFilter('all')}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-bold cursor-pointer whitespace-nowrap transition-colors ${
+                        penaltyFilter === 'all'
+                          ? 'bg-white text-[#3D322C] shadow-2xs'
+                          : 'text-[#6E5C52] hover:text-[#3D322C]'
+                      }`}
+                    >
+                      {lang === 'th' ? `ทั้งหมด (${allKids.length})` : `All (${allKids.length})`}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPenaltyFilter('with_penalty')}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-bold cursor-pointer whitespace-nowrap transition-colors ${
+                        penaltyFilter === 'with_penalty'
+                          ? 'bg-white text-[#8B1D36] shadow-2xs'
+                          : 'text-[#6E5C52] hover:text-[#3D322C]'
+                      }`}
+                    >
+                      {lang === 'th' ? `เฉพาะที่มีโทษ (${kidsWithPenalty.length})` : `With Penalty (${kidsWithPenalty.length})`}
+                    </button>
+                  </div>
+
+                  <input
+                    type="text"
+                    value={penaltySearch}
+                    onChange={(e) => setPenaltySearch(e.target.value)}
+                    placeholder={lang === 'th' ? '🔍 ค้นหาชื่อเล่น / รหัสน้อง...' : '🔍 Search kid...'}
+                    className="rounded-xl border border-[#DFD2C3] bg-white px-3 py-1.5 text-xs text-[#3D322C] w-full sm:w-56"
+                  />
+                </div>
+
+                {filteredPenaltyKids.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-[#DFD2C3] bg-white p-6 text-center text-xs text-[#7B695F]">
+                    {penaltyFilter === 'with_penalty'
+                      ? lang === 'th'
+                        ? '🎉 ตอนนี้น้องๆ ทุกคนไม่มีโทษหรือค่าปรับค้างอยู่ค่ะ'
+                        : '🎉 No kids currently have active penalties or fines.'
+                      : lang === 'th'
+                      ? 'ไม่พบรายชื่อน้องที่ค้นหาค่ะ'
+                      : 'No matching kids found.'}
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto max-h-96 overflow-y-auto border border-[#EAE0D5] rounded-2xl bg-white">
+                    <table className="w-full text-sm text-left border-collapse">
+                      <thead className="sticky top-0 bg-[#FAF6F0] z-10">
+                        <tr className="border-b border-[#EBD8C3] text-xs text-[#6E5C52]">
+                          <th className="py-2.5 px-3">{lang === 'th' ? 'น้อง / กลุ่ม' : 'Kid / Group'}</th>
+                          <th className="py-2.5 px-3 text-right">{lang === 'th' ? 'ค่าปรับ (฿)' : 'Fine (THB)'}</th>
+                          <th className="py-2.5 px-3">{lang === 'th' ? 'สถานะโทษ & สิทธิ์' : 'Status & Privileges'}</th>
+                          <th className="py-2.5 px-3 text-right">{lang === 'th' ? 'จัดการ' : 'Action'}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredPenaltyKids.map((kid) => {
+                          const active = hasAnyPenalty(kid);
+                          const details = describePenalties(kid);
+                          return (
+                            <tr
+                              key={kid.id}
+                              className="border-b last:border-b-0 border-[#F5ECE2] hover:bg-[#FAF6F0]/70"
+                            >
+                              <td className="py-2.5 px-3 whitespace-nowrap">
+                                <div className="font-bold text-[#3D322C]">
+                                  {kid.emoji} {kid.nickname}
+                                </div>
+                                <div className="text-[11px] text-[#7B695F]">
+                                  กลุ่ม {kid.group} · {kid.fullName}
+                                </div>
+                              </td>
+                              <td
+                                className={`py-2.5 px-3 text-right font-extrabold tabular-nums whitespace-nowrap ${
+                                  kid.penalty.lateFineThb > 0 ? 'text-[#B84A39]' : 'text-[#7B695F]'
+                                }`}
+                              >
+                                ฿{kid.penalty.lateFineThb.toLocaleString()}
+                              </td>
+                              <td className="py-2.5 px-3 text-xs">
+                                {details.length === 0 && kid.penalty.lateFineThb === 0 ? (
+                                  <span className="font-semibold text-[#1E6B5C]">
+                                    ✓ {lang === 'th' ? 'ปกติ ไม่มีประวัติโทษ' : 'Clean'}
+                                  </span>
+                                ) : details.length === 0 ? (
+                                  <span className="font-semibold text-[#9A4B00]">
+                                    {lang === 'th' ? 'มีค่าปรับสายค้างชำระ' : 'Outstanding late fine'}
+                                  </span>
+                                ) : (
+                                  <span className="font-semibold text-[#8B1D36]">
+                                    {details.join(' · ')}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                                <button
+                                  type="button"
+                                  disabled={!active}
+                                  onClick={() => handleClearSingleKidPenalty(kid)}
+                                  className={`min-h-[36px] rounded-xl px-3 py-1.5 text-xs font-bold whitespace-nowrap transition-colors ${
+                                    active
+                                      ? 'bg-[#D4F0F0] hover:bg-[#B8E5E1] text-[#114A42] cursor-pointer'
+                                      : 'bg-[#F5F1EB] text-[#9B8D84] cursor-default'
+                                  }`}
+                                >
+                                  {active
+                                    ? lang === 'th'
+                                      ? '🧹 เคลียร์โทษ'
+                                      : '🧹 Clear'
+                                    : lang === 'th'
+                                    ? '✓ ปกติ'
+                                    : '✓ Clean'}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        );
+      })()}
+
       {/* 2. MOVED TO TOP: Announcements, Secret Polls, Outing Trips & Confidential Backchannel Inbox */}
-      <div className="no-print">
+      <div id="creator-care-community" className="no-print">
         <CareCommunityPanel
           authorName="พี่กิ๊ก (Creator)"
           authorRole="Creator"
@@ -1245,6 +1589,7 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
           supplyRequests={state.supplyRequests}
           kindnessCards={state.kindnessCards}
           deedRedemptions={state.deedRedemptions}
+          sickReports={state.sickReports}
           lang={lang}
           onAddAnnouncement={onAddAnnouncement}
           onTogglePinAnnouncement={onTogglePinAnnouncement}
@@ -1262,11 +1607,35 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
           onUpdateSupplyStatus={onUpdateSupplyStatus}
           onAssignDeedRedemption={onAssignDeedRedemption}
           onApproveDeedRedemption={onApproveDeedRedemption}
+          onAddSickReport={onAddSickReport}
+          onResolveSick={onResolveSick}
           onShowAlert={onShowAlert}
           collapsed={Boolean(hiddenSections.community)}
           onToggleCollapse={() => toggleSection('community')}
+          requestedTab={communityTabRequest}
         />
       </div>
+
+      {/* 2A. Weekly Attendance, Late/Absent/Leave Log + Individual Delete & Weekly Reset */}
+      {onAddWeeklyActivityLog && onDeleteWeeklyActivityLog && onClearWeeklyActivityLogs && (
+        <div className="no-print">
+          <WeeklyActivityLogPanel
+            orgName={orgName}
+            kids={allKids}
+            logs={state.weeklyActivityLogs ?? []}
+            lastWeeklyClearedAt={state.settings.lastWeeklyClearedAt}
+            now={now}
+            lang={lang}
+            staffName="พี่กิ๊ก (Creator)"
+            onAddLog={onAddWeeklyActivityLog}
+            onDeleteLog={onDeleteWeeklyActivityLog}
+            onClearWeeklyLogs={onClearWeeklyActivityLogs}
+            onShowAlert={onShowAlert}
+            collapsed={Boolean(hiddenSections.weeklyLogs)}
+            onToggleCollapse={() => toggleSection('weeklyLogs')}
+          />
+        </div>
+      )}
 
       {/* 2B. Staff Sudden Leave, Substitutes & Live/Future Time Duty Radar */}
       <div className="no-print space-y-3">

@@ -95,6 +95,9 @@ export interface DailyProgress {
   kitchenSatDone: boolean;
   kitchenSunDone: boolean;
   houseChoreDone?: boolean;
+  trashDutyDone?: boolean;
+  trashDutyDoneAt?: string | null;
+  trashDutyConfirmedBy?: string | null;
 }
 
 export interface StarTransaction {
@@ -323,6 +326,11 @@ export interface Announcement {
   createdAt: string;
   startAt?: string;
   endAt?: string;
+  audience?: 'all' | 'staff_only';
+  assignedTo?: string;
+  taskCompleted?: boolean;
+  taskCompletedBy?: string;
+  taskCompletedAt?: string;
 }
 
 export interface PollOption {
@@ -489,10 +497,13 @@ export interface TimedScheduleSlot {
   endMins: number;
 }
 
+export type CommandAuthMode = 'staff_pin' | 'kid_pin' | 'self_tap';
+
 export interface CommandAccessRule {
   phoneFilter?: 'all' | 'has_phone' | 'no_phone';
   restrictToKidIds?: boolean;
   allowedKidIds?: string[];
+  authMode?: CommandAuthMode;
 }
 
 export interface AppSettings {

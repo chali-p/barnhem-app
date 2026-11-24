@@ -2,10 +2,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   AppSettings,
   CommandAccessRule,
+  CommandAuthMode,
   Language,
   Member,
 } from '../types/barnhem';
 import {
+  getCommandAuthMode,
+  getCommandAuthModeMeta,
   getCommandPermissionSummary,
   getEffectiveCustomQuickCommands,
   getEffectiveHomeQuickActions,
@@ -15,6 +18,7 @@ interface CommandPermissionsEditorCardProps {
   members: Member[];
   settings?: Partial<AppSettings>;
   lang: Language;
+  initialTab?: 'phones' | 'buttons';
   onSave: (
     nextKidsWithoutPhoneIds: string[],
     nextCommandPermissions: Record<string, CommandAccessRule>
@@ -33,12 +37,13 @@ export const CommandPermissionsEditorCard: React.FC<CommandPermissionsEditorCard
   members,
   settings,
   lang,
+  initialTab = 'buttons',
   onSave,
   onClose,
 }) => {
   const kids = useMemo(() => members.filter((m) => m.role === 'kid'), [members]);
 
-  const [activeTab, setActiveTab] = useState<'phones' | 'buttons'>('phones');
+  const [activeTab, setActiveTab] = useState<'phones' | 'buttons'>(initialTab);
   const [groupFilter, setGroupFilter] = useState<0 | 1 | 2 | 3>(0);
   const [searchText, setSearchText] = useState('');
 
@@ -127,11 +132,19 @@ export const CommandPermissionsEditorCard: React.FC<CommandPermissionsEditorCard
     setDraftPermissions((prev) => {
       const next = { ...prev };
       for (const cid of PHONE_COMMAND_IDS) {
-        next[cid] = { phoneFilter: 'has_phone', restrictToKidIds: false };
+        next[cid] = {
+          ...(prev[cid] ?? {}),
+          phoneFilter: 'has_phone',
+          restrictToKidIds: false,
+        };
       }
       for (const cmd of customCommands) {
         if (cmd.kind === 'homework_permission') {
-          next[cmd.id] = { phoneFilter: 'has_phone', restrictToKidIds: false };
+          next[cmd.id] = {
+            ...(prev[cmd.id] ?? {}),
+            phoneFilter: 'has_phone',
+            restrictToKidIds: false,
+          };
         }
       }
       return next;
@@ -141,13 +154,39 @@ export const CommandPermissionsEditorCard: React.FC<CommandPermissionsEditorCard
   const currentRule: CommandAccessRule = draftPermissions[selectedCmdId] ?? {
     phoneFilter: 'all',
     restrictToKidIds: false,
+    authMode: 'staff_pin',
   };
 
-  const setRuleForSelected = (nextRule: CommandAccessRule) => {
-    setDraftPermissions((prev) => ({
-      ...prev,
-      [selectedCmdId]: nextRule,
-    }));
+  const currentAuthMode: CommandAuthMode = getCommandAuthMode(selectedCmdId, draftSettingsPreview);
+
+  const patchRuleForSelected = (patch: Partial<CommandAccessRule>) => {
+    setDraftPermissions((prev) => {
+      const existing: CommandAccessRule = prev[selectedCmdId] ?? {
+        phoneFilter: 'all',
+        restrictToKidIds: false,
+      };
+      return {
+        ...prev,
+        [selectedCmdId]: {
+          ...existing,
+          ...patch,
+        },
+      };
+    });
+  };
+
+  const applyAuthModeToAllCommands = (mode: CommandAuthMode) => {
+    setDraftPermissions((prev) => {
+      const next = { ...prev };
+      for (const entry of allCommandEntries) {
+        const existing = prev[entry.id] ?? { phoneFilter: 'all', restrictToKidIds: false };
+        next[entry.id] = {
+          ...existing,
+          authMode: mode,
+        };
+      }
+      return next;
+    });
   };
 
   const toggleKidAllowedOnSelected = (kidId: string) => {
@@ -158,7 +197,7 @@ export const CommandPermissionsEditorCard: React.FC<CommandPermissionsEditorCard
     const nextAllowed = exists
       ? existingAllowed.filter((id) => id !== kidId)
       : [...existingAllowed, kidId];
-    setRuleForSelected({
+    patchRuleForSelected({
       phoneFilter: 'all',
       restrictToKidIds: true,
       allowedKidIds: nextAllowed,
@@ -182,12 +221,12 @@ export const CommandPermissionsEditorCard: React.FC<CommandPermissionsEditorCard
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="text-sm font-extrabold text-[#114A42]">
-            👥📱 {lang === 'th' ? 'ตั้งค่าเด็กที่มีมือถือ & สิทธิ์การกดแต่ละปุ่ม' : 'Kid Phone Status & Button Permissions'}
+            👥🔑 {lang === 'th' ? 'ตั้งค่าสิทธิ์ & รหัสกดแต่ละปุ่ม' : 'Button Access, PIN Mode & Phones'}
           </div>
           <p className="text-[11px] text-[#2E5D55] mt-0.5">
             {lang === 'th'
-              ? 'เลือกว่าน้องคนไหนมี/ไม่มีมือถือ และกำหนดรายชื่อน้องที่มีสิทธิ์กดแต่ละคำสั่งได้เลยค่ะ'
-              : 'Mark which kids have phones and choose exactly who can tap each command.'}
+              ? 'เลือกรูปแบบการกดของแต่ละปุ่ม (พี่เลี้ยงใส่รหัส / น้องใส่ PIN 4 หลักเอง / กดชื่อตัวเองได้เลย) พร้อมกำหนดรายชื่อคนที่มีสิทธิ์กดค่ะ'
+              : 'Choose per-button verification mode (Staff PIN, Kid PIN, or Direct 1-Tap) and eligible kids.'}
           </p>
         </div>
         {onClose && (
@@ -205,6 +244,17 @@ export const CommandPermissionsEditorCard: React.FC<CommandPermissionsEditorCard
       <div className="grid grid-cols-2 gap-2">
         <button
           type="button"
+          onClick={() => setActiveTab('buttons')}
+          className={`min-h-[40px] rounded-xl border-2 px-3 py-1.5 text-xs font-extrabold cursor-pointer transition-colors ${
+            activeTab === 'buttons'
+              ? 'border-[#114A42] bg-[#114A42] text-white'
+              : 'border-[#B9E8DF] bg-white text-[#114A42] hover:bg-[#E8FAF6]'
+          }`}
+        >
+          🎯 {lang === 'th' ? `ตั้งค่ารายปุ่ม (${allCommandEntries.length} ปุ่ม)` : `Button Settings (${allCommandEntries.length})`}
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab('phones')}
           className={`min-h-[40px] rounded-xl border-2 px-3 py-1.5 text-xs font-extrabold cursor-pointer transition-colors ${
             activeTab === 'phones'
@@ -214,50 +264,41 @@ export const CommandPermissionsEditorCard: React.FC<CommandPermissionsEditorCard
         >
           📱 {lang === 'th' ? `สถานะมือถือ (${phoneCount}/${kids.length})` : `Phones (${phoneCount}/${kids.length})`}
         </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('buttons')}
-          className={`min-h-[40px] rounded-xl border-2 px-3 py-1.5 text-xs font-extrabold cursor-pointer transition-colors ${
-            activeTab === 'buttons'
-              ? 'border-[#114A42] bg-[#114A42] text-white'
-              : 'border-[#B9E8DF] bg-white text-[#114A42] hover:bg-[#E8FAF6]'
-          }`}
-        >
-          🎯 {lang === 'th' ? `สิทธิ์รายปุ่ม (${allCommandEntries.length} ปุ่ม)` : `Button Access (${allCommandEntries.length})`}
-        </button>
       </div>
 
-      {/* Group Filter + Search (shared by both tabs) */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap gap-1">
-          {[
-            { g: 0 as const, th: 'ทั้งหมด', en: 'All' },
-            { g: 1 as const, th: 'ก.1 ประถม', en: 'G1' },
-            { g: 2 as const, th: 'ก.2 มัธยม', en: 'G2' },
-            { g: 3 as const, th: 'ก.3 วิทยาลัย', en: 'G3' },
-          ].map((tab) => (
-            <button
-              key={tab.g}
-              type="button"
-              onClick={() => setGroupFilter(tab.g)}
-              className={`rounded-lg px-2.5 py-1 text-[11px] font-bold cursor-pointer ${
-                groupFilter === tab.g
-                  ? 'bg-[#114A42] text-white'
-                  : 'bg-white border border-[#C9E6DF] text-[#2E5D55] hover:bg-[#E8FAF6]'
-              }`}
-            >
-              {lang === 'th' ? tab.th : tab.en}
-            </button>
-          ))}
+      {/* Group Filter + Search (only when kid list is shown) */}
+      {(activeTab === 'phones' || currentRule.restrictToKidIds) && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap gap-1">
+            {[
+              { g: 0 as const, th: 'ทั้งหมด', en: 'All' },
+              { g: 1 as const, th: 'ก.1 ประถม', en: 'G1' },
+              { g: 2 as const, th: 'ก.2 มัธยม', en: 'G2' },
+              { g: 3 as const, th: 'ก.3 วิทยาลัย', en: 'G3' },
+            ].map((tab) => (
+              <button
+                key={tab.g}
+                type="button"
+                onClick={() => setGroupFilter(tab.g)}
+                className={`rounded-lg px-2.5 py-1 text-[11px] font-bold cursor-pointer ${
+                  groupFilter === tab.g
+                    ? 'bg-[#114A42] text-white'
+                    : 'bg-white border border-[#C9E6DF] text-[#2E5D55] hover:bg-[#E8FAF6]'
+                }`}
+              >
+                {lang === 'th' ? tab.th : tab.en}
+              </button>
+            ))}
+          </div>
+          <input
+            type="text"
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            placeholder={lang === 'th' ? '🔍 ค้นหาชื่อเล่นน้อง...' : '🔍 Search kid...'}
+            className="rounded-lg border border-[#B9E8DF] bg-white px-2.5 py-1 text-xs text-[#3D322C] w-full sm:w-44 focus:outline-none"
+          />
         </div>
-        <input
-          type="text"
-          value={searchText}
-          onChange={(e) => setSearchText(e.target.value)}
-          placeholder={lang === 'th' ? '🔍 ค้นหาชื่อเล่นน้อง...' : '🔍 Search kid...'}
-          className="rounded-lg border border-[#B9E8DF] bg-white px-2.5 py-1 text-xs text-[#3D322C] w-full sm:w-44 focus:outline-none"
-        />
-      </div>
+      )}
 
       {/* TAB 1: PHONE STATUS PER KID */}
       {activeTab === 'phones' && (
@@ -344,15 +385,15 @@ export const CommandPermissionsEditorCard: React.FC<CommandPermissionsEditorCard
         </div>
       )}
 
-      {/* TAB 2: PER-BUTTON ELIGIBLE KIDS */}
+      {/* TAB 2: PER-BUTTON AUTH MODE & ELIGIBLE KIDS */}
       {activeTab === 'buttons' && (
         <div className="space-y-3">
           {/* Command Selector Pills */}
           <div className="space-y-1">
             <div className="text-[11px] font-bold text-[#114A42]">
-              1. {lang === 'th' ? 'เลือกปุ่มคำสั่งที่ต้องการกำหนดสิทธิ์:' : 'Select a command button:'}
+              1. {lang === 'th' ? 'เลือกปุ่มคำสั่งที่ต้องการตั้งค่า:' : 'Select a command button:'}
             </div>
-            <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1 rounded-xl border border-[#D4EFE9] bg-white">
+            <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1.5 rounded-xl border border-[#D4EFE9] bg-white">
               {allCommandEntries.map((cmd) => {
                 const isSelected = cmd.id === selectedCmdId;
                 const summary = getCommandPermissionSummary(
@@ -361,6 +402,7 @@ export const CommandPermissionsEditorCard: React.FC<CommandPermissionsEditorCard
                   lang,
                   draftSettingsPreview
                 );
+                const modeMeta = getCommandAuthModeMeta(summary.authMode, lang);
                 return (
                   <button
                     key={cmd.id}
@@ -369,7 +411,7 @@ export const CommandPermissionsEditorCard: React.FC<CommandPermissionsEditorCard
                     className={`rounded-xl border px-2.5 py-1.5 text-[11px] font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
                       isSelected
                         ? 'border-[#114A42] bg-[#114A42] text-white'
-                        : summary.restricted
+                        : summary.authMode !== 'staff_pin' || summary.restricted
                         ? 'border-[#C8B7EB] bg-[#F6F1FF] text-[#3E2B63] hover:bg-[#EAE1FA]'
                         : 'border-[#DCE8E4] bg-[#FAFDFC] text-[#3D322C] hover:bg-[#E8FAF6]'
                     }`}
@@ -377,15 +419,14 @@ export const CommandPermissionsEditorCard: React.FC<CommandPermissionsEditorCard
                     <span>{cmd.emoji}</span>
                     <span>{lang === 'th' ? cmd.titleTh : cmd.titleEn}</span>
                     <span
-                      className={`rounded-md px-1.5 py-0.5 text-[10px] ${
+                      title={modeMeta.shortLabel}
+                      className={`rounded-md px-1.5 py-0.5 text-[10px] tabular-nums ${
                         isSelected
                           ? 'bg-white/20 text-white'
-                          : summary.restricted
-                          ? 'bg-white text-[#3E2B63]'
-                          : 'bg-[#E8FAF6] text-[#2E5D55]'
+                          : 'bg-white text-[#2E5D55]'
                       }`}
                     >
-                      {summary.eligibleCount}/{kids.length}
+                      {modeMeta.icon} {summary.eligibleCount}/{kids.length}
                     </span>
                   </button>
                 );
@@ -393,189 +434,268 @@ export const CommandPermissionsEditorCard: React.FC<CommandPermissionsEditorCard
             </div>
           </div>
 
-          {/* Rule Mode Selector for Active Button */}
+          {/* Auth Mode & Eligibility Rules for Active Button */}
           {activeCmdMeta && (
-            <div className="rounded-xl border border-[#B9E8DF] bg-white p-3 space-y-2.5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs font-extrabold text-[#114A42]">
-                  2. {activeCmdMeta.emoji}{' '}
-                  {lang === 'th'
-                    ? `ใครมีสิทธิ์กด "${activeCmdMeta.titleTh}" บ้าง?`
-                    : `Who can tap "${activeCmdMeta.titleEn}"?`}
-                </div>
-                <span className="text-[11px] font-bold text-[#3E2B63]">
-                  {
-                    getCommandPermissionSummary(
-                      activeCmdMeta.id,
-                      kids,
-                      lang,
-                      draftSettingsPreview
-                    ).badge
-                  }
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                {[
-                  {
-                    key: 'all',
-                    labelTh: '🌐 กดได้ทุกคน',
-                    labelEn: '🌐 All Kids',
-                    active:
-                      (currentRule.phoneFilter ?? 'all') === 'all' &&
-                      !currentRule.restrictToKidIds,
-                    onClick: () =>
-                      setRuleForSelected({ phoneFilter: 'all', restrictToKidIds: false }),
-                  },
-                  {
-                    key: 'has_phone',
-                    labelTh: '📱 เฉพาะมีมือถือ',
-                    labelEn: '📱 Has Phone',
-                    active:
-                      currentRule.phoneFilter === 'has_phone' &&
-                      !currentRule.restrictToKidIds,
-                    onClick: () =>
-                      setRuleForSelected({ phoneFilter: 'has_phone', restrictToKidIds: false }),
-                  },
-                  {
-                    key: 'no_phone',
-                    labelTh: '📵 เฉพาะไม่มีมือถือ',
-                    labelEn: '📵 No Phone',
-                    active:
-                      currentRule.phoneFilter === 'no_phone' &&
-                      !currentRule.restrictToKidIds,
-                    onClick: () =>
-                      setRuleForSelected({ phoneFilter: 'no_phone', restrictToKidIds: false }),
-                  },
-                  {
-                    key: 'custom',
-                    labelTh: '✅ เลือกรายชื่อเอง',
-                    labelEn: '✅ Pick Names',
-                    active: Boolean(currentRule.restrictToKidIds),
-                    onClick: () => {
-                      const seedIds = Array.isArray(currentRule.allowedKidIds)
-                        ? currentRule.allowedKidIds
-                        : currentRule.phoneFilter === 'has_phone'
-                        ? kids.filter((k) => !withoutPhoneSet.has(k.id)).map((k) => k.id)
-                        : currentRule.phoneFilter === 'no_phone'
-                        ? kids.filter((k) => withoutPhoneSet.has(k.id)).map((k) => k.id)
-                        : kids.map((k) => k.id);
-                      setRuleForSelected({
-                        phoneFilter: 'all',
-                        restrictToKidIds: true,
-                        allowedKidIds: seedIds,
-                      });
-                    },
-                  },
-                ].map((opt) => (
-                  <button
-                    key={opt.key}
-                    type="button"
-                    onClick={opt.onClick}
-                    className={`min-h-[36px] rounded-xl border px-2 py-1.5 text-[11px] font-extrabold cursor-pointer transition-colors ${
-                      opt.active
-                        ? 'border-[#114A42] bg-[#114A42] text-white'
-                        : 'border-[#DCE8E4] bg-[#F8FCFB] text-[#2E5D55] hover:bg-[#E8FAF6]'
-                    }`}
-                  >
-                    {lang === 'th' ? opt.labelTh : opt.labelEn}
-                  </button>
-                ))}
-              </div>
-
-              {/* Individual Kid Name Checkboxes when 'Pick Names' mode is enabled */}
-              {currentRule.restrictToKidIds && (
-                <div className="space-y-2 pt-1 border-t border-[#E8F4F1]">
-                  <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                    <span className="font-bold text-[#6E5C52]">
-                      {lang === 'th' ? 'เติมรายชื่อด่วน:' : 'Quick Fill:'}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setRuleForSelected({
-                          phoneFilter: 'all',
-                          restrictToKidIds: true,
-                          allowedKidIds: kids
-                            .filter((k) => !withoutPhoneSet.has(k.id))
-                            .map((k) => k.id),
-                        })
-                      }
-                      className="rounded-lg border border-[#8FD4C6] bg-[#E8FAF6] px-2 py-0.5 font-bold text-[#114A42] cursor-pointer"
-                    >
-                      📱 {lang === 'th' ? 'เฉพาะมีมือถือ' : 'Phone Owners'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setRuleForSelected({
-                          phoneFilter: 'all',
-                          restrictToKidIds: true,
-                          allowedKidIds: kids
-                            .filter((k) => withoutPhoneSet.has(k.id))
-                            .map((k) => k.id),
-                        })
-                      }
-                      className="rounded-lg border border-[#F3B7C0] bg-[#FFF0F3] px-2 py-0.5 font-bold text-[#8B1D36] cursor-pointer"
-                    >
-                      📵 {lang === 'th' ? 'เฉพาะไม่มีมือถือ' : 'No-Phone Kids'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setRuleForSelected({
-                          phoneFilter: 'all',
-                          restrictToKidIds: true,
-                          allowedKidIds: kids.map((k) => k.id),
-                        })
-                      }
-                      className="rounded-lg border border-[#D4C5B4] bg-white px-2 py-0.5 font-bold text-[#3D322C] cursor-pointer"
-                    >
-                      ✓ {lang === 'th' ? 'ทั้งหมด' : 'All'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setRuleForSelected({
-                          phoneFilter: 'all',
-                          restrictToKidIds: true,
-                          allowedKidIds: [],
-                        })
-                      }
-                      className="rounded-lg border border-[#D4C5B4] bg-white px-2 py-0.5 font-bold text-[#7B695F] cursor-pointer"
-                    >
-                      ✕ {lang === 'th' ? 'ล้าง' : 'Clear'}
-                    </button>
+            <div className="rounded-xl border border-[#B9E8DF] bg-white p-3 space-y-3">
+              {/* Step 2: Verification Mode */}
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-extrabold text-[#114A42]">
+                    2. {activeCmdMeta.emoji}{' '}
+                    {lang === 'th'
+                      ? `รูปแบบการกดปุ่ม "${activeCmdMeta.titleTh}"`
+                      : `Check-In Verification for "${activeCmdMeta.titleEn}"`}
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => applyAuthModeToAllCommands(currentAuthMode)}
+                    className="rounded-lg border border-[#C8B7EB] bg-[#F5F0FF] hover:bg-[#EAE1FA] px-2 py-0.5 text-[10px] font-bold text-[#3E2B63] cursor-pointer"
+                  >
+                    ⚡ {lang === 'th' ? 'ใช้โหมดนี้กับทุกปุ่ม' : 'Apply Mode to All'}
+                  </button>
+                </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-52 overflow-y-auto pr-0.5">
-                    {filteredKids.map((kid) => {
-                      const allowedSet = new Set(currentRule.allowedKidIds ?? []);
-                      const checked = allowedSet.has(kid.id);
-                      const hasPhone = !withoutPhoneSet.has(kid.id);
-                      return (
-                        <button
-                          key={kid.id}
-                          type="button"
-                          onClick={() => toggleKidAllowedOnSelected(kid.id)}
-                          className={`rounded-xl border px-2.5 py-1.5 text-left flex items-center justify-between gap-1 cursor-pointer transition-colors ${
-                            checked
-                              ? 'border-[#114A42] bg-[#E8FAF6] text-[#114A42]'
-                              : 'border-[#E6DCD2] bg-[#FAF7F4] text-[#8B796E] opacity-75'
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {(
+                    [
+                      {
+                        mode: 'staff_pin' as CommandAuthMode,
+                        icon: '🔐',
+                        titleTh: 'พี่เลี้ยงใส่รหัสเปิด',
+                        titleEn: 'Staff PIN First',
+                        descTh: 'ต้องให้พี่เลี้ยงใส่ PIN ก่อนจึงเห็นรายชื่อ',
+                        descEn: 'Staff PIN required before showing kids',
+                      },
+                      {
+                        mode: 'kid_pin' as CommandAuthMode,
+                        icon: '🔑',
+                        titleTh: 'น้องใส่รหัสตัวเอง (4 หลัก)',
+                        titleEn: 'Kid 4-Digit PIN',
+                        descTh: 'ไม่ต้องรอพี่เลี้ยง · น้องใส่ PIN 4 หลักของตัวเอง',
+                        descEn: 'Kids open directly & enter own 4-digit PIN',
+                      },
+                      {
+                        mode: 'self_tap' as CommandAuthMode,
+                        icon: '👆',
+                        titleTh: 'กดชื่อตัวเองได้เลย',
+                        titleEn: 'Direct 1-Tap Name',
+                        descTh: 'ไม่ต้องรอพี่เลี้ยงและไม่ต้องใส่รหัส กดชื่อได้ทันที',
+                        descEn: 'Kids tap their name immediately with no PIN',
+                      },
+                    ] as const
+                  ).map((opt) => {
+                    const active = currentAuthMode === opt.mode;
+                    return (
+                      <button
+                        key={opt.mode}
+                        type="button"
+                        onClick={() => patchRuleForSelected({ authMode: opt.mode })}
+                        className={`rounded-xl border-2 px-3 py-2 text-left transition-colors cursor-pointer ${
+                          active
+                            ? 'border-[#114A42] bg-[#114A42] text-white'
+                            : 'border-[#DCE8E4] bg-[#F8FCFB] text-[#2E5D55] hover:bg-[#E8FAF6]'
+                        }`}
+                      >
+                        <div className="text-xs font-extrabold flex items-center gap-1.5">
+                          <span>{opt.icon}</span>
+                          <span>{lang === 'th' ? opt.titleTh : opt.titleEn}</span>
+                        </div>
+                        <div
+                          className={`text-[10px] mt-0.5 leading-snug ${
+                            active ? 'text-white/90' : 'text-[#5C7570]'
                           }`}
                         >
-                          <span className="text-xs font-bold truncate">
-                            {checked ? '☑️' : '⬜'} {kid.emoji} {kid.nickname}
-                          </span>
-                          <span className="text-[10px] shrink-0" title={hasPhone ? 'มีมือถือ' : 'ไม่มีมือถือ'}>
-                            {hasPhone ? '📱' : '📵'}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                          {lang === 'th' ? opt.descTh : opt.descEn}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
-              )}
+              </div>
+
+              {/* Step 3: Who Can Tap This Button */}
+              <div className="space-y-2 pt-2 border-t border-[#E8F4F1]">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-extrabold text-[#114A42]">
+                    3.{' '}
+                    {lang === 'th'
+                      ? `ใครมีสิทธิ์กด "${activeCmdMeta.titleTh}" บ้าง?`
+                      : `Who can tap "${activeCmdMeta.titleEn}"?`}
+                  </div>
+                  <span className="text-[11px] font-bold text-[#3E2B63]">
+                    {
+                      getCommandPermissionSummary(
+                        activeCmdMeta.id,
+                        kids,
+                        lang,
+                        draftSettingsPreview
+                      ).badge
+                    }
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                  {[
+                    {
+                      key: 'all',
+                      labelTh: '🌐 กดได้ทุกคน',
+                      labelEn: '🌐 All Kids',
+                      active:
+                        (currentRule.phoneFilter ?? 'all') === 'all' &&
+                        !currentRule.restrictToKidIds,
+                      onClick: () =>
+                        patchRuleForSelected({ phoneFilter: 'all', restrictToKidIds: false }),
+                    },
+                    {
+                      key: 'has_phone',
+                      labelTh: '📱 เฉพาะมีมือถือ',
+                      labelEn: '📱 Has Phone',
+                      active:
+                        currentRule.phoneFilter === 'has_phone' &&
+                        !currentRule.restrictToKidIds,
+                      onClick: () =>
+                        patchRuleForSelected({ phoneFilter: 'has_phone', restrictToKidIds: false }),
+                    },
+                    {
+                      key: 'no_phone',
+                      labelTh: '📵 เฉพาะไม่มีมือถือ',
+                      labelEn: '📵 No Phone',
+                      active:
+                        currentRule.phoneFilter === 'no_phone' &&
+                        !currentRule.restrictToKidIds,
+                      onClick: () =>
+                        patchRuleForSelected({ phoneFilter: 'no_phone', restrictToKidIds: false }),
+                    },
+                    {
+                      key: 'custom',
+                      labelTh: '✅ เลือกรายชื่อเอง',
+                      labelEn: '✅ Pick Names',
+                      active: Boolean(currentRule.restrictToKidIds),
+                      onClick: () => {
+                        const seedIds = Array.isArray(currentRule.allowedKidIds)
+                          ? currentRule.allowedKidIds
+                          : currentRule.phoneFilter === 'has_phone'
+                          ? kids.filter((k) => !withoutPhoneSet.has(k.id)).map((k) => k.id)
+                          : currentRule.phoneFilter === 'no_phone'
+                          ? kids.filter((k) => withoutPhoneSet.has(k.id)).map((k) => k.id)
+                          : kids.map((k) => k.id);
+                        patchRuleForSelected({
+                          phoneFilter: 'all',
+                          restrictToKidIds: true,
+                          allowedKidIds: seedIds,
+                        });
+                      },
+                    },
+                  ].map((opt) => (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={opt.onClick}
+                      className={`min-h-[36px] rounded-xl border px-2 py-1.5 text-[11px] font-extrabold cursor-pointer transition-colors ${
+                        opt.active
+                          ? 'border-[#114A42] bg-[#114A42] text-white'
+                          : 'border-[#DCE8E4] bg-[#F8FCFB] text-[#2E5D55] hover:bg-[#E8FAF6]'
+                      }`}
+                    >
+                      {lang === 'th' ? opt.labelTh : opt.labelEn}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Individual Kid Name Checkboxes when 'Pick Names' mode is enabled */}
+                {currentRule.restrictToKidIds && (
+                  <div className="space-y-2 pt-1 border-t border-[#E8F4F1]">
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <span className="font-bold text-[#6E5C52]">
+                        {lang === 'th' ? 'เติมรายชื่อด่วน:' : 'Quick Fill:'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          patchRuleForSelected({
+                            phoneFilter: 'all',
+                            restrictToKidIds: true,
+                            allowedKidIds: kids
+                              .filter((k) => !withoutPhoneSet.has(k.id))
+                              .map((k) => k.id),
+                          })
+                        }
+                        className="rounded-lg border border-[#8FD4C6] bg-[#E8FAF6] px-2 py-0.5 font-bold text-[#114A42] cursor-pointer"
+                      >
+                        📱 {lang === 'th' ? 'เฉพาะมีมือถือ' : 'Phone Owners'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          patchRuleForSelected({
+                            phoneFilter: 'all',
+                            restrictToKidIds: true,
+                            allowedKidIds: kids
+                              .filter((k) => withoutPhoneSet.has(k.id))
+                              .map((k) => k.id),
+                          })
+                        }
+                        className="rounded-lg border border-[#F3B7C0] bg-[#FFF0F3] px-2 py-0.5 font-bold text-[#8B1D36] cursor-pointer"
+                      >
+                        📵 {lang === 'th' ? 'เฉพาะไม่มีมือถือ' : 'No-Phone Kids'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          patchRuleForSelected({
+                            phoneFilter: 'all',
+                            restrictToKidIds: true,
+                            allowedKidIds: kids.map((k) => k.id),
+                          })
+                        }
+                        className="rounded-lg border border-[#D4C5B4] bg-white px-2 py-0.5 font-bold text-[#3D322C] cursor-pointer"
+                      >
+                        ✓ {lang === 'th' ? 'ทั้งหมด' : 'All'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          patchRuleForSelected({
+                            phoneFilter: 'all',
+                            restrictToKidIds: true,
+                            allowedKidIds: [],
+                          })
+                        }
+                        className="rounded-lg border border-[#D4C5B4] bg-white px-2 py-0.5 font-bold text-[#7B695F] cursor-pointer"
+                      >
+                        ✕ {lang === 'th' ? 'ล้าง' : 'Clear'}
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-52 overflow-y-auto pr-0.5">
+                      {filteredKids.map((kid) => {
+                        const allowedSet = new Set(currentRule.allowedKidIds ?? []);
+                        const checked = allowedSet.has(kid.id);
+                        const hasPhone = !withoutPhoneSet.has(kid.id);
+                        return (
+                          <button
+                            key={kid.id}
+                            type="button"
+                            onClick={() => toggleKidAllowedOnSelected(kid.id)}
+                            className={`rounded-xl border px-2.5 py-1.5 text-left flex items-center justify-between gap-1 cursor-pointer transition-colors ${
+                              checked
+                                ? 'border-[#114A42] bg-[#E8FAF6] text-[#114A42]'
+                                : 'border-[#E6DCD2] bg-[#FAF7F4] text-[#8B796E] opacity-75'
+                            }`}
+                          >
+                            <span className="text-xs font-bold truncate">
+                              {checked ? '☑️' : '⬜'} {kid.emoji} {kid.nickname}
+                            </span>
+                            <span className="text-[10px] shrink-0" title={hasPhone ? 'มีมือถือ' : 'ไม่มีมือถือ'}>
+                              {hasPhone ? '📱' : '📵'}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -587,7 +707,7 @@ export const CommandPermissionsEditorCard: React.FC<CommandPermissionsEditorCard
           type="submit"
           className="flex-1 min-h-[42px] rounded-xl bg-[#114A42] hover:bg-[#0D3A34] text-white text-xs sm:text-sm font-extrabold px-4 py-2 cursor-pointer"
         >
-          💾 {lang === 'th' ? 'บันทึกสถานะมือถือ & สิทธิ์ปุ่มทั้งหมด' : 'Save Phone Status & Permissions'}
+          💾 {lang === 'th' ? 'บันทึกการตั้งค่าปุ่ม & สถานะมือถือ' : 'Save Button Settings & Phone Status'}
         </button>
       </div>
     </form>

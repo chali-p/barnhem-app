@@ -806,6 +806,9 @@ export function createEmptyDaily(dateKey: string) {
     kitchenSatDone: false,
     kitchenSunDone: false,
     houseChoreDone: false,
+    trashDutyDone: false,
+    trashDutyDoneAt: null,
+    trashDutyConfirmedBy: null,
   };
 }
 

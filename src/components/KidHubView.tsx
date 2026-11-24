@@ -1897,7 +1897,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
     kid.penalty.fridayFreeDayDeductedCount === 0;
 
   const activeScheduledAnnouncements = announcements.filter(
-    (a) => getAnnouncementScheduleStatus(a, now) === 'active'
+    (a) => a.audience !== 'staff_only' && getAnnouncementScheduleStatus(a, now) === 'active'
   );
   const sortedAnnouncements = [...activeScheduledAnnouncements].sort((a, b) => {
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
@@ -2068,8 +2068,10 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
         </div>
       </div>
 
-      {/* TAMAGOTCHI VIRTUAL PET HERO STAGE (Mobile-First, No Childish Cover Banner) */}
-      <div className="rounded-[24px] sm:rounded-[32px] border-2 border-[#F2C6D0] bg-gradient-to-br from-[#FFFDF9] via-[#FFF9FA] to-[#F7FCFB] p-3.5 sm:p-5 pastel-shadow space-y-3.5">
+      {/* 2-SECTION LAYOUT: LEFT = Profile + Tamagotchi + 3 Pet Buttons | RIGHT = 4 Main Vertical Action Buttons */}
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 sm:gap-5 items-stretch">
+      {/* LEFT SECTION: PROFILE + TAMAGOTCHI + 3 PET BUTTONS */}
+      <div className="md:col-span-6 rounded-[24px] sm:rounded-[32px] border-2 border-[#F2C6D0] bg-gradient-to-br from-[#FFFDF9] via-[#FFF9FA] to-[#F7FCFB] p-3.5 sm:p-5 pastel-shadow flex flex-col justify-between gap-3.5">
         {/* Compact Kid Identity, Star Wallet & Google Sign-In Strip */}
         <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[#F3E6DE]">
           <div className="flex items-center gap-2 min-w-0">
@@ -2214,7 +2216,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                   </button>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   {PET_SPECIES_CATALOG.map((sp) => (
                     <button
                       key={sp.id}
@@ -2277,47 +2279,47 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
               : `${pet.name} is full & happy today! 💖`);
 
           return (
-            <div className="flex flex-col md:flex-row items-stretch gap-3.5">
-              {/* LCD Tamagotchi Pod */}
-              <div className="rounded-[22px] border-2 border-[#F2C6D0] bg-white px-4 py-3 flex sm:flex-col items-center justify-between sm:justify-center gap-3 md:w-52 shrink-0 shadow-2xs">
-                <PetCanvasSvg
-                  pet={pet}
-                  mood={livePet.mood}
-                  sizeClass="w-24 h-24 sm:w-28 sm:h-28 shrink-0"
-                />
-                <div className="flex-1 sm:flex-none text-left sm:text-center space-y-1 min-w-0">
-                  <div className="flex sm:justify-center items-center gap-1.5 flex-wrap">
-                    <span className="text-sm sm:text-base font-extrabold text-[#3D322C] truncate">
-                      {pet.name}
-                    </span>
-                    <span className="rounded-full bg-[#FFF0F4] border border-[#F3B7C0] px-2 py-0.5 text-[10px] font-extrabold text-[#7B2E3B]">
-                      Lv.{livePet.level}
-                    </span>
-                  </div>
-                  <div className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-extrabold border"
-                    style={{
-                      backgroundColor: speciesInfo.badgeBg,
-                      color: speciesInfo.badgeText,
-                      borderColor: speciesInfo.borderColor,
-                    }}
-                  >
-                    <span>{speciesInfo.emoji}</span>
-                    <span>{lang === 'th' ? speciesInfo.nameTh : speciesInfo.nameEn}</span>
-                  </div>
-                  <div className="text-[11px] font-bold text-[#8C5262] tabular-nums">
-                    ❤️ {livePet.affection}/{livePet.nextLevelAffection}
+            <div className="flex flex-col gap-3 flex-1 justify-between">
+              <div className="flex flex-col sm:flex-row items-stretch gap-3">
+                {/* LCD Tamagotchi Pod */}
+                <div className="rounded-[22px] border-2 border-[#F2C6D0] bg-white px-3.5 py-3 flex sm:flex-col items-center justify-between sm:justify-center gap-2.5 sm:w-40 shrink-0 shadow-2xs">
+                  <PetCanvasSvg
+                    pet={pet}
+                    mood={livePet.mood}
+                    sizeClass="w-20 h-20 sm:w-24 sm:h-24 shrink-0"
+                  />
+                  <div className="flex-1 sm:flex-none text-left sm:text-center space-y-1 min-w-0">
+                    <div className="flex sm:justify-center items-center gap-1.5 flex-wrap">
+                      <span className="text-sm font-extrabold text-[#3D322C] truncate">
+                        {pet.name}
+                      </span>
+                      <span className="rounded-full bg-[#FFF0F4] border border-[#F3B7C0] px-2 py-0.5 text-[10px] font-extrabold text-[#7B2E3B]">
+                        Lv.{livePet.level}
+                      </span>
+                    </div>
+                    <div className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold border"
+                      style={{
+                        backgroundColor: speciesInfo.badgeBg,
+                        color: speciesInfo.badgeText,
+                        borderColor: speciesInfo.borderColor,
+                      }}
+                    >
+                      <span>{speciesInfo.emoji}</span>
+                      <span>{lang === 'th' ? speciesInfo.nameTh : speciesInfo.nameEn}</span>
+                    </div>
+                    <div className="text-[11px] font-bold text-[#8C5262] tabular-nums">
+                      ❤️ {livePet.affection}/{livePet.nextLevelAffection}
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Bars + Speech + One-Tap Mobile Care Buttons */}
-              <div className="flex-1 flex flex-col justify-between gap-2.5 min-w-0">
-                <div className="space-y-2">
-                  <div className="rounded-2xl bg-[#FFF8CC] border border-[#F5DE93] px-3.5 py-2 text-xs sm:text-sm font-bold text-[#5A4614]">
+                {/* Speech + Fullness/Happiness Bars */}
+                <div className="flex-1 flex flex-col justify-center gap-2.5 min-w-0">
+                  <div className="rounded-2xl bg-[#FFF8CC] border border-[#F5DE93] px-3 py-2 text-xs font-bold text-[#5A4614] leading-snug">
                     💬 “{moodSpeech}”
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2.5 text-xs">
+                  <div className="grid grid-cols-1 gap-2 text-xs">
                     <div className="rounded-xl bg-white/90 border border-[#EAE0D8] px-3 py-2 space-y-1">
                       <div className="flex justify-between font-bold">
                         <span>🥣 {lang === 'th' ? 'ความอิ่ม' : 'Full'}</span>
@@ -2345,101 +2347,99 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                     </div>
                   </div>
                 </div>
+              </div>
 
-                {/* Quick Mobile Care Controls */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const treatName = lang === 'th' ? speciesInfo.treatTh : speciesInfo.treatEn;
-                      const { nextPet, earnedStars, remainingAfter } = getNextFedPetState(
-                        pet,
-                        25,
-                        15,
-                        6,
-                        now,
-                        todayKey
-                      );
-                      handleSavePetWithStars(
-                        nextPet,
-                        `Quick Feed Pet (${treatName})`,
-                        earnedStars,
-                        earnedStars > 0
-                          ? `🐾 ให้อาหาร ${pet.name} (${treatName}) (+${earnedStars} ⭐)`
-                          : undefined
-                      );
-                      setPetHeroToast(
-                        lang === 'th'
-                          ? earnedStars > 0
-                            ? `${speciesInfo.soundTh} ป้อน${treatName}ให้ ${pet.name} แล้ว! รับ +${earnedStars} ⭐ (เหลือรับดาวได้อีก ${remainingAfter} มื้อวันนี้)`
-                            : `${speciesInfo.soundTh} ${pet.name} กิน${treatName} อร่อยจัง! (+6 ❤️ · วันนี้รับดาวครบ 3 มื้อแล้ว)`
-                          : earnedStars > 0
-                          ? `Fed ${pet.name}! +${earnedStars} ⭐ (${remainingAfter} left today)`
-                          : `Fed ${pet.name}!`
-                      );
-                    }}
-                    className="min-h-[48px] rounded-2xl border-2 border-[#6CCBC0] bg-[#DCF7F2] hover:bg-[#C9F0E9] px-3 py-2 text-xs sm:text-sm font-extrabold text-[#114A42] cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98]"
-                  >
-                    <span>{speciesInfo.treatEmoji}</span>
-                    <span className="truncate">
-                      {feedStars.canEarnStars
-                        ? lang === 'th'
-                          ? `ให้อาหาร (+${PET_FEED_STAR_REWARD} ⭐)`
-                          : `Feed (+${PET_FEED_STAR_REWARD} ⭐)`
-                        : lang === 'th'
-                        ? `ให้อาหาร (${feedStars.usedToday}/3 ✓)`
-                        : `Feed (${feedStars.usedToday}/3)`}
-                    </span>
-                  </button>
+              {/* 3 Quick Pet Care Buttons in Left Section */}
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const treatName = lang === 'th' ? speciesInfo.treatTh : speciesInfo.treatEn;
+                    const { nextPet, earnedStars, remainingAfter } = getNextFedPetState(
+                      pet,
+                      25,
+                      15,
+                      6,
+                      now,
+                      todayKey
+                    );
+                    handleSavePetWithStars(
+                      nextPet,
+                      `Quick Feed Pet (${treatName})`,
+                      earnedStars,
+                      earnedStars > 0
+                        ? `🐾 ให้อาหาร ${pet.name} (${treatName}) (+${earnedStars} ⭐)`
+                        : undefined
+                    );
+                    setPetHeroToast(
+                      lang === 'th'
+                        ? earnedStars > 0
+                          ? `${speciesInfo.soundTh} ป้อน${treatName}ให้ ${pet.name} แล้ว! รับ +${earnedStars} ⭐ (เหลือรับดาวได้อีก ${remainingAfter} มื้อวันนี้)`
+                          : `${speciesInfo.soundTh} ${pet.name} กิน${treatName} อร่อยจัง! (+6 ❤️ · วันนี้รับดาวครบ 3 มื้อแล้ว)`
+                        : earnedStars > 0
+                        ? `Fed ${pet.name}! +${earnedStars} ⭐ (${remainingAfter} left today)`
+                        : `Fed ${pet.name}!`
+                    );
+                  }}
+                  className="min-h-[46px] rounded-2xl border-2 border-[#6CCBC0] bg-[#DCF7F2] hover:bg-[#C9F0E9] px-2 py-2 text-[11px] sm:text-xs font-extrabold text-[#114A42] cursor-pointer flex items-center justify-center gap-1 active:scale-[0.98]"
+                >
+                  <span className="shrink-0">{speciesInfo.treatEmoji}</span>
+                  <span className="truncate">
+                    {feedStars.canEarnStars
+                      ? lang === 'th'
+                        ? `ให้อาหาร (+${PET_FEED_STAR_REWARD}⭐)`
+                        : `Feed (+${PET_FEED_STAR_REWARD}⭐)`
+                      : lang === 'th'
+                      ? `ให้อาหาร (${feedStars.usedToday}/3 ✓)`
+                      : `Feed (${feedStars.usedToday}/3)`}
+                  </span>
+                </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const nextPet: PetCompanionConfig = {
-                        ...pet,
-                        hunger: livePet.hunger,
-                        happiness: Math.min(100, livePet.happiness + 18),
-                        affection: livePet.affection + 5,
-                        lastPlayedAt: now.toISOString(),
-                      };
-                      handleSavePetWithStars(nextPet, `Quick Play Pet (${pet.name})`);
-                      setPetHeroToast(
-                        lang === 'th'
-                          ? `${speciesInfo.soundTh} เล่นกับ ${pet.name} สนุกสุดๆ (+18% สุข · +5 ❤️)`
-                          : `Played with ${pet.name}! (+18% Happy)`
-                      );
-                    }}
-                    className="min-h-[48px] rounded-2xl border-2 border-[#F3B7C0] bg-[#FFF0F4] hover:bg-[#FFE3EB] px-3 py-2 text-xs sm:text-sm font-extrabold text-[#7B2E3B] cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98]"
-                  >
-                    <span>🎾</span>
-                    <span>{lang === 'th' ? 'เล่นกับน้อง' : 'Play'}</span>
-                  </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextPet: PetCompanionConfig = {
+                      ...pet,
+                      hunger: livePet.hunger,
+                      happiness: Math.min(100, livePet.happiness + 18),
+                      affection: livePet.affection + 5,
+                      lastPlayedAt: now.toISOString(),
+                    };
+                    handleSavePetWithStars(nextPet, `Quick Play Pet (${pet.name})`);
+                    setPetHeroToast(
+                      lang === 'th'
+                        ? `${speciesInfo.soundTh} เล่นกับ ${pet.name} สนุกสุดๆ (+18% สุข · +5 ❤️)`
+                        : `Played with ${pet.name}! (+18% Happy)`
+                    );
+                  }}
+                  className="min-h-[46px] rounded-2xl border-2 border-[#F3B7C0] bg-[#FFF0F4] hover:bg-[#FFE3EB] px-2 py-2 text-[11px] sm:text-xs font-extrabold text-[#7B2E3B] cursor-pointer flex items-center justify-center gap-1 active:scale-[0.98]"
+                >
+                  <span className="shrink-0">🎾</span>
+                  <span className="truncate">{lang === 'th' ? 'เล่นกับน้อง' : 'Play'}</span>
+                </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setSubModal('pet_modal')}
-                    className="min-h-[48px] rounded-2xl border-2 border-[#C8B7EB] bg-[#EFE8FC] hover:bg-[#E4DAF9] px-3 py-2 text-xs sm:text-sm font-extrabold text-[#3E2B63] cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98]"
-                  >
-                    <span>🐾</span>
-                    <span className="truncate">
-                      {lang === 'th' ? '10 สายพันธุ์ & แต่งตัว' : '10 Breeds & Outfit'}
-                    </span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setSubModal('pet_modal')}
+                  className="min-h-[46px] rounded-2xl border-2 border-[#C8B7EB] bg-[#EFE8FC] hover:bg-[#E4DAF9] px-2 py-2 text-[11px] sm:text-xs font-extrabold text-[#3E2B63] cursor-pointer flex items-center justify-center gap-1 active:scale-[0.98]"
+                >
+                  <span className="shrink-0">🐾</span>
+                  <span className="truncate">
+                    {lang === 'th' ? '10 สายพันธุ์' : '10 Breeds'}
+                  </span>
+                </button>
               </div>
             </div>
           );
         })()}
       </div>
 
-      {/* MENU AREA: ONLY 3 CORE BUTTONS (ไปโรงเรียน · กลับบ้าน · ทำการบ้าน) + 1 UNIFIED BUTTON FOR EVERYTHING ELSE */}
-      <div className="space-y-2.5 sm:space-y-3">
-        {/* 3 Primary Daily Buttons */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3">
+      {/* RIGHT SECTION: 4 MAIN ACTION BUTTONS VERTICAL (ไปโรงเรียน · กลับบ้าน · ทำการบ้าน · รวมปุ่มทั้งหมด) */}
+      <div className="md:col-span-6 grid grid-cols-1 gap-2.5 sm:gap-3">
           <button
             type="button"
             onClick={() => setSubModal('shift_morning')}
-            className="min-h-[66px] sm:min-h-[72px] rounded-2xl border-2 border-[#F0D98D] bg-[#FFFBEA] hover:bg-[#FFF5CC] px-3.5 sm:px-4 py-2.5 sm:py-3 text-left flex items-center justify-between gap-3 transition-colors active:scale-[0.99] cursor-pointer shadow-xs"
+            className="min-h-[66px] sm:min-h-[74px] rounded-2xl border-2 border-[#F0D98D] bg-[#FFFBEA] hover:bg-[#FFF5CC] px-3.5 sm:px-4 py-2.5 sm:py-3 text-left flex items-center justify-between gap-3 transition-colors active:scale-[0.99] cursor-pointer shadow-xs"
           >
             <div className="flex items-center gap-3 min-w-0">
               <span className="h-10 w-10 sm:h-11 sm:w-11 rounded-xl bg-white border border-[#F3E4AF] flex items-center justify-center text-xl sm:text-2xl shrink-0">
@@ -2472,7 +2472,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
           <button
             type="button"
             onClick={() => setSubModal('shift_afternoon')}
-            className="min-h-[66px] sm:min-h-[72px] rounded-2xl border-2 border-[#A5DFD4] bg-[#EFFAF7] hover:bg-[#E1F6F1] px-3.5 sm:px-4 py-2.5 sm:py-3 text-left flex items-center justify-between gap-3 transition-colors active:scale-[0.99] cursor-pointer shadow-xs"
+            className="min-h-[66px] sm:min-h-[74px] rounded-2xl border-2 border-[#A5DFD4] bg-[#EFFAF7] hover:bg-[#E1F6F1] px-3.5 sm:px-4 py-2.5 sm:py-3 text-left flex items-center justify-between gap-3 transition-colors active:scale-[0.99] cursor-pointer shadow-xs"
           >
             <div className="flex items-center gap-3 min-w-0">
               <span className="h-10 w-10 sm:h-11 sm:w-11 rounded-xl bg-white border border-[#BCE8DF] flex items-center justify-center text-xl sm:text-2xl shrink-0">
@@ -2505,7 +2505,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
           <button
             type="button"
             onClick={() => setSubModal('shift_night')}
-            className="min-h-[66px] sm:min-h-[72px] rounded-2xl border-2 border-[#CFC2EB] bg-[#F5F1FC] hover:bg-[#ECE4FA] px-3.5 sm:px-4 py-2.5 sm:py-3 text-left flex items-center justify-between gap-3 transition-colors active:scale-[0.99] cursor-pointer shadow-xs"
+            className="min-h-[66px] sm:min-h-[74px] rounded-2xl border-2 border-[#CFC2EB] bg-[#F5F1FC] hover:bg-[#ECE4FA] px-3.5 sm:px-4 py-2.5 sm:py-3 text-left flex items-center justify-between gap-3 transition-colors active:scale-[0.99] cursor-pointer shadow-xs"
           >
             <div className="flex items-center gap-3 min-w-0">
               <span className="h-10 w-10 sm:h-11 sm:w-11 rounded-xl bg-white border border-[#DDD3F2] flex items-center justify-center text-xl sm:text-2xl shrink-0">
@@ -2534,7 +2534,6 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
               <span className="text-sm font-extrabold text-[#2F685E] shrink-0">✓</span>
             )}
           </button>
-        </div>
 
         {/* Single Combined Button Hiding All Other Buttons & Utilities */}
         {(() => {
@@ -2547,14 +2546,14 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
             <button
               type="button"
               onClick={() => setSubModal('all_tools_modal')}
-              className="w-full min-h-[54px] rounded-2xl border-2 border-[#E7DAD0] bg-white hover:bg-[#FAF5EF] px-4 sm:px-5 py-2.5 sm:py-3 flex items-center justify-between gap-3 transition-colors active:scale-[0.995] cursor-pointer shadow-xs"
+              className="w-full min-h-[66px] sm:min-h-[74px] rounded-2xl border-2 border-[#E7DAD0] bg-white hover:bg-[#FAF5EF] px-3.5 sm:px-4 py-2.5 sm:py-3 flex items-center justify-between gap-3 transition-colors active:scale-[0.995] cursor-pointer shadow-xs"
             >
               <div className="flex items-center gap-3 min-w-0">
-                <span className="h-9 w-9 rounded-xl bg-[#FFF6EA] border border-[#EED8BE] flex items-center justify-center text-lg shrink-0">
+                <span className="h-10 w-10 sm:h-11 sm:w-11 rounded-xl bg-[#FFF6EA] border border-[#EED8BE] flex items-center justify-center text-xl sm:text-2xl shrink-0">
                   🧰
                 </span>
                 <div className="min-w-0 text-left">
-                  <div className="text-sm font-extrabold text-[#3D322C] truncate">
+                  <div className="text-sm sm:text-base font-extrabold text-[#3D322C] truncate">
                     {lang === 'th'
                       ? 'รวมปุ่มทั้งหมด & เมนูเพิ่มเติม'
                       : 'All Menus & Extra Tools'}
@@ -2579,6 +2578,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
             </button>
           );
         })()}
+      </div>
       </div>
 
       {/* ---------------- SUB-MODALS ---------------- */}

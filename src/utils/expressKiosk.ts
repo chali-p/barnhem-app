@@ -1,4 +1,4 @@
-import { AppSettings, CustomQuickCommand, Language, Member } from '../types/barnhem';
+import { AppSettings, CommandAuthMode, CustomQuickCommand, Language, Member } from '../types/barnhem';
 import { applyMorningStreakOnTime } from './houseChores';
 import { applyDailySchoolDeduction, getEconomyConfig, isKidAwayOnDate } from './piggyBank';
 import { getDateKey, getMinutesOfDay, getTomorrowDateKey, isPublicHoliday } from './timeRules';
@@ -888,19 +888,66 @@ export function getCommandDenialReason(
   };
 }
 
+export function getCommandAuthMode(
+  commandId: string,
+  settings?: Partial<AppSettings>
+): CommandAuthMode {
+  const mode = settings?.commandPermissions?.[commandId]?.authMode;
+  if (mode === 'kid_pin' || mode === 'self_tap' || mode === 'staff_pin') {
+    return mode;
+  }
+  return 'staff_pin';
+}
+
+export function getCommandAuthModeMeta(
+  mode: CommandAuthMode,
+  lang: Language
+): { icon: string; shortLabel: string; detailLabel: string } {
+  if (mode === 'kid_pin') {
+    return {
+      icon: '🔑',
+      shortLabel: lang === 'th' ? 'น้องใส่ PIN เอง' : 'Kid PIN',
+      detailLabel:
+        lang === 'th'
+          ? 'น้องกดเปิดปุ่มเองได้เลย ไม่ต้องรอพี่เลี้ยง · ใส่ PIN 4 หลักของตัวเอง'
+          : 'Kids open directly · 4-digit kid PIN required',
+    };
+  }
+  if (mode === 'self_tap') {
+    return {
+      icon: '👆',
+      shortLabel: lang === 'th' ? 'กดชื่อได้เลย' : 'Direct Tap',
+      detailLabel:
+        lang === 'th'
+          ? 'น้องกดชื่อตัวเองได้เลย ไม่ต้องรอพี่เลี้ยงและไม่ต้องใส่รหัส'
+          : 'Kids tap their own name directly without a PIN',
+    };
+  }
+  return {
+    icon: '🔐',
+    shortLabel: lang === 'th' ? 'พี่เลี้ยงใส่ PIN' : 'Staff PIN',
+    detailLabel:
+      lang === 'th'
+        ? 'ต้องให้พี่เลี้ยงใส่รหัส PIN ก่อนจึงแสดงรายชื่อน้อง'
+        : 'Staff PIN required before showing kids list',
+  };
+}
+
 export function getCommandPermissionSummary(
   commandId: string,
   kids: Member[],
   lang: Language,
   settings?: Partial<AppSettings>
-): { restricted: boolean; eligibleCount: number; badge: string } {
+): { restricted: boolean; eligibleCount: number; badge: string; authMode: CommandAuthMode } {
   const rule = settings?.commandPermissions?.[commandId];
+  const authMode = getCommandAuthMode(commandId, settings);
   const eligibleCount = kids.filter((k) => canKidUseCommand(commandId, k, settings)).length;
   if (!rule || ((rule.phoneFilter ?? 'all') === 'all' && !rule.restrictToKidIds)) {
     return {
       restricted: false,
       eligibleCount: kids.length,
       badge: lang === 'th' ? 'ทุกคน' : 'All',
+      authMode,
     };
   }
   if (rule.phoneFilter === 'has_phone' && !rule.restrictToKidIds) {
@@ -911,6 +958,7 @@ export function getCommandPermissionSummary(
         lang === 'th'
           ? `📱 เฉพาะมีมือถือ (${eligibleCount}/${kids.length})`
           : `📱 Phone Only (${eligibleCount}/${kids.length})`,
+      authMode,
     };
   }
   if (rule.phoneFilter === 'no_phone' && !rule.restrictToKidIds) {
@@ -921,6 +969,7 @@ export function getCommandPermissionSummary(
         lang === 'th'
           ? `📵 เฉพาะไม่มีมือถือ (${eligibleCount}/${kids.length})`
           : `📵 No Phone (${eligibleCount}/${kids.length})`,
+      authMode,
     };
   }
   return {
@@ -930,6 +979,7 @@ export function getCommandPermissionSummary(
       lang === 'th'
         ? `🎯 เลือกรายชื่อ (${eligibleCount}/${kids.length})`
         : `🎯 Custom (${eligibleCount}/${kids.length})`,
+    authMode,
   };
 }
 
@@ -1333,6 +1383,21 @@ export function evaluateOneTapHomeAction(
   }
 
   if (actionId === 'night_homework_permission') {
+    if (kid.daily.homeworkRegisteredSubject && !detailOverride?.trim()) {
+      return {
+        success: true,
+        emoji: '✅',
+        starsDelta: 0,
+        bannerTitle:
+          lang === 'th'
+            ? `น้อง${kid.nickname} ขออนุญาตทำการบ้านวันนี้แล้ว`
+            : `${kid.nickname} Homework Already Permitted`,
+        bannerSubtitle:
+          lang === 'th'
+            ? `บันทึกขออนุญาตไว้เรียบร้อยแล้วค่ะ (ใช้เพิ่มได้ถึง ${formatThaiCurfewClock(getEffectiveHomeworkCurfewMins(settings))})`
+            : 'Already registered today.',
+      };
+    }
     const cleanChoice = (detailOverride ?? '').trim().slice(0, 100) || 'ทำการบ้าน';
     const curfewMins = getEffectiveHomeworkCurfewMins(settings);
     const curfewTh = formatThaiCurfewClock(curfewMins);

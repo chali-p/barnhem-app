@@ -20,6 +20,8 @@ interface WeeklyActivityLogPanelProps {
   onDeleteLog: (logId: string) => void;
   onClearWeeklyLogs: () => void;
   onShowAlert: (payload: ModalAlertPayload) => void;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 const STATUS_META: Record<
@@ -119,6 +121,8 @@ export const WeeklyActivityLogPanel: React.FC<WeeklyActivityLogPanelProps> = ({
   onDeleteLog,
   onClearWeeklyLogs,
   onShowAlert,
+  collapsed = false,
+  onToggleCollapse,
 }) => {
   const [selectedKidId, setSelectedKidId] = useState<string>(kids[0]?.id ?? '');
   const [noteInput, setNoteInput] = useState('');
@@ -303,10 +307,28 @@ export const WeeklyActivityLogPanel: React.FC<WeeklyActivityLogPanelProps> = ({
           >
             🧹 {lang === 'th' ? 'ล้างข้อมูลสัปดาห์นี้' : 'Clear Weekly Logs'}
           </button>
+
+          {onToggleCollapse && (
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              className="min-h-[42px] rounded-2xl border border-[#B9E8DF] bg-[#E8FAF6] hover:bg-[#D5F4EE] text-[#114A42] px-3 py-2 text-xs font-bold cursor-pointer whitespace-nowrap"
+            >
+              {collapsed
+                ? lang === 'th'
+                  ? '👁️ แสดง ▾'
+                  : '👁️ Show ▾'
+                : lang === 'th'
+                ? '🙈 ซ่อน ▴'
+                : '🙈 Hide ▴'}
+            </button>
+          )}
         </div>
       </div>
 
-      {isSundayEvening && (
+      {!collapsed && (
+        <>
+          {isSundayEvening && (
         <div className="rounded-2xl border-2 border-[#F0D568] bg-[#FFF9DB] px-4 py-3 text-xs font-bold text-[#6B4E08] flex flex-wrap items-center justify-between gap-2">
           <span>
             🌇{' '}
@@ -500,6 +522,8 @@ export const WeeklyActivityLogPanel: React.FC<WeeklyActivityLogPanelProps> = ({
             );
           })}
         </div>
+      )}
+        </>
       )}
     </section>
   );

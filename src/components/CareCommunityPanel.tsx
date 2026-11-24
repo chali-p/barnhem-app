@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Announcement,
   DeedRedemption,
@@ -10,9 +10,11 @@ import {
   OutingTrip,
   PrivateCareMessage,
   SecretPoll,
+  SickReport,
   SupplyRequest,
 } from '../types/barnhem';
 import { getAnnouncementScheduleStatus } from '../utils/festivalAndEvents';
+import { getDateKey } from '../utils/timeRules';
 
 interface CareCommunityPanelProps {
   authorName: string;
@@ -24,8 +26,9 @@ interface CareCommunityPanelProps {
   privateMessages: PrivateCareMessage[];
   lostFoundItems: LostFoundItem[];
   supplyRequests: SupplyRequest[];
-  kindnessCards: KindnessCard[];
+  kindnessCards?: KindnessCard[];
   deedRedemptions: DeedRedemption[];
+  sickReports?: SickReport[];
   lang: Language;
   onAddAnnouncement: (ann: Announcement) => void;
   onTogglePinAnnouncement: (annId: string) => void;
@@ -43,9 +46,15 @@ interface CareCommunityPanelProps {
   onUpdateSupplyStatus: (reqId: string, status: 'approved' | 'delivered', staffName: string) => void;
   onAssignDeedRedemption: (deed: DeedRedemption) => void;
   onApproveDeedRedemption: (deedId: string) => void;
+  onAddSickReport?: (report: SickReport) => void;
+  onResolveSick?: (reportId: string) => void;
   onShowAlert: (payload: ModalAlertPayload) => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  requestedTab?: {
+    tab: 'announcements' | 'polls' | 'trips' | 'inbox' | 'lost_found' | 'supplies' | 'deeds' | 'sick';
+    seq: number;
+  } | null;
 }
 
 export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
@@ -58,8 +67,8 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
   privateMessages,
   lostFoundItems,
   supplyRequests,
-  kindnessCards,
   deedRedemptions,
+  sickReports = [],
   lang,
   onAddAnnouncement,
   onTogglePinAnnouncement,
@@ -77,13 +86,22 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
   onUpdateSupplyStatus,
   onAssignDeedRedemption,
   onApproveDeedRedemption,
+  onAddSickReport,
+  onResolveSick,
   onShowAlert,
   collapsed = false,
   onToggleCollapse,
+  requestedTab = null,
 }) => {
   const [tab, setTab] = useState<
-    'announcements' | 'polls' | 'trips' | 'inbox' | 'lost_found' | 'supplies' | 'deeds' | 'kindness'
+    'announcements' | 'polls' | 'trips' | 'inbox' | 'lost_found' | 'supplies' | 'deeds' | 'sick'
   >('announcements');
+
+  useEffect(() => {
+    if (requestedTab?.tab) {
+      setTab(requestedTab.tab);
+    }
+  }, [requestedTab]);
 
   // Announcement form state
   const [annTitle, setAnnTitle] = useState('');
@@ -117,6 +135,11 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
   const [deedReduction, setDeedReduction] = useState(20);
   const [deedStars, setDeedStars] = useState(5);
 
+  // Illness report form state
+  const [sickKidId, setSickKidId] = useState('');
+  const [sickSymptoms, setSickSymptoms] = useState('มีไข้ / ตัวร้อน');
+  const [sickDetails, setSickDetails] = useState('');
+
   // Reply drafts per private message
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
 
@@ -125,6 +148,7 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
   const unclaimedLostCount = lostFoundItems.filter((i) => i.status !== 'claimed').length;
   const pendingSupplyCount = supplyRequests.filter((s) => s.status === 'pending').length;
   const pendingDeedCount = deedRedemptions.filter((d) => d.status !== 'approved').length;
+  const activeSickReports = sickReports.filter((r) => !r.resolved);
 
   const handlePublishAnnouncement = (e: React.FormEvent) => {
     e.preventDefault();
@@ -265,7 +289,7 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
                 { id: 'lost_found', labelTh: `🔎 ของหาย (${unclaimedLostCount})`, labelEn: `🔎 Lost & Found (${unclaimedLostCount})` },
                 { id: 'supplies', labelTh: `📦 ขอเบิกของ (${pendingSupplyCount})`, labelEn: `📦 Supplies (${pendingSupplyCount})` },
                 { id: 'deeds', labelTh: `⚖️ ไถ่ค่าปรับ (${pendingDeedCount})`, labelEn: `⚖️ Fine Deeds (${pendingDeedCount})` },
-                { id: 'kindness', labelTh: `💛 คำขอบคุณ (${kindnessCards.length})`, labelEn: `💛 Kindness (${kindnessCards.length})` },
+                { id: 'sick', labelTh: `🤒 แจ้งเจ็บป่วย (${activeSickReports.length})`, labelEn: `🤒 Illness (${activeSickReports.length})` },
               ].map((item) => (
                 <button
                   key={item.id}
@@ -447,9 +471,12 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
                 >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="font-bold text-[#3D322C]">
+                      {a.audience === 'staff_only' ? '👩‍🏫 [งานพี่เลี้ยง] ' : ''}
                       {a.pinned ? '📌 ' : ''}
                       {a.priority === 'urgent' ? '🚨 ' : ''}
                       {a.title}
+                      {a.audience === 'staff_only' && a.assignedTo ? ` → ${a.assignedTo}` : ''}
+                      {a.taskCompleted ? ' ✅' : ''}
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span
@@ -1111,22 +1138,145 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
         </div>
       )}
 
-      {/* TAB 8: KINDNESS WALL */}
-      {tab === 'kindness' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-80 overflow-y-auto">
-          {kindnessCards.length === 0 ? (
-            <p className="text-sm text-[#7B695F]">{lang === 'th' ? 'ยังไม่มีการ์ดคำขอบคุณ' : 'No kindness cards yet.'}</p>
-          ) : (
-            kindnessCards.map((card) => (
-              <div key={card.id} className="rounded-2xl border border-[#F3B7C0] bg-[#FADADD]/30 p-3.5 text-sm space-y-1">
-                <div className="font-bold text-[#3D322C]">
-                  💛 จากน้อง{card.fromNickname} ➔ ถึง {card.toNickname}
-                </div>
-                <p className="text-xs text-[#5E4E45]">{card.message}</p>
-                <div className="text-[11px] text-[#8D7B70]">{card.dateKey}</div>
+      {/* TAB 8: ILLNESS REPORTS */}
+      {tab === 'sick' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          {onAddSickReport && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const target = kids.find((k) => k.id === sickKidId);
+                if (!target) {
+                  onShowAlert({
+                    icon: '🤒',
+                    title: lang === 'th' ? 'กรุณาเลือกชื่อน้อง' : 'Select a Kid',
+                    message:
+                      lang === 'th'
+                        ? 'เลือกชื่อน้องที่เจ็บป่วยหรือต้องการแจ้งอาการก่อนบันทึกค่ะ'
+                        : 'Please select the kid before submitting.',
+                    tone: 'yellow',
+                  });
+                  return;
+                }
+                const nowDate = new Date();
+                onAddSickReport({
+                  id: `sick_${Date.now()}`,
+                  kidId: target.id,
+                  kidNickname: target.nickname,
+                  dateKey: getDateKey(nowDate),
+                  reportedAt: nowDate.toISOString(),
+                  symptoms: sickSymptoms,
+                  details: sickDetails.trim() || '-',
+                  resolved: false,
+                });
+                setSickDetails('');
+                onShowAlert({
+                  icon: '🤒💚',
+                  title: lang === 'th' ? 'บันทึกแจ้งเจ็บป่วยเรียบร้อย!' : 'Illness Report Saved!',
+                  message:
+                    lang === 'th'
+                      ? `บันทึกอาการของน้อง${target.nickname} (${sickSymptoms}) และยกเว้นค่าปรับสายวันนี้เรียบร้อยค่ะ`
+                      : `Recorded illness for ${target.nickname} (${sickSymptoms}).`,
+                  tone: 'mint',
+                });
+              }}
+              className="lg:col-span-5 rounded-2xl bg-[#FFFDF9] border border-[#F3B7C0] p-4 space-y-2.5 text-sm"
+            >
+              <div className="font-bold text-[#8B1D36]">
+                🤒 {lang === 'th' ? 'บันทึกแจ้งเจ็บป่วย / ไม่สบาย' : 'Report Kid Illness'}
               </div>
-            ))
+              <select
+                value={sickKidId}
+                onChange={(e) => setSickKidId(e.target.value)}
+                className="w-full rounded-xl border border-[#F3B7C0] bg-white px-3 py-2 text-xs font-bold text-[#3D322C]"
+              >
+                <option value="">-- เลือกชื่อน้อง --</option>
+                {kids.map((k) => (
+                  <option key={k.id} value={k.id}>
+                    {k.emoji} {k.nickname} (กลุ่ม {k.group})
+                  </option>
+                ))}
+              </select>
+              <div className="flex flex-wrap gap-1.5">
+                {['มีไข้ / ตัวร้อน', 'ปวดหัว / เวียนหัว', 'ปวดท้อง', 'เจ็บคอ / ไอ', 'ปวดเมื่อย / บาดเจ็บ'].map(
+                  (sym) => (
+                    <button
+                      key={sym}
+                      type="button"
+                      onClick={() => setSickSymptoms(sym)}
+                      className={`rounded-xl px-2.5 py-1 text-xs font-semibold border cursor-pointer ${
+                        sickSymptoms === sym
+                          ? 'bg-[#FADADD] border-[#E66C84] text-[#702D22]'
+                          : 'bg-white border-[#EBD8C3] text-[#6E5C52]'
+                      }`}
+                    >
+                      {sym}
+                    </button>
+                  )
+                )}
+              </div>
+              <textarea
+                rows={2}
+                value={sickDetails}
+                onChange={(e) => setSickDetails(e.target.value)}
+                placeholder={lang === 'th' ? 'รายละเอียดอาการเพิ่มเติม หรือยาที่ให้รับประทาน...' : 'Symptom details...'}
+                className="w-full rounded-xl border border-[#EBD8C3] bg-white px-3 py-2 text-xs"
+              />
+              <button
+                type="submit"
+                className="w-full min-h-[42px] rounded-2xl bg-[#8B1D36] hover:bg-[#6E1529] text-white font-bold cursor-pointer"
+              >
+                🚑 {lang === 'th' ? 'บันทึกแจ้งอาการเจ็บป่วย' : 'Submit Illness Report'}
+              </button>
+            </form>
           )}
+
+          <div className={`${onAddSickReport ? 'lg:col-span-7' : 'lg:col-span-12'} space-y-2.5 max-h-80 overflow-y-auto`}>
+            {sickReports.length === 0 ? (
+              <p className="text-sm text-[#7B695F]">
+                {lang === 'th' ? 'ยังไม่มีรายการแจ้งเจ็บป่วยในตอนนี้ค่ะ 💚' : 'No illness reports right now.'}
+              </p>
+            ) : (
+              sickReports.slice(0, 20).map((rep) => (
+                <div
+                  key={rep.id}
+                  className={`rounded-2xl border p-3.5 flex flex-wrap items-center justify-between gap-2 text-sm ${
+                    rep.resolved
+                      ? 'border-[#E6DCD2] bg-[#FAF6F1] opacity-80'
+                      : 'border-[#F3B7C0] bg-[#FFF5F7]'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="font-bold text-[#3D322C]">
+                      {rep.resolved ? '✅' : '🤒'} น้อง{rep.kidNickname} — {rep.symptoms}
+                    </div>
+                    <div className="text-xs text-[#5E4E45]">{rep.details}</div>
+                    <div className="text-[11px] text-[#7B695F] tabular-nums mt-0.5">
+                      {new Date(rep.reportedAt).toLocaleString(lang === 'th' ? 'th-TH' : 'en-US')}
+                      {rep.resolved ? ' · หายป่วยแล้ว' : ' · กำลังดูแล'}
+                    </div>
+                  </div>
+                  {!rep.resolved && onResolveSick && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onResolveSick(rep.id);
+                        onShowAlert({
+                          icon: '💚',
+                          title: lang === 'th' ? 'ปิดเคสอาการป่วยแล้ว' : 'Sick Case Closed',
+                          message: `${rep.kidNickname} ${lang === 'th' ? 'หายป่วยเรียบร้อยแล้ว!' : 'recovered!'}`,
+                          tone: 'mint',
+                        });
+                      }}
+                      className="rounded-xl bg-[#D4F0F0] hover:bg-[#B8E5E1] px-3.5 py-2 text-xs font-bold text-[#214F4B] cursor-pointer whitespace-nowrap"
+                    >
+                      ✅ {lang === 'th' ? 'หายป่วยแล้ว' : 'Recovered'}
+                    </button>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
         </div>
       )}
         </>
