@@ -1197,14 +1197,14 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                     }`}
                   >
                     {z.done
-                      ? `✅ ${lang === 'th' ? 'ทิ้งขยะแล้ว' : 'Cleared'}${doneTime ? ` · ${doneTime}` : ''}${
+                      ? `✅ ${lang === 'th' ? 'ทิ้งแล้ว' : 'Cleared'}${doneTime ? ` · ${doneTime}` : ''}${
                           z.member?.daily.trashDutyConfirmedBy
                             ? ` (${z.member.daily.trashDutyConfirmedBy})`
                             : ''
                         }`
                       : trashToday.isTrashDayToday
-                      ? `⏳ ${lang === 'th' ? 'รอทิ้งขยะวันนี้ (เย็น)' : 'Pending today'}`
-                      : `🕒 ${lang === 'th' ? 'รอรอบวันพุธ / อาทิตย์' : 'Next Wed / Sun'}`}
+                      ? `⏳ ${lang === 'th' ? 'ยังไม่ทิ้ง · เวรวันนี้ (เย็น)' : 'Not cleared yet · Today (evening)'}`
+                      : `⏳ ${lang === 'th' ? 'ยังไม่ทิ้ง · รอรอบวันพุธ / อาทิตย์' : 'Not cleared yet · Wed / Sun'}`}
                   </div>
                 </div>
                 {onUpdateKid && (
@@ -1212,37 +1212,6 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                     type="button"
                     onClick={() => {
                       const nextDone = !z.done;
-                      if (linkedKidMember && linkedKidMember.id === z.assignee.kidId) {
-                        onUpdateKid(
-                          z.assignee.kidId,
-                          (prev) => ({
-                            ...prev,
-                            daily: {
-                              ...prev.daily,
-                              dateKey: todayKey,
-                              trashDutyDone: nextDone,
-                              trashDutyDoneAt: nextDone ? now.toISOString() : null,
-                              trashDutyConfirmedBy: nextDone ? linkedKidMember.nickname : null,
-                            },
-                          }),
-                          `Home Trash Duty (${z.zone}: ${nextDone ? 'Done' : 'Reset'})`
-                        );
-                        onShowAlert({
-                          icon: nextDone ? '🗑️✅' : '↩️',
-                          title: nextDone
-                            ? lang === 'th'
-                              ? 'บันทึกทิ้งขยะแล้ว!'
-                              : 'Trash Cleared!'
-                            : lang === 'th'
-                            ? 'รีเซ็ตสถานะทิ้งขยะแล้ว'
-                            : 'Trash Status Reset',
-                          message: `${lang === 'th' ? z.zoneLabelTh : z.zoneLabelEn} (${
-                            lang === 'th' ? z.assignee.displayNameTh : z.assignee.displayNameEn
-                          })`,
-                          tone: nextDone ? 'mint' : 'yellow',
-                        });
-                        return;
-                      }
                       setTrashPinInput('');
                       setTrashConfirmTarget({
                         zone: z.zone,
@@ -1252,19 +1221,28 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                         nextDone,
                       });
                     }}
+                    title={
+                      z.done
+                        ? lang === 'th'
+                          ? 'ทิ้งแล้ว · กดเพื่อแก้ไขสถานะ (ยืนยันด้วยรหัส PIN)'
+                          : 'Cleared · Click to reset with PIN'
+                        : lang === 'th'
+                        ? 'กดเพื่อกรอกรหัส PIN ของตัวเองยืนยันหลังทิ้งขยะเสร็จ'
+                        : 'Click to verify with your 4-digit PIN after clearing trash'
+                    }
                     className={`min-h-[38px] rounded-xl border px-3 py-1.5 text-[11px] font-extrabold cursor-pointer whitespace-nowrap shrink-0 transition-colors ${
                       z.done
-                        ? 'border-[#C9DDD7] bg-white hover:bg-[#FAF5EF] text-[#5E4E45]'
-                        : 'border-[#8AD9CA] bg-white hover:bg-[#E2F7F1] text-[#114A42]'
+                        ? 'border-[#8AD9CA] bg-[#E2F7F1] hover:bg-[#D0F1E8] text-[#114A42]'
+                        : 'border-[#E6C87A] bg-white hover:bg-[#FFF8E1] text-[#7A5411]'
                     }`}
                   >
                     {z.done
                       ? lang === 'th'
-                        ? '↩️ แก้ไข'
-                        : 'Undo'
+                        ? '✅ ทิ้งแล้ว'
+                        : '✅ Cleared'
                       : lang === 'th'
-                      ? '✓ ทิ้งแล้ว'
-                      : '✓ Done'}
+                      ? '🔑 ยืนยันรหัส'
+                      : '🔑 Verify PIN'}
                   </button>
                 )}
               </div>
@@ -3895,16 +3873,20 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                   🗑️{' '}
                   {trashConfirmTarget.nextDone
                     ? lang === 'th'
-                      ? `ยืนยันทิ้งขยะ (${trashConfirmTarget.displayName})`
-                      : `Confirm Trash Cleared (${trashConfirmTarget.displayName})`
+                      ? `ยืนยันรหัสหลังทิ้งขยะ (${trashConfirmTarget.displayName})`
+                      : `Verify Trash Cleared (${trashConfirmTarget.displayName})`
                     : lang === 'th'
-                    ? `แก้ไขสถานะทิ้งขยะ (${trashConfirmTarget.displayName})`
+                    ? `แก้ไขสถานะเป็นยังไม่ทิ้ง (${trashConfirmTarget.displayName})`
                     : `Reset Trash Status (${trashConfirmTarget.displayName})`}
                 </h3>
                 <p className="text-xs text-[#6E5C52] mt-0.5">
-                  {lang === 'th'
-                    ? 'กรอกรหัส PIN 4 หลักของน้องเจ้าของเวร หรือรหัส PIN พี่เลี้ยงค่ะ'
-                    : 'Enter the assigned kid 4-digit PIN or a staff PIN.'}
+                  {trashConfirmTarget.nextDone
+                    ? lang === 'th'
+                      ? 'กรอกรหัส PIN 4 หลักของตัวเองหลังทิ้งขยะเสร็จ เพื่อเปลี่ยนสถานะเป็น "ทิ้งแล้ว" ค่ะ (หรือรหัสพี่เลี้ยง)'
+                      : 'Enter your 4-digit PIN after clearing the trash to mark it as Cleared (or a staff PIN).'
+                    : lang === 'th'
+                    ? 'กรอกรหัส PIN 4 หลักของเจ้าของเวรหรือพี่เลี้ยง เพื่อเปลี่ยนสถานะกลับเป็น "ยังไม่ทิ้ง" ค่ะ'
+                    : 'Enter the assigned kid 4-digit PIN or a staff PIN to reset status.'}
                 </p>
               </div>
               <button
