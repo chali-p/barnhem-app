@@ -950,9 +950,9 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
               ) : null}
             </form>
 
-            {/* Right Column: Live Current Clock + Laundry Queue Box */}
+            {/* Right Column: Live Current Clock + Laundry Queue + Live Staff On-Duty Status */}
             <div
-              className="rounded-[22px] border px-6 py-5 flex flex-col items-center justify-center text-center md:w-[270px] shrink-0"
+              className="rounded-[22px] border px-5 py-4 flex flex-col items-center justify-center text-center md:w-[290px] shrink-0"
               style={{
                 backgroundColor: 'var(--theme-soft-bg)',
                 borderColor: 'var(--theme-border-alt)',
@@ -964,15 +964,50 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
               <div className="text-4xl sm:text-[42px] font-extrabold tracking-tight text-[#3D322C] tabular-nums leading-none my-2.5">
                 {formatDigitalClock(now)}
               </div>
-              <div
-                className="inline-flex items-center gap-1.5 rounded-xl bg-white border px-3.5 py-1.5 text-xs font-bold shadow-2xs"
-                style={{
-                  borderColor: 'var(--theme-border)',
-                  color: 'var(--theme-accent-text)',
-                }}
-              >
-                <span>{laundry.emoji}</span>
-                <span>{laundry.label}</span>
+              <div className="w-full space-y-2 mt-0.5">
+                <div
+                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-white border px-3 py-1.5 text-xs font-bold shadow-2xs"
+                  style={{
+                    borderColor: 'var(--theme-border)',
+                    color: 'var(--theme-accent-text)',
+                  }}
+                >
+                  <span>{laundry.emoji}</span>
+                  <span>{laundry.label}</span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHomeStaffWorkPinInput('');
+                    setHomeStaffWorkActor(null);
+                    setHomeStaffWorkTab('tasks');
+                    setHomeStaffWorkOpen(true);
+                  }}
+                  title={
+                    lang === 'th'
+                      ? todayCoverage.onDutyNowNames.length > 0
+                        ? `สถานะพี่เลี้ยงที่กำลังทำงานอยู่ (${todayCoverage.timeLabel} น.): ${todayCoverage.onDutyNowNames.join(', ')} — กดเพื่อดูรายละเอียดหรือแจ้งงาน`
+                        : 'สถานะพี่เลี้ยงที่กำลังทำงานอยู่ — กดเพื่อดูตารางเวรหรือแจ้งงาน'
+                      : `Staff on duty (${todayCoverage.timeLabel}): ${todayCoverage.onDutyNowNames.join(', ') || 'None'}`
+                  }
+                  className={`w-full min-h-[38px] inline-flex items-center justify-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold leading-snug transition-colors cursor-pointer ${
+                    todayCoverage.onDutyNowNames.length === 0 || todayCoverage.alertsTh.length > 0
+                      ? 'border-[#EE9CAF] bg-[#FFF1F4] hover:bg-[#FFE3EA] text-[#8B1D36]'
+                      : 'border-[#B9E2DA] bg-[#F2FBF9] hover:bg-[#E1F6F1] text-[#114A42]'
+                  }`}
+                >
+                  <span className="shrink-0">👩‍🏫</span>
+                  <span className="text-center">
+                    {lang === 'th'
+                      ? todayCoverage.onDutyNowNames.length > 0
+                        ? `พี่เลี้ยงทำงานอยู่: ${todayCoverage.onDutyNowNames.join(', ')}`
+                        : 'สถานะพี่เลี้ยง: ไม่มีผู้เข้าเวรตอนนี้'
+                      : todayCoverage.onDutyNowNames.length > 0
+                      ? `On Duty: ${todayCoverage.onDutyNowNames.join(', ')}`
+                      : 'Staff Status: Off Duty'}
+                  </span>
+                </button>
               </div>
             </div>
           </div>
@@ -1255,12 +1290,12 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
             </h3>
             <p className="text-xs text-[#6E5C52] mt-0.5">
               {lang === 'th'
-                ? 'รวมประกาศบ้าน ของหาย ทริปเที่ยว พร้อมปุ่มแจ้งเจ็บป่วย ประกาศ & ข้อมูล และแจ้งงานพี่เลี้ยงไว้ในจุดเดียวค่ะ'
-                : 'House announcements, lost & found, outings, illness reports, and staff handover in one place.'}
+                ? 'รวมประกาศบ้าน ของหาย ทริปเที่ยว พร้อมปุ่มแจ้งเจ็บป่วย และประกาศ & ข้อมูลไว้ในจุดเดียวค่ะ'
+                : 'House announcements, lost & found, outings, illness reports, and useful info in one place.'}
             </p>
           </div>
 
-          {/* 3 Main Action Buttons + Hide/Show Toggle */}
+          {/* Action Buttons + Hide/Show Toggle */}
           <div className="flex flex-wrap items-center gap-2">
             {onAddSickReport && (
               <button
@@ -1307,34 +1342,6 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                 ({sortedHomeAnnouncements.length + 1})
               </span>
               <span className="text-[10px] opacity-75">▾</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setHomeStaffWorkPinInput('');
-                setHomeStaffWorkActor(null);
-                setHomeStaffWorkTab('tasks');
-                setHomeStaffWorkOpen(true);
-              }}
-              title={
-                lang === 'th'
-                  ? 'แจ้งงาน ฝากงาน หรือแจ้งลางานพี่เลี้ยงจากหน้าแรก'
-                  : 'Staff work handover & leave notice'
-              }
-              className={`min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                urgentStaffTaskCount > 0 || todayCoverage.alertsTh.length > 0
-                  ? 'border-[#EE9CAF] bg-[#FFF1F4] hover:bg-[#FFE3EA] text-[#8B1D36]'
-                  : 'border-[#B9E2DA] bg-[#F2FBF9] hover:bg-[#E1F6F1] text-[#114A42]'
-              }`}
-            >
-              <span>👩‍🏫</span>
-              <span>{lang === 'th' ? 'แจ้งงานพี่เลี้ยง' : 'Staff Notices'}</span>
-              {openStaffWorkCount + todayCoverage.leavesForDate.length > 0 && (
-                <span className="font-extrabold tabular-nums">
-                  ({openStaffWorkCount + todayCoverage.leavesForDate.length})
-                </span>
-              )}
             </button>
 
             <button
@@ -4035,10 +4042,10 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                 <h3 className="text-base sm:text-lg font-extrabold text-[#114A42] truncate">
                   👩‍🏫{' '}
                   {lang === 'th'
-                    ? 'ระบบแจ้งงาน & แจ้งลางานพี่เลี้ยง'
-                    : 'Staff Work Handover & Leave System'}
+                    ? 'สถานะพี่เลี้ยงที่กำลังทำงานอยู่ & แจ้งงาน'
+                    : 'Live Staff Duty Status & Handover'}
                 </h3>
-                <p className="text-[11px] sm:text-xs text-[#6E5C52] mt-0.5 truncate">
+                <p className="text-[11px] sm:text-xs text-[#6E5C52] mt-0.5 truncate tabular-nums">
                   {lang === 'th'
                     ? `เข้าเวรเวลา ${todayCoverage.timeLabel} น.: ${
                         todayCoverage.onDutyNowNames.length > 0
@@ -4065,8 +4072,57 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
             </div>
 
             {!homeStaffWorkActor ? (
-              <form
-                onSubmit={(e) => {
+              <div className="space-y-3 overflow-y-auto pr-0.5">
+                {/* Public Live Caregiver Working Status */}
+                <div className="rounded-2xl border border-[#B9E8DF] bg-white p-3.5 space-y-2 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2 font-extrabold text-[#114A42]">
+                    <span>
+                      🕒 {lang === 'th' ? `กะงานที่กำลังดูแลอยู่ขณะนี้ (${todayCoverage.timeLabel} น.)` : `Active Shifts Now (${todayCoverage.timeLabel})`}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHomeStaffWorkOpen(false);
+                        setUsefulInfoTab('staff_roster');
+                        setUsefulInfoOpen(true);
+                      }}
+                      className="text-[11px] font-bold text-[#245A80] hover:underline cursor-pointer"
+                    >
+                      {lang === 'th' ? 'ดูตารางเวรทั้งหมด →' : 'Full Roster →'}
+                    </button>
+                  </div>
+                  {todayCoverage.activeSlots.length === 0 ? (
+                    <p className="text-[#6E5C52]">
+                      {lang === 'th' ? 'ไม่มีกะเวรที่เปิดใช้งานในช่วงเวลานี้ค่ะ' : 'No active shift slot right now.'}
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {todayCoverage.activeSlots.map((slot) => (
+                        <div
+                          key={slot.slotCode}
+                          className="rounded-xl border border-[#DCEEE9] bg-[#F7FCFA] px-3 py-2 space-y-0.5"
+                        >
+                          <div className="font-bold text-[#114A42] tabular-nums">
+                            {slot.labelTh} · {slot.timeRange}
+                          </div>
+                          <div className="text-[#3D322C] font-semibold">
+                            {slot.entries
+                              .filter((e) => e.status !== 'on_leave')
+                              .map((e) =>
+                                e.status === 'substitute'
+                                  ? `${e.name} (แทน ${e.replacingName})`
+                                  : e.name
+                              )
+                              .join(', ') || (lang === 'th' ? 'ยังไม่มีผู้เข้าเวร' : 'No staff')}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <form
+                  onSubmit={(e) => {
                   e.preventDefault();
                   if (homeStaffWorkPinGuard.isLocked) {
                     onShowAlert({
@@ -4165,7 +4221,8 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                     {lang === 'th' ? 'เปิดใช้งาน →' : 'Unlock →'}
                   </button>
                 </div>
-              </form>
+                </form>
+              </div>
             ) : (
               <div className="flex-1 flex flex-col min-h-0 space-y-3 overflow-hidden">
                 <div className="flex flex-wrap items-center justify-between gap-2">
