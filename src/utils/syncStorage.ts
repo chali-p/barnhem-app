@@ -1,10 +1,16 @@
-import { createEmptyDaily, INITIAL_APP_STATE } from '../data/initialData';
+import {
+  createEmptyDaily,
+  INITIAL_APP_STATE,
+  LEGACY_KID_PIN_MIGRATIONS,
+  TARGET_NOV25_KID_PINS,
+} from '../data/initialData';
 import { AppState } from '../types/barnhem';
 import { pruneWeeklyActivityLogs } from './activityLogRetention';
 import { ensureCurrentWeekAllowance } from './piggyBank';
 import { getDateKey } from './timeRules';
 
 const STORAGE_KEY = 'barnhem_super_app_v1';
+const PIN_BATCH_NOV25_KEY = 'barnhem_pin_batch_nov25_v1';
 
 export function loadAppState(): AppState {
   const todayKey = getDateKey(new Date());
@@ -16,16 +22,28 @@ export function loadAppState(): AppState {
     const parsed = JSON.parse(raw) as Partial<AppState>;
     const existingMembers = Array.isArray(parsed.members) ? parsed.members : INITIAL_APP_STATE.members;
 
+    const applyBatchNov25 = localStorage.getItem(PIN_BATCH_NOV25_KEY) !== 'done';
+
     // Ensure all initial members exist (e.g. if chefs or new members were added)
     const existingIds = new Set(existingMembers.map((m) => m.id));
     const mergedMembers = [
       ...existingMembers.map((m) => {
         const daily = m.daily && m.daily.dateKey === todayKey ? m.daily : createEmptyDaily(todayKey);
         const migratedNickname =
-          m.id === 's7' && m.pin === '2965' && m.nickname === 'ฟา' ? 'ฟ้า' : m.nickname;
+          m.id === 's7' && (m.pin === '2965' || m.pin === '2279') && m.nickname === 'ฟา'
+            ? 'ฟ้า'
+            : m.nickname;
+        const legacyPinMig = LEGACY_KID_PIN_MIGRATIONS[m.id];
+        const migratedPin =
+          applyBatchNov25 && TARGET_NOV25_KID_PINS[m.id]
+            ? TARGET_NOV25_KID_PINS[m.id]
+            : legacyPinMig && m.pin === legacyPinMig.oldPin
+            ? legacyPinMig.newPin
+            : m.pin;
         const mergedMember = {
           ...m,
           nickname: migratedNickname,
+          pin: migratedPin,
           healthProfile: m.healthProfile ?? {
             bloodType: 'ไม่ระบุ',
             foodAllergies: 'ไม่มี',
@@ -77,7 +95,7 @@ export function loadAppState(): AppState {
     const loadedCreatorPins = parsed.settings?.creatorPins ?? INITIAL_APP_STATE.settings.creatorPins;
     const migratedCreatorPins = loadedCreatorPins.map((p) => (p === '6417' ? '1629' : p));
 
-    return {
+    const nextState: AppState = {
       members: mergedMembers,
       shopItems: mergedShop,
       sickReports: Array.isArray(parsed.sickReports) ? parsed.sickReports : [],
@@ -118,6 +136,15 @@ export function loadAppState(): AppState {
       },
       lastSyncedAt: parsed.lastSyncedAt ?? null,
     };
+    if (applyBatchNov25) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+        localStorage.setItem(PIN_BATCH_NOV25_KEY, 'done');
+      } catch {
+        // Ignore storage write errors
+      }
+    }
+    return nextState;
   } catch {
     return INITIAL_APP_STATE;
   }

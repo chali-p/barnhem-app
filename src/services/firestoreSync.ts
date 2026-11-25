@@ -7,10 +7,11 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
   where,
   writeBatch,
 } from 'firebase/firestore';
-import { INITIAL_APP_STATE } from '../data/initialData';
+import { INITIAL_APP_STATE, LEGACY_KID_PIN_MIGRATIONS } from '../data/initialData';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import {
   Announcement,
@@ -535,6 +536,8 @@ export function subscribeFoundationCloud(
       ? query(collection(db, 'config'), where('sharedEmails', 'array-contains', email))
       : query(collection(db, 'config'), where('ownerUid', '==', user.uid));
 
+  const patchedLegacyPinDocs = new Set<string>();
+
   const unsubMembers = onSnapshot(
     membersQ,
     (snapshot) => {
@@ -548,12 +551,29 @@ export function subscribeFoundationCloud(
           typeof d.id === 'string' ? d.id : docSnap.id
         );
         const rawNickname = typeof d.nickname === 'string' ? d.nickname : '';
+        const rawPin = typeof d.pin === 'string' ? d.pin : '';
+        const pinMig = orgId === DEFAULT_ORG_ID ? LEGACY_KID_PIN_MIGRATIONS[localId] : undefined;
+        const migratedPin = pinMig && rawPin === pinMig.oldPin ? pinMig.newPin : rawPin;
+        if (
+          pinMig &&
+          rawPin === pinMig.oldPin &&
+          !patchedLegacyPinDocs.has(docSnap.id)
+        ) {
+          patchedLegacyPinDocs.add(docSnap.id);
+          void updateDoc(doc(db, 'members', docSnap.id), {
+            pin: migratedPin,
+            updatedAt: serverTimestamp(),
+          }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `members/${docSnap.id}`));
+        }
         const migratedNickname =
-          localId === 's7' && d.pin === '2965' && rawNickname === 'ฟา' ? 'ฟ้า' : rawNickname;
+          localId === 's7' && (rawPin === '2965' || migratedPin === '2279') && rawNickname === 'ฟา'
+            ? 'ฟ้า'
+            : rawNickname;
         list.push({
           ...(d as unknown as Member),
           id: localId,
           nickname: migratedNickname,
+          pin: migratedPin,
           group: d.group === null ? undefined : (d.group as Member['group']),
           pet: d.pet === null ? undefined : (d.pet as Member['pet']),
           allowance: d.allowance === null ? undefined : (d.allowance as Member['allowance']),
@@ -850,12 +870,18 @@ export interface LinkedKidCloudUpdate {
 function deserializeMemberFromDoc(d: Record<string, unknown>, docId: string, orgId: string): Member {
   const localId = fromScopedId(orgId, typeof d.id === 'string' ? d.id : docId);
   const rawNickname = typeof d.nickname === 'string' ? d.nickname : '';
+  const rawPin = typeof d.pin === 'string' ? d.pin : '';
+  const pinMig = orgId === DEFAULT_ORG_ID ? LEGACY_KID_PIN_MIGRATIONS[localId] : undefined;
+  const migratedPin = pinMig && rawPin === pinMig.oldPin ? pinMig.newPin : rawPin;
   const migratedNickname =
-    localId === 's7' && d.pin === '2965' && rawNickname === 'ฟา' ? 'ฟ้า' : rawNickname;
+    localId === 's7' && (rawPin === '2965' || migratedPin === '2279') && rawNickname === 'ฟา'
+      ? 'ฟ้า'
+      : rawNickname;
   return {
     ...(d as unknown as Member),
     id: localId,
     nickname: migratedNickname,
+    pin: migratedPin,
     group: d.group === null ? undefined : (d.group as Member['group']),
     pet: d.pet === null ? undefined : (d.pet as Member['pet']),
     allowance: d.allowance === null ? undefined : (d.allowance as Member['allowance']),

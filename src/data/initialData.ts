@@ -896,6 +896,28 @@ function makeMember(
   };
 }
 
+export const TARGET_NOV25_KID_PINS: Record<string, string> = {
+  s2: '0909',
+  s3: '3674',
+  s4: '8042',
+  s5: '2111',
+  s6: '2424',
+  s7: '2279',
+  s8: '2703',
+  s9: '2855',
+  s10: '0311',
+};
+
+export const LEGACY_KID_PIN_MIGRATIONS: Record<string, { oldPin: string; newPin: string }> = {
+  s2: { oldPin: '9153', newPin: '0909' },
+  s5: { oldPin: '5296', newPin: '2111' },
+  s6: { oldPin: '7418', newPin: '2424' },
+  s7: { oldPin: '2965', newPin: '2279' },
+  s8: { oldPin: '6137', newPin: '2703' },
+  s9: { oldPin: '8509', newPin: '2855' },
+  s10: { oldPin: '1784', newPin: '0311' },
+};
+
 export const INITIAL_MEMBERS: Member[] = [
   makeMember({ id: 'mgr_susan', role: 'manager', nickname: 'SuSan', fullName: 'SuSan (Foundation Manager)', gender: 'F', pin: '9015', emoji: '👩‍💼' }),
   makeMember({ id: 'mgr_wao', role: 'manager', nickname: 'พี่เหว่า', fullName: 'พี่เหว่า (ผู้จัดการมูลนิธิ)', gender: 'F', pin: '4382', emoji: '💐' }),
@@ -920,15 +942,15 @@ export const INITIAL_MEMBERS: Member[] = [
 
   makeMember({ id: 's3', role: 'kid', group: 2, nickname: 'กวาง', fullName: 'พรณภา แก้วสุข', gender: 'F', pin: '3674', emoji: '🦌', stars: 110 }),
   makeMember({ id: 's4', role: 'kid', group: 2, nickname: 'แบงค์', fullName: 'นลภัทร แก้วสุข', gender: 'M', pin: '8042', emoji: '🐼', stars: 95 }),
-  makeMember({ id: 's5', role: 'kid', group: 2, nickname: 'ใบเตย', fullName: 'ปัทมา ไชยวงค์ทอน', gender: 'F', pin: '5296', emoji: '🌿', stars: 120 }),
-  makeMember({ id: 's6', role: 'kid', group: 2, nickname: 'ยิ้ม', fullName: 'น้ำฟ้า หงษ์ทอง', gender: 'F', pin: '7418', emoji: '🌻', stars: 105 }),
-  makeMember({ id: 's7', role: 'kid', group: 2, nickname: 'ฟ้า', fullName: 'กนกพร แก้วสุข', gender: 'F', pin: '2965', emoji: '🦋', stars: 90 }),
-  makeMember({ id: 's8', role: 'kid', group: 2, nickname: 'แตงโม', fullName: 'กานต์ธิดา สมัคกิจ', gender: 'F', pin: '6137', emoji: '🍉', stars: 100 }),
-  makeMember({ id: 's9', role: 'kid', group: 2, nickname: 'แน็ก', fullName: 'กันตพงษ์ ชูชาติ', gender: 'M', pin: '8509', emoji: '🦊', stars: 85 }),
-  makeMember({ id: 's10', role: 'kid', group: 2, nickname: 'ฟา', fullName: 'ยุพา หิรัญ', gender: 'F', pin: '1784', emoji: '🐱', stars: 115 }),
+  makeMember({ id: 's5', role: 'kid', group: 2, nickname: 'ใบเตย', fullName: 'ปัทมา ไชยวงค์ทอน', gender: 'F', pin: '2111', emoji: '🌿', stars: 120 }),
+  makeMember({ id: 's6', role: 'kid', group: 2, nickname: 'ยิ้ม', fullName: 'น้ำฟ้า หงษ์ทอง', gender: 'F', pin: '2424', emoji: '🌻', stars: 105 }),
+  makeMember({ id: 's7', role: 'kid', group: 2, nickname: 'ฟ้า', fullName: 'กนกพร แก้วสุข', gender: 'F', pin: '2279', emoji: '🦋', stars: 90 }),
+  makeMember({ id: 's8', role: 'kid', group: 2, nickname: 'แตงโม', fullName: 'กานต์ธิดา สมัคกิจ', gender: 'F', pin: '2703', emoji: '🍉', stars: 100 }),
+  makeMember({ id: 's9', role: 'kid', group: 2, nickname: 'แน็ก', fullName: 'กันตพงษ์ ชูชาติ', gender: 'M', pin: '2855', emoji: '🦊', stars: 85 }),
+  makeMember({ id: 's10', role: 'kid', group: 2, nickname: 'ฟา', fullName: 'ยุพา หิรัญ', gender: 'F', pin: '0311', emoji: '🐱', stars: 115 }),
 
   makeMember({ id: 's1', role: 'kid', group: 3, nickname: 'เสือ', fullName: 'ฉลาม โพธิ์หล้า', gender: 'M', pin: '4829', emoji: '🦈', stars: 150 }),
-  makeMember({ id: 's2', role: 'kid', group: 3, nickname: 'โบว์', fullName: 'ลภัสพร สีลาน', gender: 'F', pin: '9153', emoji: '🎀', stars: 165 }),
+  makeMember({ id: 's2', role: 'kid', group: 3, nickname: 'โบว์', fullName: 'ลภัสพร สีลาน', gender: 'F', pin: '0909', emoji: '🎀', stars: 165 }),
 ];
 
 export const INITIAL_ANNOUNCEMENTS: Announcement[] = [];
