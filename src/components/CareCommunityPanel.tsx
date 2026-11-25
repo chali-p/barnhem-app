@@ -13,7 +13,6 @@ import {
   SickReport,
   SupplyRequest,
 } from '../types/barnhem';
-import { getAnnouncementScheduleStatus } from '../utils/festivalAndEvents';
 import { getDateKey } from '../utils/timeRules';
 
 interface CareCommunityPanelProps {
@@ -52,7 +51,7 @@ interface CareCommunityPanelProps {
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   requestedTab?: {
-    tab: 'announcements' | 'polls' | 'trips' | 'inbox' | 'lost_found' | 'supplies' | 'deeds' | 'sick';
+    tab: 'polls' | 'trips' | 'inbox' | 'lost_found' | 'supplies' | 'deeds' | 'sick';
     seq: number;
   } | null;
 }
@@ -61,7 +60,6 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
   authorName,
   authorRole,
   members,
-  announcements,
   polls,
   trips,
   privateMessages,
@@ -70,9 +68,6 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
   deedRedemptions,
   sickReports = [],
   lang,
-  onAddAnnouncement,
-  onTogglePinAnnouncement,
-  onDeleteAnnouncement,
   onCreatePoll,
   onToggleClosePoll,
   onDeletePoll,
@@ -94,22 +89,14 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
   requestedTab = null,
 }) => {
   const [tab, setTab] = useState<
-    'announcements' | 'polls' | 'trips' | 'inbox' | 'lost_found' | 'supplies' | 'deeds' | 'sick'
-  >('announcements');
+    'polls' | 'trips' | 'inbox' | 'lost_found' | 'supplies' | 'deeds' | 'sick'
+  >('polls');
 
   useEffect(() => {
     if (requestedTab?.tab) {
       setTab(requestedTab.tab);
     }
   }, [requestedTab]);
-
-  // Announcement form state
-  const [annTitle, setAnnTitle] = useState('');
-  const [annBody, setAnnBody] = useState('');
-  const [annPriority, setAnnPriority] = useState<'normal' | 'urgent'>('normal');
-  const [annPinned, setAnnPinned] = useState(true);
-  const [annStartAt, setAnnStartAt] = useState('');
-  const [annEndAt, setAnnEndAt] = useState('');
 
   // Secret Poll form state
   const [pollQuestion, setPollQuestion] = useState('');
@@ -149,47 +136,6 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
   const pendingSupplyCount = supplyRequests.filter((s) => s.status === 'pending').length;
   const pendingDeedCount = deedRedemptions.filter((d) => d.status !== 'approved').length;
   const activeSickReports = sickReports.filter((r) => !r.resolved);
-
-  const handlePublishAnnouncement = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!annTitle.trim() || !annBody.trim()) {
-      onShowAlert({
-        icon: '📢',
-        title: lang === 'th' ? 'กรุณากรอกหัวข้อและเนื้อหาประกาศ' : 'Incomplete Announcement',
-        message: lang === 'th' ? 'ใส่หัวข้อและรายละเอียดให้น้องอ่านให้ครบก่อนนะ' : 'Please provide title and details.',
-        tone: 'yellow',
-      });
-      return;
-    }
-    onAddAnnouncement({
-      id: `ann_${Date.now()}`,
-      title: annTitle.trim(),
-      body: annBody.trim(),
-      priority: annPriority,
-      pinned: annPinned,
-      authorName,
-      authorRole,
-      createdAt: new Date().toISOString(),
-      startAt: annStartAt ? new Date(annStartAt).toISOString() : undefined,
-      endAt: annEndAt ? new Date(annEndAt).toISOString() : undefined,
-    });
-    setAnnTitle('');
-    setAnnBody('');
-    setAnnStartAt('');
-    setAnnEndAt('');
-    onShowAlert({
-      icon: '📢✨',
-      title: lang === 'th' ? 'ลงประกาศเรียบร้อยแล้ว!' : 'Announcement Published!',
-      message: annStartAt || annEndAt
-        ? lang === 'th'
-          ? 'บันทึกประกาศพร้อมกำหนดวัน-เวลาแสดงผลเรียบร้อยแล้วค่ะ'
-          : 'Scheduled announcement saved!'
-        : lang === 'th'
-        ? 'ประกาศนี้ไปแสดงที่หน้าโปรไฟล์ของน้องทุกคนทันที'
-        : 'Live on every kid profile immediately.',
-      tone: 'mint',
-    });
-  };
 
   const handlePublishPoll = (e: React.FormEvent) => {
     e.preventDefault();
@@ -265,12 +211,12 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="text-lg font-bold text-[#3D322C]">
-            💬 {lang === 'th' ? 'ศูนย์ประกาศ · โหวตลับ · ทริปเที่ยว & กล่องหลังไมค์น้องๆ' : 'Announcements · Secret Polls · Trips & Private Inbox'}
+            💬 {lang === 'th' ? 'โหวตลับ · ทริปเที่ยว · ของหาย & กล่องหลังไมค์น้องๆ' : 'Secret Polls · Trips · Lost & Found & Private Inbox'}
           </h3>
           <p className="text-xs text-[#6E5C52]">
             {lang === 'th'
-              ? 'สื่อสารกับน้องๆ อย่างปลอดภัย: ประกาศอัปเดตหน้าโปรไฟล์ โหวตไม่ระบุชื่อ และข้อความหลังไมค์เฉพาะผู้ดูแล'
-              : 'Safe communication hub: profile announcements, secret-ballot voting, outings, and private kid inbox.'}
+              ? 'สื่อสารและดูแลน้องๆ อย่างปลอดภัย: โหวตไม่ระบุชื่อ ทริปเที่ยว ของหาย ขอเบิกของ และข้อความหลังไมค์เฉพาะผู้ดูแล'
+              : 'Safe communication hub: secret-ballot voting, outings, lost & found, supplies, and private kid inbox.'}
           </p>
         </div>
 
@@ -278,7 +224,6 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
           {!collapsed && (
             <div className="flex flex-wrap gap-1.5 rounded-2xl bg-[#F4ECE4] p-1">
               {[
-                { id: 'announcements', labelTh: `📢 ประกาศ (${announcements.length})`, labelEn: `📢 Notices (${announcements.length})` },
                 { id: 'polls', labelTh: `🗳️ โหวตลับ (${polls.length})`, labelEn: `🗳️ Polls (${polls.length})` },
                 { id: 'trips', labelTh: `🗺️ ทริปเที่ยว (${trips.length})`, labelEn: `🗺️ Outings (${trips.length})` },
                 {
@@ -331,208 +276,6 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
 
       {!collapsed && (
         <>
-
-      {/* TAB 1: ANNOUNCEMENTS */}
-      {tab === 'announcements' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-          <form onSubmit={handlePublishAnnouncement} className="lg:col-span-5 rounded-2xl bg-[#FFFDF9] border border-[#EBD8C3] p-4 space-y-3 text-sm">
-            <div className="font-bold text-[#3D322C]">
-              ✍️ {lang === 'th' ? 'เขียนประกาศใหม่ขึ้นโปรไฟล์น้อง' : 'Post Profile Announcement'}
-            </div>
-            <input
-              type="text"
-              value={annTitle}
-              onChange={(e) => setAnnTitle(e.target.value)}
-              placeholder={lang === 'th' ? 'หัวข้อประกาศ เช่น นัดรวมตัว 17:00 น.' : 'Announcement Title'}
-              className="w-full rounded-xl border border-[#EBD8C3] bg-white px-3 py-2"
-            />
-            <textarea
-              rows={3}
-              value={annBody}
-              onChange={(e) => setAnnBody(e.target.value)}
-              placeholder={lang === 'th' ? 'รายละเอียดประกาศที่อยากให้น้องอ่าน...' : 'Announcement details...'}
-              className="w-full rounded-xl border border-[#EBD8C3] bg-white px-3 py-2"
-            />
-            <div className="rounded-xl border border-[#EAE1D8] bg-[#FAF7F3] p-2.5 space-y-2 text-xs">
-              <div className="font-bold text-[#4E3F38]">
-                🗓️ {lang === 'th' ? 'กำหนดวัน-เวลาช่วงเหตุการณ์ (ไม่บังคับ — ระบบจะซ่อนอัตโนมัติเมื่อหมดเวลา)' : 'Schedule Event Window (Optional)'}
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[11px] font-semibold text-[#6E5C52] mb-0.5">
-                    {lang === 'th' ? 'เริ่มแสดง' : 'Starts At'}
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={annStartAt}
-                    onChange={(e) => setAnnStartAt(e.target.value)}
-                    className="w-full rounded-lg border border-[#EBD8C3] bg-white px-2 py-1 text-[11px]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-[#6E5C52] mb-0.5">
-                    {lang === 'th' ? 'สิ้นสุดการแสดง' : 'Ends At'}
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={annEndAt}
-                    onChange={(e) => setAnnEndAt(e.target.value)}
-                    className="w-full rounded-lg border border-[#EBD8C3] bg-white px-2 py-1 text-[11px]"
-                  />
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const nowLocal = new Date();
-                    const yyyy = nowLocal.getFullYear();
-                    const mm = String(nowLocal.getMonth() + 1).padStart(2, '0');
-                    const dd = String(nowLocal.getDate()).padStart(2, '0');
-                    setAnnStartAt(`${yyyy}-${mm}-${dd}T00:00`);
-                    setAnnEndAt(`${yyyy}-${mm}-${dd}T23:59`);
-                  }}
-                  className="rounded-lg bg-white border border-[#EBD8C3] hover:bg-[#FFF5BA]/60 px-2 py-0.5 text-[10px] font-bold text-[#3D322C] cursor-pointer"
-                >
-                  📅 {lang === 'th' ? 'เฉพาะวันนี้' : 'Today Only'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const nowLocal = new Date();
-                    const end = new Date(nowLocal);
-                    end.setDate(end.getDate() + 7);
-                    const fmt = (dt: Date) =>
-                      `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-                    setAnnStartAt(`${fmt(nowLocal)}T00:00`);
-                    setAnnEndAt(`${fmt(end)}T23:59`);
-                  }}
-                  className="rounded-lg bg-white border border-[#EBD8C3] hover:bg-[#FFF5BA]/60 px-2 py-0.5 text-[10px] font-bold text-[#3D322C] cursor-pointer"
-                >
-                  🗓️ {lang === 'th' ? '7 วันนี้' : 'Next 7 Days'}
-                </button>
-                {(annStartAt || annEndAt) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAnnStartAt('');
-                      setAnnEndAt('');
-                    }}
-                    className="rounded-lg bg-[#FADADD] px-2 py-0.5 text-[10px] font-bold text-[#7B2E3B] cursor-pointer"
-                  >
-                    {lang === 'th' ? 'ล้างเวลา' : 'Clear'}
-                  </button>
-                )}
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-3 text-xs">
-              <select
-                value={annPriority}
-                onChange={(e) => setAnnPriority(e.target.value as 'normal' | 'urgent')}
-                className="rounded-xl border border-[#EBD8C3] bg-white px-3 py-2 font-bold"
-              >
-                <option value="normal">{lang === 'th' ? 'ประกาศทั่วไป' : 'Normal'}</option>
-                <option value="urgent">{lang === 'th' ? '🚨 ประกาศด่วน' : '🚨 Urgent'}</option>
-              </select>
-              <label className="inline-flex items-center gap-2 font-bold text-[#3D322C] cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={annPinned}
-                  onChange={(e) => setAnnPinned(e.target.checked)}
-                  className="h-4 w-4 accent-[#3D322C]"
-                />
-                <span>📌 {lang === 'th' ? 'ปักหมุดไว้บนสุด' : 'Pin to top'}</span>
-              </label>
-            </div>
-            <button
-              type="submit"
-              className="w-full min-h-[44px] rounded-2xl bg-[#3D322C] hover:bg-[#2B221D] text-white font-bold cursor-pointer"
-            >
-              📢 {lang === 'th' ? 'เผยแพร่ประกาศให้น้องอ่าน' : 'Publish Announcement'}
-            </button>
-          </form>
-
-          <div className="lg:col-span-7 space-y-2.5 max-h-96 overflow-y-auto">
-            {announcements.length === 0 ? (
-              <p className="text-sm text-[#7B695F]">{lang === 'th' ? 'ยังไม่มีประกาศ' : 'No announcements yet.'}</p>
-            ) : (
-              announcements.map((a) => {
-                const schedStatus = getAnnouncementScheduleStatus(a, new Date());
-                return (
-                <div
-                  key={a.id}
-                  className={`rounded-2xl border p-3.5 text-sm ${
-                    schedStatus === 'expired'
-                      ? 'border-[#E5DAD0] bg-[#F8F5F1] opacity-75'
-                      : a.priority === 'urgent'
-                      ? 'border-[#F3B7C0] bg-[#FADADD]/45'
-                      : 'border-[#EBD8C3] bg-white'
-                  }`}
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="font-bold text-[#3D322C]">
-                      {a.audience === 'staff_only' ? '👩‍🏫 [งานพี่เลี้ยง] ' : ''}
-                      {a.pinned ? '📌 ' : ''}
-                      {a.priority === 'urgent' ? '🚨 ' : ''}
-                      {a.title}
-                      {a.audience === 'staff_only' && a.assignedTo ? ` → ${a.assignedTo}` : ''}
-                      {a.taskCompleted ? ' ✅' : ''}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span
-                        className={`rounded-lg px-2 py-0.5 text-[10px] font-bold ${
-                          schedStatus === 'active'
-                            ? 'bg-[#D4F0F0] text-[#1D544C]'
-                            : schedStatus === 'upcoming'
-                            ? 'bg-[#FFF5BA] text-[#7A5900]'
-                            : 'bg-[#EAE1D8] text-[#6E5C52]'
-                        }`}
-                      >
-                        {schedStatus === 'active'
-                          ? lang === 'th'
-                            ? '🟢 กำลังแสดง'
-                            : '🟢 Live'
-                          : schedStatus === 'upcoming'
-                          ? lang === 'th'
-                            ? '⏳ รอถึงเวลา'
-                            : '⏳ Upcoming'
-                          : lang === 'th'
-                          ? '⚪ หมดเวลาแล้ว'
-                          : '⚪ Ended'}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => onTogglePinAnnouncement(a.id)}
-                        className="rounded-lg bg-[#FFF5BA] px-2.5 py-1 text-xs font-bold text-[#3D322C] cursor-pointer"
-                      >
-                        {a.pinned ? (lang === 'th' ? 'เลิกปักหมุด' : 'Unpin') : lang === 'th' ? 'ปักหมุด' : 'Pin'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onDeleteAnnouncement(a.id)}
-                        className="rounded-lg bg-[#FADADD] px-2.5 py-1 text-xs font-bold text-[#7B2E3B] cursor-pointer"
-                      >
-                        {lang === 'th' ? 'ลบ' : 'Del'}
-                      </button>
-                    </div>
-                  </div>
-                  <p className="text-xs text-[#5E4E45] mt-1 whitespace-pre-line">{a.body}</p>
-                  {(a.startAt || a.endAt) && (
-                    <div className="text-[11px] font-semibold text-[#456D8F] mt-1">
-                      🗓️ {a.startAt ? new Date(a.startAt).toLocaleString(lang === 'th' ? 'th-TH' : 'en-US') : '—'} →{' '}
-                      {a.endAt ? new Date(a.endAt).toLocaleString(lang === 'th' ? 'th-TH' : 'en-US') : '—'}
-                    </div>
-                  )}
-                  <div className="text-[11px] text-[#8D7B70] mt-1.5">
-                    {a.authorName} · {new Date(a.createdAt).toLocaleString(lang === 'th' ? 'th-TH' : 'en-US')}
-                  </div>
-                </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-      )}
 
       {/* TAB 2: SECRET BALLOT POLLS */}
       {tab === 'polls' && (

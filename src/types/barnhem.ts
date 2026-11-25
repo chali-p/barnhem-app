@@ -8,7 +8,12 @@ export type AppMode =
   | 'manager'
   | 'creator'
   | 'portal'
-  | 'activity_log';
+  | 'activity_log'
+  | 'star_summary'
+  | 'duty_roster'
+  | 'secret_vote'
+  | 'supply_request'
+  | 'lost_found';
 
 export type MemberRole = 'manager' | 'staff' | 'chef' | 'tutor' | 'kid';
 
@@ -327,11 +332,13 @@ export interface Announcement {
   id: string;
   title: string;
   body: string;
+  imageBase64?: string;
   priority: 'normal' | 'urgent';
   pinned: boolean;
   authorName: string;
   authorRole: string;
   createdAt: string;
+  updatedAt?: string;
   startAt?: string;
   endAt?: string;
   audience?: 'all' | 'staff_only';
@@ -500,9 +507,35 @@ export interface CoverSceneInfo {
   descriptionEn: string;
 }
 
+export type LoginCommandType = 'routine' | 'penalty';
+
+export type CommandPenaltyPresetId =
+  | 'deduct_free_day'
+  | 'deduct_stars'
+  | 'fixed_fine_thb'
+  | 'per_minute_fine_thb'
+  | 'no_phone_today_1830'
+  | 'no_phone_tomorrow'
+  | 'special_duty'
+  | 'lock_after_deadline'
+  | 'no_fine_zero_stars';
+
 export interface TimedScheduleSlot {
   startMins: number;
   endMins: number;
+  earlyGraceMins?: number;
+  deadlineMins?: number;
+  emoji?: string;
+  titleTh?: string;
+  titleEn?: string;
+  descriptionTh?: string;
+  descriptionEn?: string;
+  rewardStars?: number;
+  penaltyPreset?: string;
+  penaltyNote?: string;
+  commandType?: LoginCommandType;
+  enabled?: boolean;
+  hidden?: boolean;
 }
 
 export type CommandAuthMode = 'staff_pin' | 'kid_pin' | 'self_tap';
@@ -530,6 +563,7 @@ export interface AppSettings {
   lastWeeklyClearedAt?: string | null;
   useOwnStorageOnly?: boolean; // True = store only locally + org's own Google Sheet/Drive (0 bytes on central Firestore)
   enableCoinsAndPiggyBank?: boolean; // Default false: keep coins & piggy bank off on kid screens until Creator enables it
+  showHomeAnnouncementBox?: boolean; // Default true: Creator controls whether the Home announcement box is shown or stopped
   organizationPreset?: OrganizationPresetId;
   automationAddons?: AutomationAddonId[];
   customQuickCommands?: CustomQuickCommand[];
@@ -537,6 +571,7 @@ export interface AppSettings {
   homeworkCurfewMins?: number;
   kidsWithoutPhoneIds?: string[];
   commandPermissions?: Record<string, CommandAccessRule>;
+  customPenaltyPresets?: string[];
   kidAwaySecretCode?: string;
   kidAwaySecretDateKey?: string | null;
 }
@@ -546,11 +581,18 @@ export interface CustomQuickCommand {
   emoji: string;
   titleTh: string;
   titleEn: string;
-  kind: 'homework_permission' | 'custom_checkin';
+  descriptionTh?: string;
+  descriptionEn?: string;
+  kind: 'homework_permission' | 'custom_checkin' | 'penalty';
   alwaysOpen: boolean;
   startMins?: number;
   endMins?: number;
+  earlyGraceMins?: number;
+  deadlineMins?: number;
   starsDelta?: number;
+  penaltyPreset?: string;
+  penaltyNote?: string;
+  enabled?: boolean;
   defaultNote?: string;
 }
 

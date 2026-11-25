@@ -931,61 +931,13 @@ export const INITIAL_MEMBERS: Member[] = [
   makeMember({ id: 's2', role: 'kid', group: 3, nickname: 'โบว์', fullName: 'ลภัสพร สีลาน', gender: 'F', pin: '9153', emoji: '🎀', stars: 165 }),
 ];
 
-export const INITIAL_ANNOUNCEMENTS: Announcement[] = [
-  {
-    id: 'ann_welcome',
-    title: '📢 ยินดีต้อนรับสู่ระบบประกาศบ้าน Barnhem!',
-    body: 'น้องๆ สามารถเช็คประกาศสำคัญ กิจกรรมสถานที่เที่ยว และโหวตออกเสียงแบบลับได้ที่หน้าโปรไฟล์ของตัวเองเลยนะคะ หากไม่สบายอย่าลืมกดแจ้งป่วยและคัดลอกข้อความส่งเข้ากลุ่ม LINE ด้วยนะ 💛',
-    priority: 'normal',
-    pinned: true,
-    authorName: 'พี่กิ๊ก & พี่เลี้ยง',
-    authorRole: 'Creator / Care Team',
-    createdAt: new Date().toISOString(),
-  },
-];
+export const INITIAL_ANNOUNCEMENTS: Announcement[] = [];
 
-export const INITIAL_POLLS: SecretPoll[] = [
-  {
-    id: 'poll_weekend_activity',
-    question: '🗳️ เสาร์นี้ (หลังวันศุกร์ Free Day) อยากทำกิจกรรมกลุ่มอะไรดีเอ่ย? (โหวตลับ ไม่ระบุชื่อ)',
-    options: [
-      { id: 'opt_1', label: '🎨 ระบายสี & งานประดิษฐ์พาสเทล', votes: 0 },
-      { id: 'opt_2', label: '⚽ เตะบอล & กีฬากลางแจ้ง', votes: 0 },
-      { id: 'opt_3', label: '🎬 ดูหนังการ์ตูนพร้อมป๊อปคอร์น', votes: 0 },
-    ],
-    votedKidIds: [],
-    closed: false,
-    authorName: 'พี่เลี้ยงบ้าน Barnhem',
-    createdAt: new Date().toISOString(),
-  },
-];
+export const INITIAL_POLLS: SecretPoll[] = [];
 
-export const INITIAL_TRIPS: OutingTrip[] = [
-  {
-    id: 'trip_weekend_park',
-    title: 'ทริปสวนสาธารณะ & ปิกนิกวันหยุด',
-    location: 'สวนสาธารณะ & ลานกิจกรรมชุมชน',
-    dateText: 'วันเสาร์นี้ เวลา 09:30 - 14:00 น.',
-    chaperone: 'พี่เอก, พี่เกด, พี่กุ๊ก',
-    details: 'เตรียมหมวก กระติกน้ำ และรองเท้าผ้าใบ กดลงชื่อได้ด้านล่างหรือทักหลังไมค์หาพี่เลี้ยงได้เลยนะ',
-    attendeeIds: ['j1', 'j5', 's3'],
-    createdAt: new Date().toISOString(),
-    authorName: 'ทีมพี่เลี้ยง',
-  },
-];
+export const INITIAL_TRIPS: OutingTrip[] = [];
 
-export const INITIAL_LOST_FOUND: LostFoundItem[] = [
-  {
-    id: 'lf_bottle_demo',
-    title: 'กระติกน้ำสีฟ้าพาสเทล',
-    description: 'วางลืมไว้ตรงโต๊ะทำการบ้านช่วงเย็น',
-    locationFound: 'โต๊ะทำการบ้านโถงกลาง',
-    status: 'found',
-    postedByName: 'พี่เกด',
-    postedByRole: 'Staff',
-    createdAt: new Date().toISOString(),
-  },
-];
+export const INITIAL_LOST_FOUND: LostFoundItem[] = [];
 
 export const INITIAL_SUPPLY_REQUESTS: SupplyRequest[] = [];
 
@@ -1028,6 +980,7 @@ export const INITIAL_APP_STATE: AppState = {
     lastWeeklyClearedAt: null,
     useOwnStorageOnly: false,
     enableCoinsAndPiggyBank: false,
+    showHomeAnnouncementBox: true,
   },
   lastSyncedAt: null,
 };

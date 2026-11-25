@@ -85,18 +85,24 @@ export function loadAppState(): AppState {
       kitchenLogs: Array.isArray(parsed.kitchenLogs) ? parsed.kitchenLogs : [],
       returnHomePhotos: Array.isArray(parsed.returnHomePhotos) ? parsed.returnHomePhotos : [],
       announcements: Array.isArray(parsed.announcements)
-        ? parsed.announcements
-        : INITIAL_APP_STATE.announcements,
-      polls: Array.isArray(parsed.polls) ? parsed.polls : INITIAL_APP_STATE.polls,
-      trips: Array.isArray(parsed.trips) ? parsed.trips : INITIAL_APP_STATE.trips,
+        ? parsed.announcements.filter(
+            (a) => a.id !== 'ann_welcome' && !a.id.startsWith('ann_welcome_')
+          )
+        : [],
+      polls: Array.isArray(parsed.polls)
+        ? parsed.polls.filter((p) => p.id !== 'poll_weekend_activity')
+        : [],
+      trips: Array.isArray(parsed.trips)
+        ? parsed.trips.filter((t) => t.id !== 'trip_weekend_park')
+        : [],
       privateMessages: Array.isArray(parsed.privateMessages) ? parsed.privateMessages : [],
       lostFoundItems: Array.isArray(parsed.lostFoundItems)
-        ? parsed.lostFoundItems
-        : INITIAL_APP_STATE.lostFoundItems,
+        ? parsed.lostFoundItems.filter((i) => i.id !== 'lf_bottle_demo')
+        : [],
       supplyRequests: Array.isArray(parsed.supplyRequests) ? parsed.supplyRequests : [],
       kindnessCards: Array.isArray(parsed.kindnessCards)
         ? parsed.kindnessCards.filter((c) => c.id !== 'kind_welcome_1')
-        : INITIAL_APP_STATE.kindnessCards,
+        : [],
       deedRedemptions: Array.isArray(parsed.deedRedemptions) ? parsed.deedRedemptions : [],
       friendVisits: Array.isArray(parsed.friendVisits) ? parsed.friendVisits : [],
       goldenPoolLogs: Array.isArray(parsed.goldenPoolLogs) ? parsed.goldenPoolLogs : [],

@@ -5936,6 +5936,14 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                       <p className="text-sm text-[#53433A] whitespace-pre-line leading-relaxed">
                         {ann.body}
                       </p>
+                      {ann.imageBase64 && (
+                        <img
+                          src={ann.imageBase64}
+                          alt={ann.title}
+                          referrerPolicy="no-referrer"
+                          className="max-h-72 w-auto rounded-2xl border border-[#EBD8C3] object-contain bg-white"
+                        />
+                      )}
                       {(ann.startAt || ann.endAt) && (
                         <div className="text-[11px] font-semibold text-[#456D8F]">
                           🗓️ {ann.startAt ? new Date(ann.startAt).toLocaleString(lang === 'th' ? 'th-TH' : 'en-US') : '—'} →{' '}
@@ -5945,6 +5953,9 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                       <div className="text-xs text-[#7B695F] pt-1">
                         {ann.authorName} ·{' '}
                         {new Date(ann.createdAt).toLocaleString(lang === 'th' ? 'th-TH' : 'en-US')}
+                        {ann.updatedAt
+                          ? ` · (${lang === 'th' ? 'แก้ไขแล้ว' : 'Edited'})`
+                          : ''}
                       </div>
                     </div>
                   ))

@@ -231,6 +231,7 @@ function serializeConfigDoc(
     lastWeeklyClearedAt: settings.lastWeeklyClearedAt ?? null,
     useOwnStorageOnly: Boolean(settings.useOwnStorageOnly),
     enableCoinsAndPiggyBank: Boolean(settings.enableCoinsAndPiggyBank),
+    showHomeAnnouncementBox: settings.showHomeAnnouncementBox !== false,
     ...(settings.organizationPreset ? { organizationPreset: settings.organizationPreset } : {}),
     ...(Array.isArray(settings.automationAddons)
       ? { automationAddons: settings.automationAddons.slice(0, 10) }
@@ -260,6 +261,14 @@ function serializeConfigDoc(
     ...(settings.commandPermissions && typeof settings.commandPermissions === 'object'
       ? {
           commandPermissions: stripUndefined(settings.commandPermissions),
+        }
+      : {}),
+    ...(Array.isArray(settings.customPenaltyPresets)
+      ? {
+          customPenaltyPresets: settings.customPenaltyPresets
+            .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+            .map((x) => x.trim().slice(0, 120))
+            .slice(0, 30),
         }
       : {}),
     ...(typeof settings.kidAwaySecretCode === 'string'
@@ -603,15 +612,27 @@ export function subscribeFoundationCloud(
         };
         if (!d?.payload) return;
         switch (d.recordType) {
-          case 'announcement':
-            announcements.push(d.payload as unknown as Announcement);
+          case 'announcement': {
+            const ann = d.payload as unknown as Announcement;
+            if (ann?.id !== 'ann_welcome' && !ann?.id?.startsWith('ann_welcome_')) {
+              announcements.push(ann);
+            }
             break;
-          case 'poll':
-            polls.push(d.payload as unknown as SecretPoll);
+          }
+          case 'poll': {
+            const poll = d.payload as unknown as SecretPoll;
+            if (poll?.id !== 'poll_weekend_activity') {
+              polls.push(poll);
+            }
             break;
-          case 'trip':
-            trips.push(d.payload as unknown as OutingTrip);
+          }
+          case 'trip': {
+            const trip = d.payload as unknown as OutingTrip;
+            if (trip?.id !== 'trip_weekend_park') {
+              trips.push(trip);
+            }
             break;
+          }
           case 'private_message':
             privateMessages.push(d.payload as unknown as PrivateCareMessage);
             break;
@@ -624,9 +645,13 @@ export function subscribeFoundationCloud(
           case 'kitchen_log':
             kitchenLogs.push(d.payload as unknown as KitchenVerificationLog);
             break;
-          case 'lost_found':
-            lostFoundItems.push(d.payload as unknown as LostFoundItem);
+          case 'lost_found': {
+            const lf = d.payload as unknown as LostFoundItem;
+            if (lf?.id !== 'lf_bottle_demo') {
+              lostFoundItems.push(lf);
+            }
             break;
+          }
           case 'supply_request':
             supplyRequests.push(d.payload as unknown as SupplyRequest);
             break;
@@ -756,6 +781,10 @@ export function subscribeFoundationCloud(
               typeof d.lastWeeklyClearedAt === 'string' ? d.lastWeeklyClearedAt : null,
             useOwnStorageOnly: Boolean(d.useOwnStorageOnly),
             enableCoinsAndPiggyBank: Boolean(d.enableCoinsAndPiggyBank),
+            showHomeAnnouncementBox:
+              d.showHomeAnnouncementBox === undefined
+                ? true
+                : Boolean(d.showHomeAnnouncementBox),
             organizationPreset:
               typeof d.organizationPreset === 'string'
                 ? (d.organizationPreset as AppSettings['organizationPreset'])
@@ -788,6 +817,9 @@ export function subscribeFoundationCloud(
               !Array.isArray(d.commandPermissions)
                 ? (d.commandPermissions as AppSettings['commandPermissions'])
                 : undefined,
+            customPenaltyPresets: Array.isArray(d.customPenaltyPresets)
+              ? d.customPenaltyPresets.filter((x): x is string => typeof x === 'string').slice(0, 30)
+              : undefined,
             kidAwaySecretCode:
               typeof d.kidAwaySecretCode === 'string'
                 ? d.kidAwaySecretCode.slice(0, 8)
@@ -933,15 +965,27 @@ export function subscribeLinkedKidCloud(
                 };
                 if (!d?.payload) return;
                 switch (d.recordType) {
-                  case 'announcement':
-                    announcements.push(d.payload as unknown as Announcement);
+                  case 'announcement': {
+                    const ann = d.payload as unknown as Announcement;
+                    if (ann?.id !== 'ann_welcome' && !ann?.id?.startsWith('ann_welcome_')) {
+                      announcements.push(ann);
+                    }
                     break;
-                  case 'poll':
-                    polls.push(d.payload as unknown as SecretPoll);
+                  }
+                  case 'poll': {
+                    const poll = d.payload as unknown as SecretPoll;
+                    if (poll?.id !== 'poll_weekend_activity') {
+                      polls.push(poll);
+                    }
                     break;
-                  case 'trip':
-                    trips.push(d.payload as unknown as OutingTrip);
+                  }
+                  case 'trip': {
+                    const trip = d.payload as unknown as OutingTrip;
+                    if (trip?.id !== 'trip_weekend_park') {
+                      trips.push(trip);
+                    }
                     break;
+                  }
                   case 'shop_item':
                     shopItems.push(d.payload as unknown as ShopItem);
                     break;
@@ -1021,6 +1065,10 @@ export function subscribeLinkedKidCloud(
                     typeof d.lastWeeklyClearedAt === 'string' ? d.lastWeeklyClearedAt : null,
                   useOwnStorageOnly: Boolean(d.useOwnStorageOnly),
                   enableCoinsAndPiggyBank: Boolean(d.enableCoinsAndPiggyBank),
+                  showHomeAnnouncementBox:
+                    d.showHomeAnnouncementBox === undefined
+                      ? true
+                      : Boolean(d.showHomeAnnouncementBox),
                   organizationPreset:
                     typeof d.organizationPreset === 'string'
                       ? (d.organizationPreset as AppSettings['organizationPreset'])
@@ -1053,6 +1101,9 @@ export function subscribeLinkedKidCloud(
                     !Array.isArray(d.commandPermissions)
                       ? (d.commandPermissions as AppSettings['commandPermissions'])
                       : undefined,
+                  customPenaltyPresets: Array.isArray(d.customPenaltyPresets)
+                    ? d.customPenaltyPresets.filter((x): x is string => typeof x === 'string').slice(0, 30)
+                    : undefined,
                   kidAwaySecretCode:
                     typeof d.kidAwaySecretCode === 'string'
                       ? d.kidAwaySecretCode.slice(0, 8)

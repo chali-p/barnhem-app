@@ -42,14 +42,14 @@ import {
   KioskResult,
   minsToHHMM,
 } from '../utils/expressKiosk';
-import {
-  getActiveFestival,
-  getAnnouncementScheduleStatus,
-  getDynamicTimeEventAnnouncement,
-} from '../utils/festivalAndEvents';
 import { isKidAwayOnDate } from '../utils/piggyBank';
 import {
   ACTIVITY_LOG_VIEWER_PIN,
+  KIDS_DUTY_ROSTER_PIN,
+  KIDS_STAR_SUMMARY_PIN,
+  LOST_FOUND_PIN,
+  SECRET_VOTE_PIN,
+  SUPPLY_REQUEST_PIN,
   formatPinAttemptsHint,
   formatPinLockoutMessage,
   getActiveKidAwaySecretCode,
@@ -61,7 +61,6 @@ import {
   getDateKey,
   getLaundryQueueInfo,
 } from '../utils/timeRules';
-import { copyTextToClipboard } from '../utils/syncStorage';
 import {
   getTrashDutyInfoForDate,
   TRASH_DUTY_RULE_EN,
@@ -69,11 +68,11 @@ import {
 } from '../utils/trashDuty';
 import { PinPadModal, QrScannerModal } from './CenteredAlertModal';
 import { CloudSyncBanner } from './CloudSyncBanner';
-import { CommandPermissionsEditorCard } from './CommandPermissionsEditorCard';
+import { HomeAnnouncementBox } from './HomeAnnouncementBox';
 import { KidDutySchedulesPanel } from './KidDutySchedulesPanel';
+import { LoginCommandsSettingsCard } from './LoginCommandsSettingsCard';
 import { StaffLeavePanel } from './StaffLeavePanel';
 import { StaffRosterPanel } from './StaffRosterPanel';
-import { TimedScheduleEditorCard } from './TimedScheduleEditorCard';
 
 export interface ThemeSwatchOption {
   id: PastelTheme;
@@ -95,7 +94,17 @@ interface MagicDoorViewProps {
   cloudSyncing: boolean;
   onForceSeedCloud: () => Promise<void>;
   onSelectKid: (kidId: string) => void;
-  onAutoLoginRole: (member: Member | 'creator' | 'activity_log') => void;
+  onAutoLoginRole: (
+    member:
+      | Member
+      | 'creator'
+      | 'activity_log'
+      | 'star_summary'
+      | 'duty_roster'
+      | 'secret_vote'
+      | 'supply_request'
+      | 'lost_found'
+  ) => void;
   onExpressKioskScan: (code: string) => KioskResult | null;
   onQuickGoToSchool: (kidId: string) => KioskResult | null;
   onQuickHomeAction?: (actionId: HomeQuickActionId, kidId: string, detailOverride?: string) => KioskResult | null;
@@ -117,8 +126,11 @@ interface MagicDoorViewProps {
   onAcknowledgeLeave?: (leaveId: string, byName: string) => void;
   onCancelLeave?: (leaveId: string) => void;
   onAddAnnouncement?: (ann: Announcement) => void;
+  onUpdateAnnouncement?: (annId: string, updates: Partial<Announcement>) => void;
+  onTogglePinAnnouncement?: (annId: string) => void;
   onDeleteAnnouncement?: (annId: string) => void;
   onToggleStaffTaskDone?: (annId: string, actorName: string) => void;
+  onUpdateSettings?: (partial: Partial<AppState['settings']>) => void;
   onShowAlert: (payload: ModalAlertPayload) => void;
   organizationName?: string;
   linkedKidSession?: LinkedKidSession | null;
@@ -148,15 +160,17 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
   onSaveCustomQuickCommands,
   onSaveTimedSchedule,
   onSaveCommandPermissions,
-  onAddSickReport,
   onUpdateKid,
   onSubmitStaffLeave,
   onUpdateLeaveSubstitute,
   onAcknowledgeLeave,
   onCancelLeave,
   onAddAnnouncement,
+  onUpdateAnnouncement,
+  onTogglePinAnnouncement,
   onDeleteAnnouncement,
   onToggleStaffTaskDone,
+  onUpdateSettings,
   onShowAlert,
   organizationName,
   linkedKidSession = null,
@@ -186,38 +200,14 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     | { type: 'custom'; cmdId: string }
     | { type: 'add_custom' }
     | { type: 'delete_custom'; cmdId: string }
-    | { type: 'edit_schedule' }
-    | { type: 'edit_permissions' }
+    | { type: 'manage_commands' }
   >(null);
-  const [addCommandOpen, setAddCommandOpen] = useState(false);
-  const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false);
-  const [permissionsEditorOpen, setPermissionsEditorOpen] = useState(false);
-  const [newCmdEmoji, setNewCmdEmoji] = useState('📝');
-  const [newCmdTitleTh, setNewCmdTitleTh] = useState('');
-  const [newCmdKind, setNewCmdKind] = useState<CustomQuickCommand['kind']>('homework_permission');
-  const [newCmdAlwaysOpen, setNewCmdAlwaysOpen] = useState(true);
-  const [newCmdStartTime, setNewCmdStartTime] = useState('17:00');
-  const [newCmdEndTime, setNewCmdEndTime] = useState('21:30');
-  const [newCmdStars, setNewCmdStars] = useState(0);
-  const [newCmdDefaultNote, setNewCmdDefaultNote] = useState('');
+  const [commandManagerMode, setCommandManagerMode] = useState<null | 'add_direct' | 'manager'>(null);
   const [showCloudSync, setShowCloudSync] = useState(false);
-  const [homeSickOpen, setHomeSickOpen] = useState(false);
-  const [homeSickStep, setHomeSickStep] = useState<'pin' | 'pick_kid' | 'form' | 'line_copy'>('pin');
-  const [homeSickPinInput, setHomeSickPinInput] = useState('');
-  const [homeSickKidId, setHomeSickKidId] = useState<string | null>(null);
-  const [homeSickGroupFilter, setHomeSickGroupFilter] = useState<0 | 1 | 2 | 3>(0);
-  const [homeSickSymptoms, setHomeSickSymptoms] = useState('มีไข้ / ตัวร้อน');
-  const [homeSickDetails, setHomeSickDetails] = useState('');
-  const [homeSickLineText, setHomeSickLineText] = useState<string | null>(null);
-  const [homeSickLineCopied, setHomeSickLineCopied] = useState(false);
   const [usefulInfoOpen, setUsefulInfoOpen] = useState(false);
   const [usefulInfoTab, setUsefulInfoTab] = useState<
-    'hub' | 'announcements' | 'staff_roster' | 'duties' | 'rules_schedule' | 'trips' | 'lost_found'
+    'hub' | 'staff_roster' | 'duties' | 'rules_schedule' | 'trips' | 'lost_found'
   >('hub');
-  const [homeCommunityTab, setHomeCommunityTab] = useState<
-    'announcements' | 'polls' | 'trips' | 'inbox' | 'lost_found' | 'supplies' | 'deeds' | 'sick'
-  >('announcements');
-  const [homeCommunityCollapsed, setHomeCommunityCollapsed] = useState(false);
   const [homeStaffWorkOpen, setHomeStaffWorkOpen] = useState(false);
   const [homeStaffWorkTab, setHomeStaffWorkTab] = useState<'tasks' | 'leave'>('tasks');
   const [homeStaffWorkPinInput, setHomeStaffWorkPinInput] = useState('');
@@ -236,7 +226,6 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
   const pinGuard = usePinGuard('magic_door');
   const staffBoardPinGuard = usePinGuard('magic_door_staff_board');
   const kidCmdPinGuard = usePinGuard('magic_door_kid_cmd');
-  const homeSickPinGuard = usePinGuard('magic_door_sick');
   const homeStaffWorkPinGuard = usePinGuard('magic_door_staff_work');
   const trashPinGuard = usePinGuard('magic_door_trash');
 
@@ -257,7 +246,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     [appState.settings, todayKey]
   );
   const customQuickCommands = useMemo(
-    () => getEffectiveCustomQuickCommands(appState.settings),
+    () => getEffectiveCustomQuickCommands(appState.settings).filter((c) => c.enabled !== false),
     [appState.settings]
   );
   const openCustomCommands = useMemo(
@@ -265,7 +254,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     [customQuickCommands, now]
   );
   const effectiveHomeActions = useMemo(
-    () => getEffectiveHomeQuickActions(appState.settings),
+    () => getEffectiveHomeQuickActions(appState.settings).filter((a) => a.enabled),
     [appState.settings]
   );
   const hwPermWin = useMemo(
@@ -284,20 +273,10 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
   );
   const totalCommandCount = effectiveHomeActions.length + customQuickCommands.length;
   const totalOpenCount = openHomeActions.length + openCustomCommands.length;
+  const openRoutineCount =
+    openHomeActions.filter((a) => a.commandType !== 'penalty').length +
+    openCustomCommands.filter((c) => c.kind !== 'penalty').length;
   const isPublicHolidayToday = Boolean(appState.settings.isPublicHolidayToday);
-  const activeFestival = useMemo(
-    () => getActiveFestival(now, appState.settings.activeFestivalOverride ?? 'auto'),
-    [now, appState.settings.activeFestivalOverride]
-  );
-  const sortedHomeAnnouncements = useMemo(() => {
-    const active = appState.announcements.filter(
-      (a) => a.audience !== 'staff_only' && getAnnouncementScheduleStatus(a, now) === 'active'
-    );
-    return [...active].sort((a, b) => {
-      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-      return b.createdAt.localeCompare(a.createdAt);
-    });
-  }, [appState.announcements, now]);
   const staffWorkTasks = useMemo(() => {
     const items = appState.announcements.filter((a) => a.audience === 'staff_only');
     return [...items].sort((a, b) => {
@@ -316,46 +295,10 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     () => staffWorkTasks.filter((t) => !t.taskCompleted && t.priority === 'urgent').length,
     [staffWorkTasks]
   );
-  const urgentHomeAnnouncementsCount = useMemo(
-    () => sortedHomeAnnouncements.filter((a) => a.priority === 'urgent').length,
-    [sortedHomeAnnouncements]
-  );
   const openHomeLostCount = useMemo(
     () => appState.lostFoundItems.filter((i) => i.status !== 'claimed').length,
     [appState.lostFoundItems]
   );
-  const activeHomeSickCount = useMemo(
-    () => appState.sickReports.filter((r) => !r.resolved).length,
-    [appState.sickReports]
-  );
-  const openHomePollsCount = useMemo(
-    () => appState.polls.filter((p) => !p.closed).length,
-    [appState.polls]
-  );
-  const unreadHomeInboxCount = useMemo(
-    () => appState.privateMessages.filter((m) => !m.readByStaff).length,
-    [appState.privateMessages]
-  );
-  const pendingHomeSuppliesCount = useMemo(
-    () => appState.supplyRequests.filter((s) => s.status === 'pending').length,
-    [appState.supplyRequests]
-  );
-  const pendingHomeDeedsCount = useMemo(
-    () => appState.deedRedemptions.filter((d) => d.status !== 'approved').length,
-    [appState.deedRedemptions]
-  );
-  const homeDynamicEventAnnouncement = useMemo(() => {
-    const refKid = kids[0] ?? members[0];
-    if (!refKid) return null;
-    return getDynamicTimeEventAnnouncement(
-      now,
-      { ...refKid, group: 2 },
-      'เวรดูแลบ้านประจำวัน',
-      'Daily House Chore',
-      isPublicHolidayToday,
-      activeFestival
-    );
-  }, [now, kids, members, isPublicHolidayToday, activeFestival]);
   const todayStaffRow = useMemo(() => getStaffScheduleForDate(now), [now]);
   const todayCoverage = useMemo(
     () =>
@@ -463,86 +406,23 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     if (actionId === 'morning_school') return onQuickGoToSchool(kidId);
     return null;
   };
-  const parseHHMMToMins = (hhmm: string, fallback: number): number => {
-    const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
-    if (!m) return fallback;
-    const h = Math.min(23, Math.max(0, Number(m[1])));
-    const min = Math.min(59, Math.max(0, Number(m[2])));
-    return h * 60 + min;
-  };
-  const applyPresetToNewCommand = (preset: {
-    emoji: string;
-    titleTh: string;
-    kind: CustomQuickCommand['kind'];
-    alwaysOpen: boolean;
-    defaultNote: string;
-    stars: number;
-  }) => {
-    setNewCmdEmoji(preset.emoji);
-    setNewCmdTitleTh(preset.titleTh);
-    setNewCmdKind(preset.kind);
-    setNewCmdAlwaysOpen(preset.alwaysOpen);
-    setNewCmdDefaultNote(preset.defaultNote);
-    setNewCmdStars(preset.stars);
-  };
-  const handleCreateCustomCommand = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanTitle = newCmdTitleTh.trim();
-    if (!cleanTitle) {
-      onShowAlert({
-        icon: '📝',
-        title: lang === 'th' ? 'กรุณาตั้งชื่อคำสั่งคีย์ลัด' : 'Command Title Required',
-        message:
-          lang === 'th'
-            ? 'พิมพ์ชื่อคำสั่งที่ต้องการ เช่น "ขออนุญาตทำการบ้าน" ก่อนกดบันทึกค่ะ'
-            : 'Please enter a shortcut title first.',
-        tone: 'yellow',
-      });
+  const handleCommandSettingsUpdate = (partial: Partial<AppState['settings']>) => {
+    if (onUpdateSettings) {
+      onUpdateSettings(partial);
       return;
     }
-    if (customQuickCommands.length >= 20) {
-      onShowAlert({
-        icon: '📋',
-        title: lang === 'th' ? 'ครบจำนวนสูงสุด 20 คำสั่งแล้ว' : 'Max 20 Custom Commands Reached',
-        message:
-          lang === 'th'
-            ? 'สามารถลบคำสั่งเก่าที่ไม่ใช้แล้วออกก่อนเพื่อเพิ่มคำสั่งใหม่ได้ค่ะ'
-            : 'Please remove an unused custom command first.',
-        tone: 'yellow',
-      });
-      return;
+    if (partial.customQuickCommands) {
+      onSaveCustomQuickCommands?.(partial.customQuickCommands);
     }
-    const created: CustomQuickCommand = {
-      id: `cmd_${Date.now()}`,
-      emoji: newCmdEmoji.trim() || (newCmdKind === 'homework_permission' ? '📝' : '⚡'),
-      titleTh: cleanTitle.slice(0, 60),
-      titleEn: cleanTitle.slice(0, 60),
-      kind: newCmdKind,
-      alwaysOpen: newCmdAlwaysOpen,
-      ...(newCmdAlwaysOpen
-        ? {}
-        : {
-            startMins: parseHHMMToMins(newCmdStartTime, 17 * 60),
-            endMins: parseHHMMToMins(newCmdEndTime, 21 * 60 + 30),
-          }),
-      starsDelta: Math.max(0, Math.min(20, Math.round(Number(newCmdStars || 0)))),
-      ...(newCmdDefaultNote.trim() ? { defaultNote: newCmdDefaultNote.trim().slice(0, 80) } : {}),
-    };
-    const nextList = [...customQuickCommands, created];
-    onSaveCustomQuickCommands?.(nextList);
-    setAddCommandOpen(false);
-    setNewCmdTitleTh('');
-    setNewCmdDefaultNote('');
-    setNewCmdStars(0);
-    onShowAlert({
-      icon: created.emoji,
-      title: lang === 'th' ? `เพิ่มคีย์ลัด "${created.titleTh}" แล้ว!` : `Added "${created.titleEn}"!`,
-      message:
-        lang === 'th'
-          ? 'กดใช้งานจากหน้าแรกได้ทันทีเลยค่ะ'
-          : 'Ready to use from the Quick Commands menu.',
-      tone: 'mint',
-    });
+    if (partial.timedCommandSchedule) {
+      onSaveTimedSchedule?.(partial.timedCommandSchedule, partial.homeworkCurfewMins ?? hwCurfewMins);
+    }
+    if (partial.commandPermissions || partial.kidsWithoutPhoneIds) {
+      onSaveCommandPermissions?.(
+        partial.kidsWithoutPhoneIds ?? appState.settings.kidsWithoutPhoneIds ?? [],
+        partial.commandPermissions ?? appState.settings.commandPermissions ?? {}
+      );
+    }
   };
   const filteredSchoolKids = useMemo(() => {
     const q = schoolBoardSearch.trim().toLowerCase();
@@ -565,6 +445,31 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     if (pin === ACTIVITY_LOG_VIEWER_PIN) {
       pinGuard.recordSuccess();
       onAutoLoginRole('activity_log');
+      return 'logged_in';
+    }
+    if (pin === KIDS_STAR_SUMMARY_PIN) {
+      pinGuard.recordSuccess();
+      onAutoLoginRole('star_summary');
+      return 'logged_in';
+    }
+    if (pin === KIDS_DUTY_ROSTER_PIN) {
+      pinGuard.recordSuccess();
+      onAutoLoginRole('duty_roster');
+      return 'logged_in';
+    }
+    if (pin === SECRET_VOTE_PIN) {
+      pinGuard.recordSuccess();
+      onAutoLoginRole('secret_vote');
+      return 'logged_in';
+    }
+    if (pin === SUPPLY_REQUEST_PIN) {
+      pinGuard.recordSuccess();
+      onAutoLoginRole('supply_request');
+      return 'logged_in';
+    }
+    if (pin === LOST_FOUND_PIN) {
+      pinGuard.recordSuccess();
+      onAutoLoginRole('lost_found');
       return 'logged_in';
     }
     if (creatorPins.includes(pin)) {
@@ -603,8 +508,8 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
             : 'Staff & Caregiver Login Only',
         message: `${
           lang === 'th'
-            ? 'ช่องกรอก PIN 4 หลักนี้สงวนไว้สำหรับพนักงานและผู้ดูแลทุกคนค่ะ\nน้องๆ กดใช้งานได้ผ่านปุ่ม "📋 คำสั่งเช็คชื่อ & คีย์ลัด" และ "📢 ประกาศ & ข้อมูล" บนหน้านี้ได้เลยค่ะ'
-            : 'This 4-digit PIN login is reserved for staff & caregivers. Kids can use Check-In Commands and Notices on this screen.'
+            ? 'ช่องกรอก PIN 4 หลักนี้สงวนไว้สำหรับพนักงานและผู้ดูแลทุกคนค่ะ\nน้องๆ กดใช้งานได้ผ่านปุ่ม "📋 คำสั่งเช็คชื่อ & คีย์ลัด" หรือกรอกรหัสลัด 4 หลักได้เลยค่ะ'
+            : 'This 4-digit PIN login is reserved for staff & caregivers. Kids can use Check-In Commands or 4-digit shortcut PINs.'
         }\n${formatPinAttemptsHint(res.attemptsRemaining, lang)}`,
         tone: 'pink',
       });
@@ -783,8 +688,8 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                 <div className="text-[11px] text-[#7B695F] px-1">
                   👩‍🏫{' '}
                   {lang === 'th'
-                    ? 'สงวนสิทธิ์เข้าสู่ระบบสำหรับพนักงาน · น้องๆ กดใช้ปุ่มคำสั่ง & ประกาศได้เลยค่ะ'
-                    : 'Staff login only · Kids can use Quick Commands & Notices below'}
+                    ? 'สงวนสิทธิ์เข้าสู่ระบบสำหรับพนักงาน · น้องๆ กดใช้ปุ่มคำสั่งหรือรหัสลัดได้เลยค่ะ'
+                    : 'Staff login only · Kids can use Quick Commands or shortcut PINs'}
                 </div>
               </div>
               {pinGuard.isLocked && (
@@ -823,37 +728,53 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
               <button
                 type="button"
                 onClick={() => setQuickActionsMenuOpen(true)}
-                className={`min-h-[46px] w-full rounded-2xl border px-4 py-2 text-xs sm:text-sm font-extrabold flex items-center justify-between gap-2 transition-colors cursor-pointer ${
-                  totalOpenCount > 0
-                    ? 'border-[#8FD4C6] bg-[#E8FAF6] hover:bg-[#D8F5EE] text-[#114A42]'
-                    : 'border-[#E6DCD2] bg-[#F7F3EE] hover:bg-[#EFE9E1] text-[#6E5C52]'
+                className={`min-h-[46px] w-full rounded-2xl border-2 px-4 py-2 text-xs sm:text-sm font-extrabold flex items-center justify-between gap-2 transition-all cursor-pointer ${
+                  openRoutineCount > 0
+                    ? 'border-[#49AD9A] bg-[#C5EFE6] hover:bg-[#B2E7DC] text-[#0B3B34] shadow-xs'
+                    : 'border-[#D1BFAE] bg-[#EBE2D7] hover:bg-[#E1D5C7] text-[#4E3F38]'
                 }`}
               >
                 <span className="flex items-center gap-2 min-w-0">
+                  {openRoutineCount > 0 ? (
+                    <span
+                      className="relative flex h-2.5 w-2.5 shrink-0"
+                      aria-hidden="true"
+                    >
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#10B981] opacity-85" />
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#059669]" />
+                    </span>
+                  ) : null}
                   <span className="shrink-0">
-                    {totalOpenCount > 0 ? '📋' : '🔒'}
+                    {openRoutineCount > 0 ? '📋' : '🔒'}
                   </span>
                   <span className="truncate">
-                    {totalOpenCount > 0
+                    {openRoutineCount > 0
                       ? lang === 'th'
-                        ? `คำสั่งเช็คชื่อ & คีย์ลัด (${totalOpenCount}/${totalCommandCount} เปิดอยู่)`
-                        : `Quick Check-In & Shortcuts (${totalOpenCount}/${totalCommandCount} Open)`
+                        ? `คำสั่งเช็คชื่อ & คีย์ลัด (${openRoutineCount}/${totalCommandCount} เปิดอยู่)`
+                        : `Quick Check-In & Shortcuts (${openRoutineCount}/${totalCommandCount} Open)`
                       : lang === 'th'
                       ? `คำสั่งเช็คชื่อตามเวลา & คีย์ลัด (รวม ${totalCommandCount} คำสั่ง)`
                       : `Timed Check-In & Shortcuts (${totalCommandCount})`}
                   </span>
                 </span>
                 <span
-                  className={`rounded-xl px-2.5 py-0.5 text-[11px] font-bold shrink-0 ${
-                    totalOpenCount > 0
-                      ? 'bg-white text-[#114A42]'
-                      : 'bg-white/80 text-[#8B796E]'
+                  className={`rounded-xl px-2.5 py-0.5 text-[11px] font-extrabold shrink-0 inline-flex items-center gap-1.5 ${
+                    openRoutineCount > 0
+                      ? 'bg-[#0F4C42] text-white'
+                      : 'bg-white/90 text-[#5E4E45] border border-[#D4C4B4]'
                   }`}
                 >
-                  {totalOpenCount > 0
+                  {openRoutineCount > 0 && (
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#6EE7B7] animate-pulse" />
+                  )}
+                  {openRoutineCount > 0
                     ? lang === 'th'
-                      ? 'เลือกคำสั่ง ▾'
-                      : 'Open ▾'
+                      ? 'เปิดระบบแล้ว ▾'
+                      : 'Open Now ▾'
+                    : totalOpenCount > 0
+                    ? lang === 'th'
+                      ? `เปิดเมนู (${totalOpenCount}) ▾`
+                      : `Menu (${totalOpenCount}) ▾`
                     : lang === 'th'
                     ? 'ตั้งค่า/+เพิ่ม ▾'
                     : 'View / +Add ▾'}
@@ -1224,396 +1145,24 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
         </div>
       </div>
 
-      {/* Home Community Message Hub (Below Trash Duty) + 3 Main Action Buttons */}
-      <section
-        className="rounded-[24px] border-2 bg-white px-4 py-4 sm:px-5 sm:py-5 pastel-shadow space-y-3.5"
-        style={{ borderColor: 'var(--theme-border-alt)' }}
-      >
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="text-base sm:text-lg font-extrabold text-[#3D322C]">
-              💬 {lang === 'th' ? 'ศูนย์ประกาศ · โหวตลับ · ทริปเที่ยว · ของหาย & แจ้งเรื่อง' : 'Notices · Polls · Trips · Lost & Found & Reports'}
-            </h3>
-            <p className="text-xs text-[#6E5C52] mt-0.5">
-              {lang === 'th'
-                ? 'รวมประกาศบ้าน ของหาย ทริปเที่ยว พร้อมปุ่มแจ้งเจ็บป่วย และประกาศ & ข้อมูลไว้ในจุดเดียวค่ะ'
-                : 'House announcements, lost & found, outings, illness reports, and useful info in one place.'}
-            </p>
-          </div>
-
-          {/* Action Buttons + Hide/Show Toggle */}
-          <div className="flex flex-wrap items-center gap-2">
-            {onAddSickReport && (
-              <button
-                type="button"
-                onClick={() => {
-                  setHomeSickPinInput('');
-                  setHomeSickSymptoms('มีไข้ / ตัวร้อน');
-                  setHomeSickDetails('');
-                  setHomeSickLineText(null);
-                  setHomeSickLineCopied(false);
-                  setHomeSickGroupFilter(0);
-                  if (linkedKidMember) {
-                    setHomeSickKidId(linkedKidMember.id);
-                    setHomeSickStep('form');
-                  } else {
-                    setHomeSickKidId(null);
-                    setHomeSickStep('pin');
-                  }
-                  setHomeSickOpen(true);
-                }}
-                className="min-h-[38px] rounded-xl border border-[#F2B8C3] bg-[#FFF0F3] hover:bg-[#FADADD] px-3 py-1.5 text-xs font-extrabold text-[#8B1D36] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-              >
-                <span>🤒</span>
-                <span>{lang === 'th' ? 'แจ้งเจ็บป่วย / ไม่สบาย' : 'Report Illness'}</span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={() => {
-                setUsefulInfoTab('hub');
-                setUsefulInfoOpen(true);
-              }}
-              title={
-                lang === 'th'
-                  ? 'เปิดดูประกาศบ้าน ตารางพี่เลี้ยง ตารางเวร กฎบ้าน กิจกรรม และของหาย'
-                  : 'Announcements, Rosters, Duties, Rules, Trips & Lost/Found'
-              }
-              className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-[#E5D3BA] bg-[#FFFDF9] hover:bg-[#FFF5E4] px-3 py-1.5 text-xs font-bold text-[#5E411D] transition-colors cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <span>📢</span>
-              <span>{lang === 'th' ? 'ประกาศ & ข้อมูล' : 'Notices & Info'}</span>
-              <span className="font-extrabold text-[#7A5411] tabular-nums">
-                ({sortedHomeAnnouncements.length + 1})
-              </span>
-              <span className="text-[10px] opacity-75">▾</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setHomeCommunityCollapsed((prev) => !prev)}
-              className={`min-h-[38px] rounded-xl border px-3 py-1.5 text-xs font-bold cursor-pointer whitespace-nowrap shrink-0 transition-colors ${
-                homeCommunityCollapsed
-                  ? 'bg-[#EAE4F2] hover:bg-[#DDD3EA] border-[#C8B7EB] text-[#3E2B63]'
-                  : 'bg-[#F7F1EB] hover:bg-[#EDE2D7] border-[#E2D4C5] text-[#5C4B42]'
-              }`}
-            >
-              {homeCommunityCollapsed
-                ? lang === 'th'
-                  ? '👁️ แสดง ▾'
-                  : '👁️ Show ▾'
-                : lang === 'th'
-                ? '🙈 ซ่อน ▴'
-                : '🙈 Hide ▴'}
-            </button>
-          </div>
-        </div>
-
-        {!homeCommunityCollapsed && (
-          <div className="space-y-3">
-            {/* 8-Tab Bar (Kindness removed, Illness Report added in its place) */}
-            <div className="flex flex-wrap gap-1.5 rounded-2xl bg-[#F4ECE4] p-1">
-              {(
-                [
-                  {
-                    id: 'announcements',
-                    th: `📢 ประกาศ (${sortedHomeAnnouncements.length + (homeDynamicEventAnnouncement ? 1 : 0)})`,
-                    en: `📢 Notices (${sortedHomeAnnouncements.length + (homeDynamicEventAnnouncement ? 1 : 0)})`,
-                  },
-                  {
-                    id: 'polls',
-                    th: `🗳️ โหวตลับ (${openHomePollsCount})`,
-                    en: `🗳️ Polls (${openHomePollsCount})`,
-                  },
-                  {
-                    id: 'trips',
-                    th: `🗺️ ทริปเที่ยว (${appState.trips.length})`,
-                    en: `🗺️ Trips (${appState.trips.length})`,
-                  },
-                  {
-                    id: 'inbox',
-                    th: `💌 หลังไมค์ (${unreadHomeInboxCount > 0 ? `${unreadHomeInboxCount} ใหม่` : appState.privateMessages.length})`,
-                    en: `💌 Inbox (${unreadHomeInboxCount})`,
-                  },
-                  {
-                    id: 'lost_found',
-                    th: `🔎 ของหาย (${openHomeLostCount})`,
-                    en: `🔎 Lost & Found (${openHomeLostCount})`,
-                  },
-                  {
-                    id: 'supplies',
-                    th: `📦 ขอเบิกของ (${pendingHomeSuppliesCount})`,
-                    en: `📦 Supplies (${pendingHomeSuppliesCount})`,
-                  },
-                  {
-                    id: 'deeds',
-                    th: `⚖️ ไถ่ค่าปรับ (${pendingHomeDeedsCount})`,
-                    en: `⚖️ Fine Deeds (${pendingHomeDeedsCount})`,
-                  },
-                  {
-                    id: 'sick',
-                    th: `🤒 แจ้งเจ็บป่วย (${activeHomeSickCount})`,
-                    en: `🤒 Illness (${activeHomeSickCount})`,
-                  },
-                ] as const
-              ).map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setHomeCommunityTab(item.id)}
-                  className={`min-h-[38px] rounded-xl px-3 py-1.5 text-xs font-bold whitespace-nowrap cursor-pointer transition-colors tabular-nums ${
-                    homeCommunityTab === item.id
-                      ? 'bg-white text-[#3D322C] shadow-xs'
-                      : 'text-[#6E5C52] hover:text-[#3D322C]'
-                  }`}
-                >
-                  {lang === 'th' ? item.th : item.en}
-                </button>
-              ))}
-            </div>
-
-            {/* Tab 1: Announcements */}
-            {homeCommunityTab === 'announcements' && (
-              <div className="space-y-2.5 max-h-80 overflow-y-auto pr-0.5">
-                {homeDynamicEventAnnouncement && (
-                  <div
-                    className={`rounded-2xl border p-3.5 space-y-1 ${
-                      homeDynamicEventAnnouncement.isFestival
-                        ? 'border-[#E6B8D0]'
-                        : 'border-[#96C3E6] bg-[#EFF7FF]'
-                    }`}
-                    style={
-                      homeDynamicEventAnnouncement.isFestival && activeFestival
-                        ? { background: activeFestival.bannerGradient }
-                        : undefined
-                    }
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold text-[#5E4E45]">
-                      <span>
-                        {lang === 'th'
-                          ? homeDynamicEventAnnouncement.badgeTh
-                          : homeDynamicEventAnnouncement.badgeEn}
-                      </span>
-                      <span className="tabular-nums">
-                        ⏰{' '}
-                        {lang === 'th'
-                          ? homeDynamicEventAnnouncement.windowLabelTh
-                          : homeDynamicEventAnnouncement.windowLabelEn}
-                      </span>
-                    </div>
-                    <div className="font-extrabold text-sm text-[#3D322C]">
-                      {lang === 'th'
-                        ? homeDynamicEventAnnouncement.titleTh
-                        : homeDynamicEventAnnouncement.titleEn}
-                    </div>
-                    <p className="text-xs text-[#4E3F38] whitespace-pre-line leading-relaxed">
-                      {lang === 'th'
-                        ? homeDynamicEventAnnouncement.bodyTh
-                        : homeDynamicEventAnnouncement.bodyEn}
-                    </p>
-                  </div>
-                )}
-
-                {sortedHomeAnnouncements.length === 0 ? (
-                  <p className="text-xs text-[#7B695F] text-center py-3">
-                    {lang === 'th'
-                      ? 'ยังไม่มีประกาศเพิ่มเติมจากพี่เลี้ยงในเวลานี้'
-                      : 'No additional staff announcements right now.'}
-                  </p>
-                ) : (
-                  sortedHomeAnnouncements.map((ann) => (
-                    <div
-                      key={ann.id}
-                      className={`rounded-2xl border p-3.5 space-y-1 ${
-                        ann.priority === 'urgent'
-                          ? 'border-[#F3B7C0] bg-[#FFF4F6]'
-                          : 'border-[#F0D999] bg-[#FFFDF2]'
-                      }`}
-                    >
-                      <div className="font-bold text-sm text-[#3D322C]">
-                        {ann.pinned ? '📌 ' : ''}
-                        {ann.priority === 'urgent' ? '🚨 ' : '📢 '}
-                        {ann.title}
-                      </div>
-                      <p className="text-xs text-[#53433A] whitespace-pre-line leading-relaxed">
-                        {ann.body}
-                      </p>
-                      <div className="text-[11px] text-[#7B695F] tabular-nums">
-                        {ann.authorName} ·{' '}
-                        {new Date(ann.createdAt).toLocaleString(lang === 'th' ? 'th-TH' : 'en-US')}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-
-            {/* Tab 3: Outing Trips */}
-            {homeCommunityTab === 'trips' && (
-              <div className="space-y-2.5 max-h-80 overflow-y-auto pr-0.5">
-                {appState.trips.length === 0 ? (
-                  <p className="text-xs text-[#7B695F] text-center py-4">
-                    {lang === 'th' ? 'ยังไม่มีทริปสถานที่เที่ยวในตอนนี้' : 'No upcoming trips posted yet.'}
-                  </p>
-                ) : (
-                  appState.trips.map((trip) => (
-                    <div
-                      key={trip.id}
-                      className="rounded-2xl border border-[#B3E0DC] bg-[#F7FCFB] p-3.5 space-y-1.5"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div>
-                          <div className="font-bold text-sm text-[#3D322C]">
-                            🗺️ {trip.title}
-                          </div>
-                          <div className="text-xs text-[#6E5C52] mt-0.5">
-                            📍 {trip.location} · 🗓️ {trip.dateText} · 👩‍🏫 {trip.chaperone}
-                          </div>
-                        </div>
-                        <span className="text-xs font-extrabold text-[#19534B] tabular-nums">
-                          👥 {lang === 'th' ? `ลงชื่อแล้ว ${trip.attendeeIds.length} คน` : `${trip.attendeeIds.length} going`}
-                        </span>
-                      </div>
-                      <p className="text-xs text-[#5E4E45] whitespace-pre-line">{trip.details}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-
-            {/* Tab 5: Lost & Found Board */}
-            {homeCommunityTab === 'lost_found' && (
-              <div className="space-y-2.5 max-h-80 overflow-y-auto pr-0.5">
-                {appState.lostFoundItems.length === 0 ? (
-                  <p className="text-xs text-[#7B695F] text-center py-4">
-                    {lang === 'th' ? 'ยังไม่มีรายการของหายในตอนนี้ค่ะ' : 'No lost & found items right now.'}
-                  </p>
-                ) : (
-                  appState.lostFoundItems.map((item) => (
-                    <div
-                      key={item.id}
-                      className="rounded-2xl border border-[#EBD8C3] bg-[#FFFDF9] p-3.5 flex items-start gap-3 text-xs"
-                    >
-                      {item.photoBase64 && (
-                        <img
-                          src={item.photoBase64}
-                          alt={item.title}
-                          className="h-14 w-14 rounded-xl object-cover border shrink-0"
-                        />
-                      )}
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <div className="font-bold text-sm text-[#3D322C]">
-                          {item.status === 'claimed'
-                            ? '✅ [คืนเจ้าของแล้ว] '
-                            : item.status === 'found'
-                            ? '✨ [เจอของ] '
-                            : '❓ [ตามหา] '}
-                          {item.title}
-                        </div>
-                        <div className="text-[#5E4E45]">{item.description}</div>
-                        <div className="text-[11px] text-[#7B695F]">
-                          📍 {item.locationFound} · {item.postedByName}
-                          {item.claimedByNickname ? ` · คืนให้น้อง${item.claimedByNickname} แล้ว` : ''}
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-
-            {/* Tab 8: Illness Report (Replaced Kindness) */}
-            {homeCommunityTab === 'sick' && (
-              <div className="rounded-2xl border border-[#F3B7C0] bg-[#FFF7F9] p-4 flex flex-wrap items-center justify-between gap-3">
-                <div className="space-y-1 text-xs text-[#5E2832]">
-                  <div className="font-extrabold text-sm text-[#8B1D36]">
-                    🤒 {lang === 'th' ? 'แจ้งอาการเจ็บป่วย / ไม่สบายด่วน' : 'Quick Illness Report'}
-                  </div>
-                  <p className="text-[#6E5C52]">
-                    {activeHomeSickCount > 0
-                      ? lang === 'th'
-                        ? `ขณะนี้มีรายการแจ้งป่วยรอติดตามดูแล ${activeHomeSickCount} รายการ · กดปุ่มเพื่อยืนยัน PIN และแจ้งอาการส่งพี่เลี้ยง + ยกเว้นค่าปรับสายวันนี้ค่ะ`
-                        : `${activeHomeSickCount} active sick report(s). Tap to verify PIN and submit.`
-                      : lang === 'th'
-                      ? 'หากน้องมีไข้ ปวดหัว ปวดท้อง หรือไม่สบาย กดปุ่มแจ้งอาการเพื่อส่งแจ้งพี่เลี้ยงและยกเว้นค่าปรับสายวันนี้ทันทีค่ะ'
-                      : 'Report fever or symptoms to notify caregivers immediately and waive today’s late fine.'}
-                  </p>
-                </div>
-                {onAddSickReport && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setHomeSickPinInput('');
-                      setHomeSickSymptoms('มีไข้ / ตัวร้อน');
-                      setHomeSickDetails('');
-                      setHomeSickLineText(null);
-                      setHomeSickLineCopied(false);
-                      setHomeSickGroupFilter(0);
-                      if (linkedKidMember) {
-                        setHomeSickKidId(linkedKidMember.id);
-                        setHomeSickStep('form');
-                      } else {
-                        setHomeSickKidId(null);
-                        setHomeSickStep('pin');
-                      }
-                      setHomeSickOpen(true);
-                    }}
-                    className="min-h-[42px] rounded-2xl bg-[#8B1D36] hover:bg-[#6E1529] text-white px-4 py-2 text-xs font-extrabold cursor-pointer whitespace-nowrap shrink-0"
-                  >
-                    🤒 {lang === 'th' ? 'แจ้งเจ็บป่วย / ไม่สบาย' : 'Report Illness'}
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* Tabs 2, 4, 6, 7: Polls, Inbox, Supplies, Fine Deeds (PIN-protected personal data) */}
-            {(homeCommunityTab === 'polls' ||
-              homeCommunityTab === 'inbox' ||
-              homeCommunityTab === 'supplies' ||
-              homeCommunityTab === 'deeds') && (
-              <div className="rounded-2xl border border-[#E6DCD2] bg-[#FAF7F3] p-4 flex flex-wrap items-center justify-between gap-3">
-                <div className="space-y-1 text-xs text-[#5E4E45]">
-                  <div className="font-extrabold text-sm text-[#3D322C]">
-                    {homeCommunityTab === 'polls' &&
-                      (lang === 'th'
-                        ? `🗳️ โหวตลับ (${openHomePollsCount} หัวข้อที่เปิดอยู่)`
-                        : `🗳️ Secret Polls (${openHomePollsCount} open)`)}
-                    {homeCommunityTab === 'inbox' &&
-                      (lang === 'th'
-                        ? `💌 กล่องข้อความหลังไมค์ถึงพี่เลี้ยง`
-                        : `💌 Private Caretaker Inbox`)}
-                    {homeCommunityTab === 'supplies' &&
-                      (lang === 'th'
-                        ? `📦 ขอเบิกของใช้ส่วนตัว (${pendingHomeSuppliesCount} รอตรวจ)`
-                        : `📦 Supply Requests (${pendingHomeSuppliesCount} pending)`)}
-                    {homeCommunityTab === 'deeds' &&
-                      (lang === 'th'
-                        ? `⚖️ กิจกรรมไถ่ค่าปรับด้วยความดี (${pendingHomeDeedsCount} รายการ)`
-                        : `⚖️ Good-Deed Fine Redemption (${pendingHomeDeedsCount})`)}
-                  </div>
-                  <p className="text-[#6E5C52]">
-                    {lang === 'th'
-                      ? 'เพื่อความเป็นส่วนตัวบนเครื่องใช้รวม ส่วนโหวตลับ หลังไมค์ ขอเบิกของ และไถ่ค่าปรับจะแสดงเฉพาะหลังเข้าสู่ระบบบัญชีส่วนตัวหรือโหมดพนักงานค่ะ'
-                      : 'For privacy on shared devices, polls, private inbox, supply requests, and fine redemptions stay behind personal account sign-in.'}
-                  </p>
-                </div>
-                {linkedKidMember && onOpenLinkedKid && (
-                  <button
-                    type="button"
-                    onClick={onOpenLinkedKid}
-                    className="min-h-[40px] rounded-xl bg-[#114A42] hover:bg-[#0C3832] text-white px-4 py-2 text-xs font-extrabold cursor-pointer whitespace-nowrap shrink-0"
-                  >
-                    {lang === 'th'
-                      ? `เปิดหน้าของน้อง${linkedKidMember.nickname} →`
-                      : `Open ${linkedKidMember.nickname}'s Page →`}
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </section>
+      {/* Home Announcement Box (Photos + Editable Text, Shown/Stopped by Creator) */}
+      <HomeAnnouncementBox
+        announcements={appState.announcements}
+        showOnHome={appState.settings.showHomeAnnouncementBox !== false}
+        lang={lang}
+        now={now}
+        variant="home"
+        onAddAnnouncement={(ann) => onAddAnnouncement?.(ann)}
+        onUpdateAnnouncement={(annId, updates) => onUpdateAnnouncement?.(annId, updates)}
+        onTogglePinAnnouncement={(annId) => onTogglePinAnnouncement?.(annId)}
+        onDeleteAnnouncement={(annId) => onDeleteAnnouncement?.(annId)}
+        onToggleShowOnHome={
+          onUpdateSettings
+            ? (nextShow) => onUpdateSettings({ showHomeAnnouncementBox: nextShow })
+            : undefined
+        }
+        onShowAlert={onShowAlert}
+      />
 
       {/* Collapsible Cloud Sync Settings Link */}
       <div className="space-y-3 pt-1">
@@ -1705,366 +1254,6 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
         onExpressKioskScan={onExpressKioskScan}
       />
 
-      {/* Home Quick Illness Report Modal (Inserted from Clock & Laundry Box) */}
-      {homeSickOpen && (() => {
-        const selectedSickKid = homeSickKidId ? kids.find((k) => k.id === homeSickKidId) ?? null : null;
-        const canSubmitHomeSickPin = (rawPin: string) => {
-          const clean = rawPin.trim();
-          if (homeSickPinGuard.isLocked) {
-            onShowAlert({
-              icon: '🔒',
-              title: lang === 'th' ? 'ระบบล็อกชั่วคราว' : 'Temporarily Locked',
-              message: formatPinLockoutMessage(homeSickPinGuard.remainingSec, lang),
-              tone: 'pink',
-            });
-            return;
-          }
-          if (!/^\d{4}$/.test(clean)) {
-            onShowAlert({
-              icon: '🔑',
-              title: lang === 'th' ? 'กรุณากรอกเลข 4 หลัก' : '4-Digit PIN Required',
-              message:
-                lang === 'th'
-                  ? 'กรอกรหัส PIN 4 หลักของน้อง หรือรหัสพี่เลี้ยง/รหัสลับค่ะ'
-                  : 'Enter kid 4-digit PIN, staff PIN, or active away code.',
-              tone: 'yellow',
-            });
-            return;
-          }
-          const matchedKid = kids.find((k) => k.pin === clean);
-          if (matchedKid) {
-            homeSickPinGuard.recordSuccess();
-            setHomeSickPinInput('');
-            setHomeSickKidId(matchedKid.id);
-            setHomeSickStep('form');
-            return;
-          }
-          if (staffPins.includes(clean) || (activeAwaySecretCode !== null && clean === activeAwaySecretCode)) {
-            homeSickPinGuard.recordSuccess();
-            setHomeSickPinInput('');
-            setHomeSickStep('pick_kid');
-            return;
-          }
-          const res = homeSickPinGuard.recordFailure();
-          setHomeSickPinInput('');
-          onShowAlert({
-            icon: res.lockedNow ? '🔒' : '🔐',
-            title: res.lockedNow
-              ? lang === 'th'
-                ? 'ล็อกชั่วคราว 30 วินาที'
-                : 'Locked for 30 Seconds'
-              : lang === 'th'
-              ? 'รหัส PIN ไม่ถูกต้อง'
-              : 'Incorrect PIN',
-            message: res.lockedNow
-              ? formatPinLockoutMessage(res.lockSec, lang)
-              : `${lang === 'th' ? 'กรุณากรอก PIN 4 หลักของน้อง หรือรหัสพี่เลี้ยงให้ถูกต้อง' : 'Please check the 4-digit PIN.'}\n${formatPinAttemptsHint(res.attemptsRemaining, lang)}`,
-            tone: 'pink',
-          });
-        };
-
-        return (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-[#3D322C]/45 backdrop-blur-sm"
-            role="dialog"
-            aria-modal="true"
-          >
-            <div className="w-full max-w-lg max-h-[92dvh] overflow-y-auto rounded-[28px] border-4 border-[#F5C5CF] bg-[#FFFDF9] p-5 sm:p-6 pastel-shadow space-y-4">
-              <div className="flex items-start justify-between gap-3 pb-3 border-b border-[#EFE6DC]">
-                <div>
-                  <h3 className="text-lg font-extrabold text-[#702D22] flex items-center gap-2">
-                    <span>🤒</span>
-                    <span>{lang === 'th' ? 'แจ้งอาการเจ็บป่วยด่วน (หน้าแรก)' : 'Quick Illness Report'}</span>
-                  </h3>
-                  <p className="text-xs text-[#6E5C52] mt-0.5">
-                    {lang === 'th'
-                      ? 'แจ้งพี่เลี้ยงทันที พร้อมยกเว้นค่าปรับสายวันนี้ให้อัตโนมัติค่ะ'
-                      : 'Notifies caregivers immediately and waives today’s late fines.'}
-                  </p>
-                </div>
-                {!(homeSickStep === 'line_copy' && !homeSickLineCopied) && (
-                  <button
-                    type="button"
-                    onClick={() => setHomeSickOpen(false)}
-                    className="min-h-[38px] min-w-[38px] rounded-full bg-[#FADADD] hover:bg-[#F7C7CD] text-[#3D322C] font-bold cursor-pointer shrink-0"
-                    aria-label="Close"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-
-              {homeSickStep === 'pin' && (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    canSubmitHomeSickPin(homeSickPinInput);
-                  }}
-                  className="space-y-3"
-                >
-                  <div className="rounded-2xl border border-[#F2C9C2] bg-[#FFF8F6] p-3.5 text-xs text-[#702D22] space-y-1">
-                    <div className="font-bold">
-                      🔐 {lang === 'th' ? 'ยืนยันตัวตนก่อนแจ้งเจ็บป่วย' : 'Verify Identity First'}
-                    </div>
-                    <div>
-                      {lang === 'th'
-                        ? activeAwaySecretCode
-                          ? 'ใส่รหัส PIN 4 หลักของน้องเอง หรือรหัสพี่เลี้ยง / รหัสลับวันที่พี่เลี้ยงไม่อยู่ได้เลยค่ะ'
-                          : 'ใส่รหัส PIN 4 หลักของน้องเอง (เพื่อเข้าแจ้งของตัวเอง) หรือใส่ PIN พี่เลี้ยงเพื่อเลือกชื่อน้องค่ะ'
-                        : 'Enter your 4-digit kid PIN or a staff PIN to select a kid.'}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="password"
-                      inputMode="numeric"
-                      maxLength={4}
-                      autoFocus
-                      value={homeSickPinInput}
-                      onChange={(e) => setHomeSickPinInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                      placeholder={lang === 'th' ? 'กรอก PIN 4 หลัก...' : '4-digit PIN...'}
-                      className="flex-1 rounded-2xl border-2 border-[#F2C9C2] bg-white px-4 py-3 text-center font-mono text-xl font-extrabold tracking-widest text-[#3D322C] focus:outline-none focus:ring-2 focus:ring-[#E66C84]"
-                    />
-                    <button
-                      type="submit"
-                      className="min-h-[50px] rounded-2xl bg-[#8B1D36] hover:bg-[#6E1529] text-white px-5 py-3 text-sm font-extrabold cursor-pointer shrink-0"
-                    >
-                      {lang === 'th' ? 'ถัดไป →' : 'Next →'}
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {homeSickStep === 'pick_kid' && (
-                <div className="space-y-3">
-                  <div className="flex flex-wrap gap-1.5">
-                    {[
-                      { g: 0 as const, th: 'ทั้งหมด', en: 'All' },
-                      { g: 1 as const, th: 'กลุ่ม 1 ประถม', en: 'G1' },
-                      { g: 2 as const, th: 'กลุ่ม 2 มัธยม', en: 'G2' },
-                      { g: 3 as const, th: 'กลุ่ม 3 วิทยาลัย', en: 'G3' },
-                    ].map((tab) => (
-                      <button
-                        key={tab.g}
-                        type="button"
-                        onClick={() => setHomeSickGroupFilter(tab.g)}
-                        className={`rounded-xl px-3 py-1.5 text-xs font-bold cursor-pointer ${
-                          homeSickGroupFilter === tab.g
-                            ? 'bg-[#FADADD] border border-[#E66C84] text-[#702D22]'
-                            : 'bg-white border border-[#EBD8C3] text-[#6E5C52]'
-                        }`}
-                      >
-                        {lang === 'th' ? tab.th : tab.en}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-64 overflow-y-auto pr-0.5">
-                    {kids
-                      .filter((k) => homeSickGroupFilter === 0 || k.group === homeSickGroupFilter)
-                      .map((k) => {
-                        const alreadySick = appState.sickReports.some(
-                          (r) => r.kidId === k.id && r.dateKey === todayKey && !r.resolved
-                        );
-                        return (
-                          <button
-                            key={k.id}
-                            type="button"
-                            onClick={() => {
-                              setHomeSickKidId(k.id);
-                              setHomeSickStep('form');
-                            }}
-                            className={`rounded-2xl border-2 px-3 py-2.5 text-left transition-colors cursor-pointer ${
-                              alreadySick
-                                ? 'border-[#A5DFD4] bg-[#EFFAF7] text-[#19534B]'
-                                : 'border-[#F2C9C2] bg-white hover:bg-[#FFF0F3] text-[#3D322C]'
-                            }`}
-                          >
-                            <div className="text-sm font-extrabold truncate">
-                              {k.emoji} {k.nickname}
-                            </div>
-                            <div className="text-[11px] opacity-75">
-                              {alreadySick
-                                ? lang === 'th'
-                                  ? 'แจ้งป่วยวันนี้แล้ว'
-                                  : 'Reported Today'
-                                : lang === 'th'
-                                ? `กลุ่ม ${k.group}`
-                                : `Group ${k.group}`}
-                            </div>
-                          </button>
-                        );
-                      })}
-                  </div>
-                </div>
-              )}
-
-              {homeSickStep === 'form' && selectedSickKid && (
-                <div className="space-y-4">
-                  <div className="rounded-2xl border-2 border-[#F5C5CF] bg-[#FADADD]/45 p-3.5 text-xs text-[#5E2832] space-y-1">
-                    <div className="font-bold flex items-center justify-between gap-2">
-                      <span>
-                        🩺 ข้อมูลสุขภาพ & การแพ้ยาของน้อง{selectedSickKid.nickname}
-                      </span>
-                      <span className="text-[11px] opacity-75">กลุ่ม {selectedSickKid.group}</span>
-                    </div>
-                    <div>
-                      🩸 กรุ๊ปเลือด: <strong>{selectedSickKid.healthProfile?.bloodType ?? 'ไม่ระบุ'}</strong> · 💊 แพ้ยา:{' '}
-                      <strong>{selectedSickKid.healthProfile?.drugAllergies ?? 'ไม่มี'}</strong> · 🍽️ แพ้อาหาร:{' '}
-                      <strong>{selectedSickKid.healthProfile?.foodAllergies ?? 'ไม่มี'}</strong>
-                    </div>
-                    {selectedSickKid.healthProfile?.regularMeds &&
-                      selectedSickKid.healthProfile.regularMeds !== 'ไม่มี' && (
-                        <div>
-                          💉 ยาประจำตัว: <strong>{selectedSickKid.healthProfile.regularMeds}</strong>
-                        </div>
-                      )}
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    {['มีไข้ / ตัวร้อน', 'ปวดหัว / เวียนหัว', 'ปวดท้อง', 'เจ็บคอ / ไอ', 'ปวดเมื่อย / บาดเจ็บ'].map(
-                      (sym) => (
-                        <button
-                          key={sym}
-                          type="button"
-                          onClick={() => setHomeSickSymptoms(sym)}
-                          className={`rounded-2xl px-3.5 py-2 text-xs sm:text-sm font-semibold border-2 cursor-pointer ${
-                            homeSickSymptoms === sym
-                              ? 'bg-[#FADADD] border-[#E66C84] text-[#3D322C]'
-                              : 'bg-white border-[#EBD8C3] text-[#6E5C52]'
-                          }`}
-                        >
-                          {sym}
-                        </button>
-                      )
-                    )}
-                  </div>
-
-                  <textarea
-                    rows={3}
-                    value={homeSickDetails}
-                    onChange={(e) => setHomeSickDetails(e.target.value)}
-                    placeholder={
-                      lang === 'th'
-                        ? 'ระบุอาการเพิ่มเติม เช่น ปวดตั้งแต่เมื่อคืน ต้องการยา...'
-                        : 'Additional symptom details...'
-                    }
-                    className="w-full rounded-2xl border-2 border-[#F3C5AE] bg-white p-3.5 text-sm"
-                  />
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const cleanDetails = homeSickDetails.trim() || '-';
-                      onAddSickReport?.({
-                        id: `sick_${Date.now()}`,
-                        kidId: selectedSickKid.id,
-                        kidNickname: selectedSickKid.nickname,
-                        dateKey: todayKey,
-                        reportedAt: now.toISOString(),
-                        symptoms: homeSickSymptoms,
-                        details: cleanDetails,
-                        resolved: false,
-                      });
-                      const lineMsg = [
-                        '🚨 [แจ้งอาการเจ็บป่วยด่วน - Barnhem]',
-                        `👤 ชื่อเล่น: น้อง${selectedSickKid.nickname} (${selectedSickKid.id.toUpperCase()} | กลุ่ม ${selectedSickKid.group})`,
-                        `🤒 อาการ: ${homeSickSymptoms}`,
-                        `📝 รายละเอียด: ${cleanDetails}`,
-                        `⏰ เวลาที่แจ้ง: ${formatDigitalClock(now)} น. (${todayKey})`,
-                        '💚 ระบบยกเว้นค่าปรับสายวันนี้ให้อัตโนมัติแล้วค่ะ',
-                      ].join('\n');
-                      setHomeSickDetails('');
-                      setHomeSickLineCopied(false);
-                      setHomeSickLineText(lineMsg);
-                      setHomeSickStep('line_copy');
-                    }}
-                    className="w-full min-h-[50px] rounded-2xl bg-[#3D322C] hover:bg-[#2C241F] text-white font-bold cursor-pointer"
-                  >
-                    🚑{' '}
-                    {lang === 'th'
-                      ? 'ส่งแจ้งอาการเจ็บป่วย & สร้างข้อความส่ง LINE'
-                      : 'Submit Sick Report & Prepare LINE Alert'}
-                  </button>
-                </div>
-              )}
-
-              {homeSickStep === 'line_copy' && homeSickLineText && (
-                <div className="space-y-4">
-                  <div className="rounded-2xl border-2 border-[#E66C84] bg-[#FADADD]/60 p-4 text-sm text-[#6B2D39] space-y-1">
-                    <div className="font-bold text-base">
-                      🚨{' '}
-                      {lang === 'th'
-                        ? 'ขั้นตอนสำคัญ (บังคับ): คัดลอกส่งเข้ากลุ่ม LINE ทันที!'
-                        : 'Urgent Mandatory Step: Copy for LINE Group!'}
-                    </div>
-                    <p className="text-xs">
-                      {lang === 'th'
-                        ? 'กรุณากดปุ่ม "คัดลอกข้อความส่ง LINE" ด้านล่าง แล้วนำไปวาง (Paste) ในกลุ่ม LINE บ้าน Barnhem ก่อนปิดหน้าต่างนี้'
-                        : 'Tap Copy below and paste into the Barnhem LINE group before closing.'}
-                    </p>
-                  </div>
-
-                  <textarea
-                    readOnly
-                    rows={6}
-                    value={homeSickLineText}
-                    onFocus={(e) => e.currentTarget.select()}
-                    className="w-full rounded-2xl border-2 border-[#EBD8C3] bg-white p-3.5 text-xs sm:text-sm font-medium text-[#3D322C]"
-                  />
-
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      await copyTextToClipboard(homeSickLineText);
-                      setHomeSickLineCopied(true);
-                    }}
-                    className={`w-full min-h-[52px] rounded-2xl font-bold text-sm sm:text-base cursor-pointer transition-colors ${
-                      homeSickLineCopied
-                        ? 'bg-[#2F685E] text-white'
-                        : 'bg-[#C93B4E] hover:bg-[#AE2F40] text-white shadow-md'
-                    }`}
-                  >
-                    {homeSickLineCopied
-                      ? lang === 'th'
-                        ? '✅ คัดลอกข้อความส่ง LINE สำเร็จแล้ว! กดวางในแชท LINE ได้เลย'
-                        : '✅ Copied for LINE! Ready to Paste'
-                      : lang === 'th'
-                      ? '📋 คัดลอกข้อความแจ้งป่วยส่ง LINE กลุ่มทันที (บังคับกด)'
-                      : '📋 Copy Urgent Sick Alert for LINE Now (Required)'}
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={!homeSickLineCopied}
-                    onClick={() => {
-                      setHomeSickOpen(false);
-                      onShowAlert({
-                        icon: '🤒💚',
-                        title: lang === 'th' ? 'แจ้งป่วยและคัดลอกส่ง LINE เรียบร้อย!' : 'Sick Alert Complete!',
-                        message:
-                          lang === 'th'
-                            ? 'อย่าลืมกดวางข้อความในกลุ่ม LINE ด้วยนะ พี่เลี้ยงได้รับแจ้งแล้ว และระบบยกเว้นค่าปรับสายวันนี้ให้เรียบร้อย พักผ่อนเยอะๆ นะคนเก่ง'
-                            : 'Please paste into LINE group. Late fines are waived today. Rest well!',
-                        tone: 'mint',
-                      });
-                    }}
-                    className="w-full min-h-[48px] rounded-2xl bg-[#3D322C] disabled:bg-[#C9BEB5] disabled:cursor-not-allowed text-white font-bold cursor-pointer"
-                  >
-                    {homeSickLineCopied
-                      ? lang === 'th'
-                        ? '✓ เสร็จสิ้น & ปิดหน้าต่าง'
-                        : '✓ Done & Close'
-                      : lang === 'th'
-                      ? '🔒 กดปุ่มคัดลอกข้อความส่ง LINE ด้านบนก่อนจึงจะปิดได้'
-                      : '🔒 Tap Copy button above to unlock close'}
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })()}
-
       {/* Unified Timed + Custom Quick Shortcut Commands Menu Modal with '+' Add Button */}
       {quickActionsMenuOpen && (
         <div
@@ -2085,78 +1274,52 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      if (addCommandOpen) {
-                        setAddCommandOpen(false);
+                      if (commandManagerMode === 'add_direct') {
+                        setCommandManagerMode(null);
                         return;
                       }
-                      setScheduleEditorOpen(false);
-                      setPermissionsEditorOpen(false);
                       setPendingBoardUnlock({ type: 'add_custom' });
                     }}
-                    title={lang === 'th' ? 'เพิ่มคำสั่งคีย์ลัดใหม่ (ตอนรีบ / ขออนุญาต)' : 'Add Quick Shortcut Command'}
-                    aria-label={lang === 'th' ? 'เพิ่มคำสั่งคีย์ลัดใหม่' : 'Add Quick Command'}
+                    title={lang === 'th' ? 'เพิ่มปุ่มคำสั่งใหม่' : 'Add New Command Button'}
+                    aria-label={lang === 'th' ? 'เพิ่มปุ่มคำสั่งใหม่' : 'Add Command Button'}
                     className={`inline-flex items-center gap-1 rounded-full border-2 px-2.5 py-0.5 text-xs font-extrabold cursor-pointer transition-transform active:scale-95 ${
-                      addCommandOpen
+                      commandManagerMode === 'add_direct'
                         ? 'border-[#114A42] bg-[#114A42] text-white'
-                        : 'border-[#E86F87] bg-[#FFF0F3] hover:bg-[#FADADD] text-[#B01E3D]'
+                        : 'border-[#7ED3C0] bg-[#E8FAF5] hover:bg-[#CEF3EA] text-[#0F4C42]'
                     }`}
                   >
-                    <span className="text-sm leading-none font-black">{addCommandOpen ? '−' : '+'}</span>
-                    <span>{lang === 'th' ? 'เพิ่มคำสั่ง' : 'Add'}</span>
+                    <span className="text-sm leading-none font-black">+</span>
+                    <span>{lang === 'th' ? 'เพิ่มปุ่มคำสั่ง' : 'Add Button'}</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => {
-                      if (scheduleEditorOpen) {
-                        setScheduleEditorOpen(false);
+                      if (commandManagerMode === 'manager') {
+                        setCommandManagerMode(null);
                         return;
                       }
-                      setAddCommandOpen(false);
-                      setPermissionsEditorOpen(false);
-                      setPendingBoardUnlock({ type: 'edit_schedule' });
+                      setPendingBoardUnlock({ type: 'manage_commands' });
                     }}
-                    title={lang === 'th' ? 'แก้ไขเวลาเปิด–ปิดคำสั่งหลักทั้งหมด' : 'Edit Core Command Times'}
-                    aria-label={lang === 'th' ? 'ตั้งเวลาคำสั่งหลัก' : 'Edit Schedule'}
+                    title={
+                      lang === 'th'
+                        ? 'ตั้งค่าปุ่มคำสั่ง เวลาเปิด-ปิด เส้นตาย บทลงโทษ และสิทธิ์น้องรายคน'
+                        : 'Configure command buttons, schedules, deadlines, penalties & eligible kids'
+                    }
+                    aria-label={lang === 'th' ? 'ตั้งค่าปุ่มคำสั่งทั้งหมด' : 'Manage Commands'}
                     className={`inline-flex items-center gap-1 rounded-full border-2 px-2.5 py-0.5 text-xs font-extrabold cursor-pointer transition-transform active:scale-95 ${
-                      scheduleEditorOpen
+                      commandManagerMode === 'manager'
                         ? 'border-[#3E2B63] bg-[#3E2B63] text-white'
                         : 'border-[#C8B7EB] bg-[#F5F0FF] hover:bg-[#EAE1FA] text-[#3E2B63]'
                     }`}
                   >
-                    <span>⚙️</span>
-                    <span>{lang === 'th' ? 'ตั้งเวลา' : 'Schedule'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (permissionsEditorOpen) {
-                        setPermissionsEditorOpen(false);
-                        return;
-                      }
-                      setAddCommandOpen(false);
-                      setScheduleEditorOpen(false);
-                      setPendingBoardUnlock({ type: 'edit_permissions' });
-                    }}
-                    title={
-                      lang === 'th'
-                        ? 'ตั้งค่าแต่ละปุ่ม: พี่เลี้ยงใส่ PIN / น้องใส่ PIN 4 หลัก / กดชื่อตัวเองได้เลย และสิทธิ์รายคน'
-                        : 'Configure per-button PIN/1-Tap mode, eligibility & phones'
-                    }
-                    aria-label={lang === 'th' ? 'สิทธิ์และรหัสกดแต่ละปุ่ม' : 'Button Access'}
-                    className={`inline-flex items-center gap-1 rounded-full border-2 px-2.5 py-0.5 text-xs font-extrabold cursor-pointer transition-transform active:scale-95 ${
-                      permissionsEditorOpen
-                        ? 'border-[#1B5E52] bg-[#1B5E52] text-white'
-                        : 'border-[#9AD8CD] bg-[#E8FAF6] hover:bg-[#D2F4EE] text-[#114A42]'
-                    }`}
-                  >
-                    <span>👥</span>
-                    <span>{lang === 'th' ? 'สิทธิ์ & รหัสกด' : 'Access & PIN'}</span>
+                    <span>🎛️</span>
+                    <span>{lang === 'th' ? 'ตั้งค่าปุ่มคำสั่ง' : 'Command Settings'}</span>
                   </button>
                 </h3>
                 <p className="text-xs text-[#6E5C52] mt-0.5 tabular-nums">
                   {lang === 'th'
-                    ? `ขณะนี้ ${formatDigitalClock(now)} น. · กด + เพิ่มคีย์ลัด, ⚙️ ตั้งเวลา หรือ 👥 สิทธิ์ & รหัสกด`
-                    : `Time ${formatDigitalClock(now)} · + Add shortcut, ⚙️ Schedule, 👥 Access & PIN`}
+                    ? `ขณะนี้ ${formatDigitalClock(now)} น. · กด + เพิ่มปุ่มคำสั่ง หรือ 🎛️ ตั้งค่าปุ่มคำสั่ง`
+                    : `Time ${formatDigitalClock(now)} · + Add Button or 🎛️ Command Settings`}
                 </p>
                 {activeAwaySecretCode && (
                   <div className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-[#F5F0FF] border border-[#C8B7EB] px-2 py-0.5 text-[11px] font-bold text-[#3E2B63]">
@@ -2172,9 +1335,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  setAddCommandOpen(false);
-                  setScheduleEditorOpen(false);
-                  setPermissionsEditorOpen(false);
+                  setCommandManagerMode(null);
                   setQuickActionsMenuOpen(false);
                 }}
                 className="min-h-[38px] min-w-[38px] rounded-full bg-[#FADADD] hover:bg-[#F7C7CD] text-[#3D322C] font-bold cursor-pointer shrink-0"
@@ -2185,257 +1346,28 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-3 pr-0.5">
-              {/* Inline '⚙️' Core Timed Schedule Editor (Unlocked via Staff/Creator PIN) */}
-              {scheduleEditorOpen && (
-                <TimedScheduleEditorCard
-                  settings={appState.settings}
-                  lang={lang}
-                  onClose={() => setScheduleEditorOpen(false)}
-                  onSave={(nextSched, nextCurfew) => {
-                    onSaveTimedSchedule?.(nextSched, nextCurfew);
-                    setScheduleEditorOpen(false);
-                    onShowAlert({
-                      icon: '⚙️',
-                      title: lang === 'th' ? 'บันทึกเวลาใหม่เรียบร้อยแล้ว!' : 'Schedule Updated!',
-                      message:
-                        lang === 'th'
-                          ? 'เวลาเปิด–ปิดของคำสั่งหลักและเส้นตายคืนมือถืออัปเดตทันทีทั่วทั้งระบบแล้วค่ะ'
-                          : 'Core command time windows and curfew deadline have been updated everywhere.',
-                      tone: 'mint',
-                    });
-                  }}
-                />
-              )}
-
-              {/* Inline '👥' Per-Button Access, Auth Mode & Kid Phone Status Editor */}
-              {permissionsEditorOpen && (
-                <CommandPermissionsEditorCard
+              {/* Unified Login Command Settings Card / Modal (Unlocked via Staff/Creator PIN) */}
+              {commandManagerMode === 'manager' && (
+                <LoginCommandsSettingsCard
                   members={members}
                   settings={appState.settings}
                   lang={lang}
-                  initialTab="buttons"
-                  onClose={() => setPermissionsEditorOpen(false)}
-                  onSave={(nextNoPhoneIds, nextPerms) => {
-                    onSaveCommandPermissions?.(nextNoPhoneIds, nextPerms);
-                    setPermissionsEditorOpen(false);
-                    onShowAlert({
-                      icon: '👥',
-                      title: lang === 'th' ? 'บันทึกการตั้งค่าปุ่ม & มือถือแล้ว!' : 'Button Settings Saved!',
-                      message:
-                        lang === 'th'
-                          ? 'อัปเดตรูปแบบการใส่รหัส/กดชื่อเอง สิทธิ์รายคน และสถานะมือถือเรียบร้อยแล้วค่ะ'
-                          : 'Button auth mode, kid eligibility, and phone status have been updated everywhere.',
-                      tone: 'mint',
-                    });
-                  }}
+                  onUpdateSettings={handleCommandSettingsUpdate}
+                  onShowAlert={onShowAlert}
+                  onClose={() => setCommandManagerMode(null)}
                 />
               )}
-
-              {/* Inline '+' Add Custom Shortcut Form (Unlocked via Staff PIN) */}
-              {addCommandOpen && (
-                <form
-                  onSubmit={handleCreateCustomCommand}
-                  className="rounded-2xl border-2 border-[#8FD4C6] bg-[#F2FCF9] p-4 space-y-3"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-sm font-extrabold text-[#114A42]">
-                      ➕ {lang === 'th' ? 'เพิ่มคำสั่งใหม่ในคีย์ลัด' : 'Create Custom Quick Command'}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setAddCommandOpen(false)}
-                      className="text-xs font-bold text-[#6E5C52] hover:text-[#3D322C] cursor-pointer"
-                    >
-                      {lang === 'th' ? 'ปิด' : 'Cancel'}
-                    </button>
-                  </div>
-
-                  {/* Quick 1-Tap Starter Templates */}
-                  <div className="space-y-1">
-                    <div className="text-[11px] font-bold text-[#2E5D55]">
-                      {lang === 'th' ? '⚡ เลือกตัวอย่างสำเร็จรูปได้ใน 1 แตะ:' : '⚡ Quick Presets:'}
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {[
-                        {
-                          emoji: '📝',
-                          titleTh: 'ขออนุญาตทำการบ้าน',
-                          kind: 'homework_permission' as const,
-                          alwaysOpen: true,
-                          defaultNote: 'ทำการบ้าน / ทบทวนบทเรียน',
-                          stars: 0,
-                        },
-                        {
-                          emoji: '💊',
-                          titleTh: 'แจ้งกินยา / พักผ่อน',
-                          kind: 'custom_checkin' as const,
-                          alwaysOpen: true,
-                          defaultNote: 'กินยาตามเวลาเรียบร้อย',
-                          stars: 2,
-                        },
-                        {
-                          emoji: '🔑',
-                          titleTh: 'ขออนุญาตออกธุระด่วน',
-                          kind: 'custom_checkin' as const,
-                          alwaysOpen: true,
-                          defaultNote: 'แจ้งขออนุญาตผู้ดูแลเรียบร้อย',
-                          stars: 0,
-                        },
-                        {
-                          emoji: '🏪',
-                          titleTh: 'เปิด-ปิดกะ / เติมสต๊อกร้าน',
-                          kind: 'custom_checkin' as const,
-                          alwaysOpen: true,
-                          defaultNote: 'เช็คสต๊อกและประตูอัตโนมัติเรียบร้อย',
-                          stars: 5,
-                        },
-                      ].map((p) => (
-                        <button
-                          key={p.titleTh}
-                          type="button"
-                          onClick={() => applyPresetToNewCommand(p)}
-                          className="rounded-xl border border-[#B9E8DF] bg-white hover:bg-[#DCF7F2] px-2.5 py-1 text-[11px] font-bold text-[#114A42] cursor-pointer"
-                        >
-                          {p.emoji} {p.titleTh}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-4 gap-2">
-                    <div>
-                      <label className="block text-[11px] font-bold text-[#3D322C] mb-1">
-                        {lang === 'th' ? 'ไอคอน' : 'Icon'}
-                      </label>
-                      <input
-                        type="text"
-                        maxLength={4}
-                        value={newCmdEmoji}
-                        onChange={(e) => setNewCmdEmoji(e.target.value)}
-                        className="w-full rounded-xl border border-[#D4C5B4] bg-white px-2 py-2 text-center text-base"
-                      />
-                    </div>
-                    <div className="col-span-3">
-                      <label className="block text-[11px] font-bold text-[#3D322C] mb-1">
-                        {lang === 'th' ? 'ชื่อปุ่มคำสั่งคีย์ลัด *' : 'Shortcut Title *'}
-                      </label>
-                      <input
-                        type="text"
-                        maxLength={60}
-                        required
-                        value={newCmdTitleTh}
-                        onChange={(e) => setNewCmdTitleTh(e.target.value)}
-                        placeholder={lang === 'th' ? 'เช่น ขออนุญาตทำการบ้าน' : 'e.g. Homework Permission'}
-                        className="w-full rounded-xl border border-[#D4C5B4] bg-white px-3 py-2 text-xs text-[#3D322C]"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <label className="block text-[11px] font-bold text-[#3D322C] mb-1">
-                        {lang === 'th' ? 'รูปแบบการทำงาน' : 'Action Type'}
-                      </label>
-                      <select
-                        value={newCmdKind}
-                        onChange={(e) =>
-                          setNewCmdKind(e.target.value as CustomQuickCommand['kind'])
-                        }
-                        className="w-full rounded-xl border border-[#D4C5B4] bg-white px-2.5 py-2 text-xs font-bold text-[#3D322C]"
-                      >
-                        <option value="homework_permission">
-                          📝 ขออนุญาตทำการบ้าน (ใช้เพิ่มถึง {hwCurfewTh})
-                        </option>
-                        <option value="custom_checkin">
-                          ⚡ บันทึกคีย์ลัดทั่วไป (เช็คอิน / กินยา / เติมสต๊อก)
-                        </option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-[#3D322C] mb-1">
-                        {lang === 'th' ? 'โบนัสดาว (ถ้ามี)' : 'Bonus Stars'}
-                      </label>
-                      <input
-                        type="number"
-                        min={0}
-                        max={20}
-                        value={newCmdStars}
-                        onChange={(e) => setNewCmdStars(Number(e.target.value))}
-                        className="w-full rounded-xl border border-[#D4C5B4] bg-white px-3 py-2 text-xs font-bold tabular-nums"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-bold text-[#3D322C] mb-1">
-                      {newCmdKind === 'homework_permission'
-                        ? lang === 'th'
-                          ? 'วิชา / หมายเหตุเริ่มต้น (ไม่บังคับ)'
-                          : 'Default Subject / Note'
-                        : lang === 'th'
-                        ? 'ข้อความบันทึกเริ่มต้น (ไม่บังคับ)'
-                        : 'Default Note'}
-                    </label>
-                    <input
-                      type="text"
-                      maxLength={80}
-                      value={newCmdDefaultNote}
-                      onChange={(e) => setNewCmdDefaultNote(e.target.value)}
-                      placeholder={
-                        newCmdKind === 'homework_permission'
-                          ? lang === 'th'
-                            ? 'เช่น ทำการบ้าน / อ่านหนังสือเตรียมสอบ'
-                            : 'Homework / Study'
-                          : lang === 'th'
-                          ? 'เช่น บันทึกด่วนโดยพี่เลี้ยง'
-                          : 'Quick note'
-                      }
-                      className="w-full rounded-xl border border-[#D4C5B4] bg-white px-3 py-2 text-xs"
-                    />
-                  </div>
-
-                  <div className="space-y-2 rounded-xl border border-[#D4EFE9] bg-white p-2.5">
-                    <label className="flex items-center gap-2 text-xs font-bold text-[#114A42] cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={newCmdAlwaysOpen}
-                        onChange={(e) => setNewCmdAlwaysOpen(e.target.checked)}
-                        className="h-4 w-4 accent-[#114A42]"
-                      />
-                      <span>
-                        ⚡{' '}
-                        {lang === 'th'
-                          ? 'เปิดให้กดได้ตลอดเวลา 24 ชม. (แนะนำสำหรับคำสั่งตอนรีบ)'
-                          : 'Always Open 24/7 (Best for urgent/quick actions)'}
-                      </span>
-                    </label>
-                    {!newCmdAlwaysOpen && (
-                      <div className="flex items-center gap-2 text-xs pl-6">
-                        <span>{lang === 'th' ? 'ช่วงเวลา:' : 'Window:'}</span>
-                        <input
-                          type="time"
-                          value={newCmdStartTime}
-                          onChange={(e) => setNewCmdStartTime(e.target.value)}
-                          className="rounded-lg border border-[#D4C5B4] px-2 py-1"
-                        />
-                        <span>–</span>
-                        <input
-                          type="time"
-                          value={newCmdEndTime}
-                          onChange={(e) => setNewCmdEndTime(e.target.value)}
-                          className="rounded-lg border border-[#D4C5B4] px-2 py-1"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  <button
-                    type="submit"
-                    className="w-full min-h-[42px] rounded-xl bg-[#114A42] hover:bg-[#0D3A34] text-white text-xs sm:text-sm font-extrabold cursor-pointer"
-                  >
-                    💾 {lang === 'th' ? 'บันทึกคำสั่งเข้าคีย์ลัดทันที' : 'Save Custom Quick Command'}
-                  </button>
-                </form>
+              {commandManagerMode === 'add_direct' && (
+                <LoginCommandsSettingsCard
+                  members={members}
+                  settings={appState.settings}
+                  lang={lang}
+                  initialCreateType="routine"
+                  directModalOnly
+                  onUpdateSettings={handleCommandSettingsUpdate}
+                  onShowAlert={onShowAlert}
+                  onClose={() => setCommandManagerMode(null)}
+                />
               )}
 
               {/* Custom Quick Shortcuts Section (Ready for rush moments like Homework Permission!) */}
@@ -2449,6 +1381,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                   </div>
                   {customQuickCommands.map((cmd) => {
                     const isOpen = isCustomCommandOpenAt(cmd, now);
+                    const isPenaltyCmd = cmd.kind === 'penalty';
                     const eligibleKids = kids.filter((k) => canKidUseCommand(cmd.id, k, appState.settings));
                     const doneCount = eligibleKids.filter((k) => isCustomCommandDoneForKid(cmd, k, now)).length;
                     const permSummary = getCommandPermissionSummary(cmd.id, kids, lang, appState.settings);
@@ -2483,15 +1416,28 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                           aria-disabled={!isOpen}
                           className={`flex-1 rounded-2xl border-2 px-4 py-3 text-left flex items-center justify-between gap-3 transition-colors cursor-pointer ${
                             isOpen
-                              ? 'border-[#7CC6B8] bg-[#E8FAF6] hover:bg-[#D5F4EE] text-[#114A42]'
-                              : 'border-[#E6DCD2] bg-[#F7F3EE] hover:bg-[#EFE9E1] text-[#7B695F] opacity-85'
+                              ? isPenaltyCmd
+                                ? 'border-[#E89EB0] bg-[#FFE8EE] hover:bg-[#FFD8E2] text-[#7D1D36]'
+                                : 'border-[#49AD9A] bg-[#C5EFE6] hover:bg-[#B2E7DC] text-[#0B3B34]'
+                              : 'border-[#D4C4B4] bg-[#EBE2D7] hover:bg-[#E1D5C7] text-[#5E4E45] opacity-90'
                           }`}
                         >
                           <div className="flex items-center gap-3 min-w-0">
+                            {isOpen && !isPenaltyCmd && (
+                              <span className="relative flex h-2.5 w-2.5 shrink-0" aria-hidden="true">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#10B981] opacity-85" />
+                                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#059669]" />
+                              </span>
+                            )}
                             <span className="text-2xl shrink-0">{isOpen ? cmd.emoji : '🔒'}</span>
                             <div className="min-w-0">
                               <div className="text-sm font-extrabold truncate flex items-center gap-1.5">
                                 <span className="truncate">{lang === 'th' ? cmd.titleTh : cmd.titleEn}</span>
+                                {isPenaltyCmd && (
+                                  <span className="rounded-md bg-[#FFE2E8] border border-[#EE9CAF] px-1.5 py-0.5 text-[10px] font-extrabold text-[#8B1D36] shrink-0">
+                                    {lang === 'th' ? 'บทลงโทษ' : 'Penalty'}
+                                  </span>
+                                )}
                                 {permSummary.restricted && (
                                   <span className="rounded-md bg-[#FFF5E1] border border-[#ECC98B] px-1.5 py-0.5 text-[10px] font-bold text-[#7A5411] shrink-0">
                                     {permSummary.badge}
@@ -2500,20 +1446,26 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                               </div>
                               <div className="text-[11px] font-medium opacity-85 tabular-nums">
                                 {cmd.alwaysOpen ? '⚡' : '⏰'} {formatCustomCommandWindow(cmd, lang)}
-                                {cmd.starsDelta && cmd.starsDelta > 0 ? ` · +${cmd.starsDelta} ⭐` : ''} ·{' '}
-                                {authMeta.icon} {authMeta.shortLabel}
+                                {!isPenaltyCmd && cmd.starsDelta && cmd.starsDelta > 0
+                                  ? ` · +${cmd.starsDelta} ⭐`
+                                  : ''}{' '}
+                                · {authMeta.icon} {authMeta.shortLabel}
                               </div>
                             </div>
                           </div>
                           <span
                             className={`rounded-xl px-2.5 py-1 text-[11px] font-extrabold shrink-0 tabular-nums ${
                               isOpen
-                                ? 'bg-[#114A42] text-white'
+                                ? isPenaltyCmd
+                                  ? 'bg-[#8B1D36] text-white'
+                                  : 'bg-[#114A42] text-white'
                                 : 'bg-white/90 text-[#8B796E] border border-[#E6DCD2]'
                             }`}
                           >
                             {isOpen
-                              ? `${authMeta.icon} ${doneCount}/${eligibleKids.length}`
+                              ? isPenaltyCmd
+                                ? `${authMeta.icon} ${lang === 'th' ? 'บันทึกโทษ' : 'Log'}`
+                                : `${authMeta.icon} ${doneCount}/${eligibleKids.length}`
                               : lang === 'th'
                               ? 'ล็อกนอกเวลา'
                               : 'Locked'}
@@ -2545,6 +1497,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                 </div>
                 {effectiveHomeActions.map((action) => {
                   const isOpen = isHomeActionOpenAt(action.id, now, appState.settings);
+                  const isPenaltyBtn = action.commandType === 'penalty';
                   const eligibleKids = kids.filter((k) => canKidUseCommand(action.id, k, appState.settings));
                   const doneCount = eligibleKids.filter((k) => isHomeActionDoneForKid(action.id, k)).length;
                   const permSummary = getCommandPermissionSummary(action.id, kids, lang, appState.settings);
@@ -2579,15 +1532,28 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                       aria-disabled={!isOpen}
                       className={`w-full rounded-2xl border-2 px-4 py-3 text-left flex items-center justify-between gap-3 transition-colors cursor-pointer ${
                         isOpen
-                          ? 'border-[#7CC6B8] bg-[#E8FAF6] hover:bg-[#D5F4EE] text-[#114A42]'
-                          : 'border-[#E6DCD2] bg-[#F7F3EE] hover:bg-[#EFE9E1] text-[#7B695F] opacity-85'
+                          ? isPenaltyBtn
+                            ? 'border-[#E89EB0] bg-[#FFE8EE] hover:bg-[#FFD8E2] text-[#7D1D36]'
+                            : 'border-[#49AD9A] bg-[#C5EFE6] hover:bg-[#B2E7DC] text-[#0B3B34]'
+                          : 'border-[#D4C4B4] bg-[#EBE2D7] hover:bg-[#E1D5C7] text-[#5E4E45] opacity-90'
                       }`}
                     >
                       <div className="flex items-center gap-3 min-w-0">
+                        {isOpen && !isPenaltyBtn && (
+                          <span className="relative flex h-2.5 w-2.5 shrink-0" aria-hidden="true">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#10B981] opacity-85" />
+                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#059669]" />
+                          </span>
+                        )}
                         <span className="text-2xl shrink-0">{isOpen ? action.emoji : '🔒'}</span>
                         <div className="min-w-0">
                           <div className="text-sm font-extrabold truncate flex items-center gap-1.5">
                             <span className="truncate">{lang === 'th' ? action.titleTh : action.titleEn}</span>
+                            {isPenaltyBtn && (
+                              <span className="rounded-md bg-[#FFE2E8] border border-[#EE9CAF] px-1.5 py-0.5 text-[10px] font-extrabold text-[#8B1D36] shrink-0">
+                                {lang === 'th' ? 'บทลงโทษ' : 'Penalty'}
+                              </span>
+                            )}
                             {permSummary.restricted && (
                               <span className="rounded-md bg-[#FFF5E1] border border-[#ECC98B] px-1.5 py-0.5 text-[10px] font-bold text-[#7A5411] shrink-0">
                                 {permSummary.badge}
@@ -2603,12 +1569,16 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                       <span
                         className={`rounded-xl px-2.5 py-1 text-[11px] font-extrabold shrink-0 tabular-nums ${
                           isOpen
-                            ? 'bg-[#114A42] text-white'
+                            ? isPenaltyBtn
+                              ? 'bg-[#8B1D36] text-white'
+                              : 'bg-[#114A42] text-white'
                             : 'bg-white/90 text-[#8B796E] border border-[#E6DCD2]'
                         }`}
                       >
                         {isOpen
-                          ? `${authMeta.icon} ${doneCount}/${eligibleKids.length}`
+                          ? isPenaltyBtn
+                            ? `${authMeta.icon} ${lang === 'th' ? 'บันทึกโทษ' : 'Log'}`
+                            : `${authMeta.icon} ${doneCount}/${eligibleKids.length}`
                           : lang === 'th'
                           ? 'ล็อกนอกเวลา'
                           : 'Locked'}
@@ -2630,20 +1600,16 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
         title={
           pendingBoardUnlock?.type === 'add_custom'
             ? lang === 'th'
-              ? '🔐 ใส่รหัส PIN พี่เลี้ยงเพื่อเพิ่มคำสั่งคีย์ลัด'
-              : '🔐 Staff PIN to Add Quick Shortcut'
+              ? '🔐 ใส่รหัส PIN พี่เลี้ยง/ผู้สร้างเพื่อเพิ่มปุ่มคำสั่งใหม่'
+              : '🔐 Staff PIN to Add Command Button'
             : pendingBoardUnlock?.type === 'delete_custom'
             ? lang === 'th'
               ? '🔐 ใส่รหัส PIN พี่เลี้ยงเพื่อลบคำสั่งคีย์ลัด'
               : '🔐 Staff PIN to Delete Shortcut'
-            : pendingBoardUnlock?.type === 'edit_schedule'
+            : pendingBoardUnlock?.type === 'manage_commands'
             ? lang === 'th'
-              ? '🔐 ใส่รหัส PIN พี่เลี้ยง/ผู้ดูแลเพื่อตั้งเวลาคำสั่ง'
-              : '🔐 Staff PIN to Edit Command Schedule'
-            : pendingBoardUnlock?.type === 'edit_permissions'
-            ? lang === 'th'
-              ? '🔐 ใส่รหัส PIN พี่เลี้ยง/ผู้ดูแลเพื่อตั้งค่าสิทธิ์ & รหัสกด'
-              : '🔐 Staff PIN to Edit Button Access & PIN Mode'
+              ? '🔐 ใส่รหัส PIN พี่เลี้ยง/ผู้สร้างเพื่อตั้งค่าปุ่มคำสั่ง'
+              : '🔐 Staff PIN to Manage Command Buttons'
             : lang === 'th'
             ? '🔐 ใส่รหัส PIN พี่เลี้ยงเพื่อแสดงรายชื่อน้อง'
             : '🔐 Enter Staff PIN to Show Kids’ Names'
@@ -2678,21 +1644,11 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
             const unlockJob = pendingBoardUnlock;
             setPendingBoardUnlock(null);
             if (unlockJob.type === 'add_custom') {
-              setScheduleEditorOpen(false);
-              setPermissionsEditorOpen(false);
-              setAddCommandOpen(true);
+              setCommandManagerMode('add_direct');
               return;
             }
-            if (unlockJob.type === 'edit_schedule') {
-              setAddCommandOpen(false);
-              setPermissionsEditorOpen(false);
-              setScheduleEditorOpen(true);
-              return;
-            }
-            if (unlockJob.type === 'edit_permissions') {
-              setAddCommandOpen(false);
-              setScheduleEditorOpen(false);
-              setPermissionsEditorOpen(true);
+            if (unlockJob.type === 'manage_commands') {
+              setCommandManagerMode('manager');
               return;
             }
             if (unlockJob.type === 'delete_custom') {
@@ -3307,12 +2263,8 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                   <h3 className="text-base sm:text-lg font-extrabold text-[#3D322C] truncate">
                     {usefulInfoTab === 'hub' &&
                       (lang === 'th'
-                        ? '📢 ประกาศบ้าน & ข้อมูลที่เป็นประโยชน์'
-                        : '📢 House Announcements & Useful Info')}
-                    {usefulInfoTab === 'announcements' &&
-                      (lang === 'th'
-                        ? '📢 ประกาศอัปเดตบ้าน Barnhem'
-                        : '📢 Barnhem House Announcements')}
+                        ? '📋 ตารางเวร กฎบ้าน & ข้อมูลที่เป็นประโยชน์'
+                        : '📋 House Schedules, Rules & Useful Info')}
                     {usefulInfoTab === 'staff_roster' &&
                       (lang === 'th'
                         ? '👩‍🏫🚐 ตารางพี่เลี้ยง ไนท์วอช & ตารางขับรถ'
@@ -3337,8 +2289,8 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                   <p className="text-[11px] sm:text-xs text-[#6E5C52] mt-0.5 truncate">
                     {usefulInfoTab === 'hub'
                       ? lang === 'th'
-                        ? 'รวมประกาศสำคัญ ตารางเวร กฎบ้าน กิจกรรม และของหายไว้ในปุ่มเดียว'
-                        : 'House notices, staff & duty schedules, rules, outings, and lost & found'
+                        ? 'รวมตารางพี่เลี้ยง ตารางเวร กฎบ้าน กิจกรรม และของหายไว้ในปุ่มเดียว'
+                        : 'Staff & duty schedules, rules, outings, and lost & found'
                       : lang === 'th'
                       ? `อัปเดตเรียลไทม์ · ขณะนี้เวลา ${formatDigitalClock(now)} น.`
                       : `Live update · ${formatDigitalClock(now)}`}
@@ -3359,79 +2311,8 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
               {/* HUB OVERVIEW */}
               {usefulInfoTab === 'hub' && (
                 <div className="space-y-4">
-                  {/* Spotlight Top Announcement / Live Notice */}
-                  {(() => {
-                    const topPinOrUrgent =
-                      sortedHomeAnnouncements.find(
-                        (a) => a.priority === 'urgent' || a.pinned
-                      ) ?? sortedHomeAnnouncements[0];
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => setUsefulInfoTab('announcements')}
-                        className={`w-full rounded-2xl border-2 p-4 text-left space-y-1.5 cursor-pointer transition-colors ${
-                          topPinOrUrgent?.priority === 'urgent'
-                            ? 'border-[#F3B7C0] bg-[#FFF2F4] hover:bg-[#FFE6EA]'
-                            : 'border-[#F3D86B] bg-[#FFFBEB] hover:bg-[#FFF5CC]'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2 text-[11px] font-extrabold">
-                          <span className="text-[#7A5411]">
-                            {topPinOrUrgent
-                              ? topPinOrUrgent.priority === 'urgent'
-                                ? '🚨 ประกาศด่วนล่าสุด'
-                                : '📌 ประกาศปักหมุดล่าสุด'
-                              : homeDynamicEventAnnouncement?.badgeTh ?? '📢 ประกาศประจำวัน'}
-                          </span>
-                          <span className="text-[#5E411D] shrink-0">
-                            {lang === 'th'
-                              ? `ดูทั้งหมด (${sortedHomeAnnouncements.length + 1}) →`
-                              : `View All (${sortedHomeAnnouncements.length + 1}) →`}
-                          </span>
-                        </div>
-                        <div className="font-extrabold text-sm sm:text-base text-[#3D322C]">
-                          {topPinOrUrgent
-                            ? topPinOrUrgent.title
-                            : lang === 'th'
-                            ? homeDynamicEventAnnouncement?.titleTh
-                            : homeDynamicEventAnnouncement?.titleEn}
-                        </div>
-                        <p className="text-xs text-[#5E4E45] line-clamp-2 whitespace-pre-line">
-                          {topPinOrUrgent
-                            ? topPinOrUrgent.body
-                            : lang === 'th'
-                            ? homeDynamicEventAnnouncement?.bodyTh
-                            : homeDynamicEventAnnouncement?.bodyEn}
-                        </p>
-                      </button>
-                    );
-                  })()}
-
-                  {/* All Public Announcements & Helpful House Utilities in One Place */}
+                  {/* Helpful House Utilities in One Place */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    <button
-                      type="button"
-                      onClick={() => setUsefulInfoTab('announcements')}
-                      className="min-h-[64px] rounded-2xl border-2 border-[#F4DB73] bg-[#FFFDF0] hover:bg-[#FFF5BA]/60 px-4 py-3 text-left flex items-center justify-between gap-3 cursor-pointer"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="text-2xl shrink-0">📢</span>
-                        <div className="min-w-0">
-                          <div className="text-sm font-extrabold text-[#3D322C] truncate">
-                            {lang === 'th' ? 'ประกาศบ้าน Barnhem' : 'House Announcements'}
-                          </div>
-                          <div className="text-[11px] text-[#6E5C52] truncate">
-                            {lang === 'th'
-                              ? `${sortedHomeAnnouncements.length} ประกาศพี่เลี้ยง · +1 เวลาบ้านตอนนี้`
-                              : `${sortedHomeAnnouncements.length} staff notices · Live event`}
-                          </div>
-                        </div>
-                      </div>
-                      <span className="text-xs font-extrabold text-[#7A5411] shrink-0">
-                        {sortedHomeAnnouncements.length + 1} →
-                      </span>
-                    </button>
-
                     <button
                       type="button"
                       onClick={() => setUsefulInfoTab('staff_roster')}
@@ -3550,94 +2431,6 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                       ? 'ข้อมูลส่วนตัวของน้อง (แชทหลังไมค์ คะแนนดาวส่วนตัว บทลงโทษ และโหวตลับ) จะเข้าดูได้เฉพาะหลังล็อกอินด้วย PIN 4 หลักเท่านั้นค่ะ'
                       : 'Private kid info (personal stars, DMs, penalties, and secret votes) remains protected behind your 4-digit PIN.'}
                   </div>
-                </div>
-              )}
-
-              {/* SUB-VIEW 1: HOUSE ANNOUNCEMENTS */}
-              {usefulInfoTab === 'announcements' && (
-                <div className="space-y-3">
-                  {homeDynamicEventAnnouncement && (
-                    <div
-                      className={`rounded-2xl border-2 p-4 space-y-2 ${
-                        homeDynamicEventAnnouncement.isFestival
-                          ? 'border-[#E6B8D0]'
-                          : 'border-[#96C3E6] bg-[#EFF7FF]'
-                      }`}
-                      style={
-                        homeDynamicEventAnnouncement.isFestival && activeFestival
-                          ? { background: activeFestival.bannerGradient }
-                          : undefined
-                      }
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="rounded-lg bg-white/85 border border-[#E5DAD0] px-2.5 py-0.5 text-[11px] font-extrabold text-[#3D322C]">
-                          {lang === 'th'
-                            ? homeDynamicEventAnnouncement.badgeTh
-                            : homeDynamicEventAnnouncement.badgeEn}
-                        </span>
-                        <span className="text-[11px] font-bold text-[#5E4E45]">
-                          ⏰{' '}
-                          {lang === 'th'
-                            ? homeDynamicEventAnnouncement.windowLabelTh
-                            : homeDynamicEventAnnouncement.windowLabelEn}
-                        </span>
-                      </div>
-                      <div className="font-extrabold text-base text-[#3D322C]">
-                        {lang === 'th'
-                          ? homeDynamicEventAnnouncement.titleTh
-                          : homeDynamicEventAnnouncement.titleEn}
-                      </div>
-                      <p className="text-sm text-[#4E3F38] whitespace-pre-line leading-relaxed">
-                        {lang === 'th'
-                          ? homeDynamicEventAnnouncement.bodyTh
-                          : homeDynamicEventAnnouncement.bodyEn}
-                      </p>
-                    </div>
-                  )}
-
-                  {sortedHomeAnnouncements.length === 0 ? (
-                    <p className="text-sm text-[#7B695F] text-center py-4">
-                      {lang === 'th'
-                        ? 'ยังไม่มีประกาศเพิ่มเติมจากพี่เลี้ยงในเวลานี้'
-                        : 'No additional staff announcements right now.'}
-                    </p>
-                  ) : (
-                    sortedHomeAnnouncements.map((ann) => (
-                      <div
-                        key={ann.id}
-                        className={`rounded-2xl border-2 p-4 space-y-1.5 ${
-                          ann.priority === 'urgent'
-                            ? 'border-[#F3B7C0] bg-[#FADADD]/45'
-                            : 'border-[#F4DB73] bg-[#FFF5BA]/45'
-                        }`}
-                      >
-                        <div className="font-bold text-base text-[#3D322C]">
-                          {ann.pinned ? '📌 ' : ''}
-                          {ann.priority === 'urgent' ? '🚨 ' : '📢 '}
-                          {ann.title}
-                        </div>
-                        <p className="text-sm text-[#53433A] whitespace-pre-line leading-relaxed">
-                          {ann.body}
-                        </p>
-                        {(ann.startAt || ann.endAt) && (
-                          <div className="text-[11px] font-semibold text-[#456D8F]">
-                            🗓️{' '}
-                            {ann.startAt
-                              ? new Date(ann.startAt).toLocaleString(lang === 'th' ? 'th-TH' : 'en-US')
-                              : '—'}{' '}
-                            →{' '}
-                            {ann.endAt
-                              ? new Date(ann.endAt).toLocaleString(lang === 'th' ? 'th-TH' : 'en-US')
-                              : '—'}
-                          </div>
-                        )}
-                        <div className="text-xs text-[#7B695F] pt-1">
-                          {ann.authorName} ·{' '}
-                          {new Date(ann.createdAt).toLocaleString(lang === 'th' ? 'th-TH' : 'en-US')}
-                        </div>
-                      </div>
-                    ))
-                  )}
                 </div>
               )}
 

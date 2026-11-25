@@ -1,4 +1,12 @@
-import { AppSettings, CommandAuthMode, CustomQuickCommand, Language, Member } from '../types/barnhem';
+import {
+  AppSettings,
+  CommandAuthMode,
+  CommandPenaltyPresetId,
+  CustomQuickCommand,
+  Language,
+  LoginCommandType,
+  Member,
+} from '../types/barnhem';
 import { applyMorningStreakOnTime } from './houseChores';
 import { applyDailySchoolDeduction, getEconomyConfig, isKidAwayOnDate } from './piggyBank';
 import { getDateKey, getMinutesOfDay, getTomorrowDateKey, isPublicHoliday } from './timeRules';
@@ -455,16 +463,22 @@ export function evaluateOneTapGoToSchool(
     };
   }
 
-  // Group 2 (High school - On time <= 07:21, late ceiling 08:00)
+  // Group 2 / Default (On time <= deadlineMins, late ceiling 08:00)
+  const schoolCfg =
+    getEffectiveHomeQuickActions(settings, true).find((a) => a.id === 'morning_school') ??
+    HOME_QUICK_ACTIONS.find((a) => a.id === 'morning_school')!;
+  const deadlineMins = schoolCfg.deadlineMins ?? 7 * 60 + 21;
+  const rewardStars = Math.max(0, Math.round(schoolCfg.rewardStars ?? 10));
   const schoolDeduct = applyDailySchoolDeduction(kid, now, settings, false, isSickToday);
-  if (mins <= 7 * 60 + 21) {
-    const isEarly15 = mins <= 7 * 60 + 6 && earlyBonus > 0;
+  if (mins <= deadlineMins) {
+    const isEarly15 = mins <= deadlineMins - 15 && earlyBonus > 0;
     const streakUpdate = applyMorningStreakOnTime(kid, now);
-    const stars = 10 + (isEarly15 ? earlyBonus : 0) + streakUpdate.milestoneBonusStars;
+    const stars = rewardStars + (isEarly15 ? earlyBonus : 0) + streakUpdate.milestoneBonusStars;
+    const deadlineLabel = minsToHHMM(deadlineMins);
     const updated = appendStarTx(
       kid,
       stars,
-      `🚌 ปุ่มด่วน "ไปโรงเรียน": ตรงเวลา (≤07:21 น.)${isEarly15 ? ` · มาก่อน 15 นาที (+${earlyBonus} ⭐)` : ''}${streakUpdate.streakTextTh ? ` · ${streakUpdate.streakTextTh}` : ''}`,
+      `🚌 ปุ่มด่วน "${schoolCfg.titleTh}": ตรงเวลา (≤${deadlineLabel} น.)${isEarly15 ? ` · มาก่อน 15 นาที (+${earlyBonus} ⭐)` : ''}${streakUpdate.streakTextTh ? ` · ${streakUpdate.streakTextTh}` : ''}`,
       {
         avatar: { ...kid.avatar, outfitMode: 'uniform' },
         streak: streakUpdate.nextStreak,
@@ -482,7 +496,7 @@ export function evaluateOneTapGoToSchool(
       starsDelta: stars,
       bannerTitle:
         lang === 'th'
-          ? `น้อง${kid.nickname} ไปโรงเรียนแล้ว! +${stars} ⭐`
+          ? `น้อง${kid.nickname} ${schoolCfg.titleTh}แล้ว! +${stars} ⭐`
           : `${kid.nickname} Going to School! +${stars} ⭐`,
       bannerSubtitle:
         lang === 'th'
@@ -494,31 +508,63 @@ export function evaluateOneTapGoToSchool(
     };
   }
 
-  const SCHOOL_LATE_CEILING = 8 * 60;
+  const SCHOOL_LATE_CEILING = Math.max(deadlineMins + 15, 8 * 60);
   const cappedMins = Math.min(mins, SCHOOL_LATE_CEILING);
-  const minsLate = Math.max(1, cappedMins - (7 * 60 + 21));
+  const minsLate = Math.max(1, cappedMins - deadlineMins);
   const pastCeiling = mins > SCHOOL_LATE_CEILING;
-  const fine = isSickToday || isAwayToday ? 0 : Math.min(minsLate * 5, 50);
-  const fineReason = `ไปโรงเรียนสาย ${minsLate} นาที${pastCeiling ? ' (เพดานสาย 08:00 น.)' : ''}`;
+  const preset = schoolCfg.penaltyPreset ?? 'per_minute_fine_thb';
+  const fine =
+    isSickToday || isAwayToday
+      ? 0
+      : preset === 'fixed_fine_thb'
+      ? 20
+      : preset === 'per_minute_fine_thb'
+      ? Math.min(minsLate * 5, 50)
+      : 0;
+  const fineReason = `ไปโรงเรียนสาย ${minsLate} นาที${pastCeiling ? ` (เพดานสาย ${minsToHHMM(SCHOOL_LATE_CEILING)} น.)` : ''}`;
+  const penaltyPatch =
+    isSickToday || isAwayToday
+      ? {
+          avatar: { ...kid.avatar, outfitMode: 'uniform' as const },
+          allowance: schoolDeduct.allowance,
+          daily: {
+            ...kid.daily,
+            morningDressedConfirmed: true,
+            vanOrMorningChecked: true,
+          },
+        }
+      : fine > 0
+      ? {
+          avatar: { ...kid.avatar, outfitMode: 'uniform' as const },
+          allowance: schoolDeduct.allowance,
+          penalty: {
+            ...kid.penalty,
+            lateFineThb: kid.penalty.lateFineThb + fine,
+          },
+          daily: {
+            ...kid.daily,
+            morningDressedConfirmed: true,
+            vanOrMorningChecked: true,
+          },
+        }
+      : {
+          avatar: { ...kid.avatar, outfitMode: 'uniform' as const },
+          allowance: schoolDeduct.allowance,
+          daily: {
+            ...kid.daily,
+            morningDressedConfirmed: true,
+            vanOrMorningChecked: true,
+          },
+        };
   const updated = appendStarTx(
     kid,
     0,
     isSickToday || isAwayToday
-      ? `🚌 ปุ่มด่วน "ไปโรงเรียน" (${fineReason} · ยกเว้นค่าปรับเพราะ${isSickToday ? 'ป่วย' : 'ลาพัก'})`
-      : `🚌 ปุ่มด่วน "ไปโรงเรียน" (${fineReason} · หักกระปุกหมู ${fine} ฿ → เข้ากระปุกทองคำ)`,
-    {
-      avatar: { ...kid.avatar, outfitMode: 'uniform' },
-      allowance: schoolDeduct.allowance,
-      penalty: {
-        ...kid.penalty,
-        lateFineThb: kid.penalty.lateFineThb + fine,
-      },
-      daily: {
-        ...kid.daily,
-        morningDressedConfirmed: true,
-        vanOrMorningChecked: true,
-      },
-    }
+      ? `🚌 ปุ่มด่วน "${schoolCfg.titleTh}" (${fineReason} · ยกเว้นค่าปรับเพราะ${isSickToday ? 'ป่วย' : 'ลาพัก'})`
+      : fine > 0
+      ? `🚌 ปุ่มด่วน "${schoolCfg.titleTh}" (${fineReason} · หักกระปุกหมู ${fine} ฿ → เข้ากระปุกทองคำ)`
+      : `🚌 ปุ่มด่วน "${schoolCfg.titleTh}" (${fineReason} · ${schoolCfg.penaltyNote || 'เกินเส้นตาย'})`,
+    penaltyPatch
   );
   return {
     success: true,
@@ -550,17 +596,131 @@ export type HomeQuickActionId =
   | 'evening_uniform_phone'
   | 'evening_unlock_cartoon'
   | 'night_homework_permission'
-  | 'night_return_phone';
+  | 'night_return_phone'
+  | 'daily_penalty';
+
+export interface PenaltyPresetOption {
+  id: CommandPenaltyPresetId;
+  emoji: string;
+  labelTh: string;
+  labelEn: string;
+  defaultNoteTh: string;
+  defaultNoteEn: string;
+}
+
+export const PENALTY_PRESET_OPTIONS: PenaltyPresetOption[] = [
+  {
+    id: 'deduct_free_day',
+    emoji: '🗓️',
+    labelTh: 'หักสิทธิ์ Free Day วันศุกร์',
+    labelEn: 'Deduct Friday Free Day Privilege',
+    defaultNoteTh: 'หัก Free Day 1 วัน',
+    defaultNoteEn: 'Deduct 1 Free Day',
+  },
+  {
+    id: 'deduct_stars',
+    emoji: '⭐',
+    labelTh: 'หักดาวสะสม',
+    labelEn: 'Deduct Saved Stars',
+    defaultNoteTh: 'หักดาวสะสม 5 ดวง',
+    defaultNoteEn: 'Deduct 5 Stars',
+  },
+  {
+    id: 'fixed_fine_thb',
+    emoji: '🧾',
+    labelTh: 'ปรับเงินคงที่',
+    labelEn: 'Fixed Fine (THB)',
+    defaultNoteTh: 'ปรับเงินคงที่ 20 บาท',
+    defaultNoteEn: 'Fixed 20 THB Fine',
+  },
+  {
+    id: 'per_minute_fine_thb',
+    emoji: '💸',
+    labelTh: 'ปรับเงินรายนาที (สูงสุด 50 บาท)',
+    labelEn: 'Per-Minute Fine (Max 50 THB)',
+    defaultNoteTh: 'ปรับนาทีละ 5 บาท (สูงสุด 50 บ.)',
+    defaultNoteEn: '5 THB/min (Max 50 THB)',
+  },
+  {
+    id: 'no_phone_today_1830',
+    emoji: '📵',
+    labelTh: 'งดใช้มือถือวันนี้ถึง 18:30 น.',
+    labelEn: 'No Phone Today Until 18:30',
+    defaultNoteTh: 'งดใช้มือถือวันนี้ถึง 18:30 น.',
+    defaultNoteEn: 'No phone today until 18:30',
+  },
+  {
+    id: 'no_phone_tomorrow',
+    emoji: '📵',
+    labelTh: 'งดใช้มือถือวันพรุ่งนี้ 1 วัน',
+    labelEn: 'No Phone Tomorrow (1 Day)',
+    defaultNoteTh: 'งดใช้มือถือวันพรุ่งนี้ 1 วัน',
+    defaultNoteEn: 'No phone tomorrow for 1 day',
+  },
+  {
+    id: 'special_duty',
+    emoji: '🧹',
+    labelTh: 'บันทึกบทลงโทษ / เวรพิเศษ',
+    labelEn: 'Record Penalty / Special Duty',
+    defaultNoteTh: 'บันทึกบทลงโทษ / เวรพิเศษ',
+    defaultNoteEn: 'Penalty / Special Duty',
+  },
+  {
+    id: 'lock_after_deadline',
+    emoji: '🔒',
+    labelTh: 'ล็อกปุ่มทันทีเมื่อเกินเส้นตาย (ห้ามกด)',
+    labelEn: 'Lock Button Immediately After Deadline',
+    defaultNoteTh: 'ล็อกปุ่มทันทีเมื่อเลยเส้นตาย',
+    defaultNoteEn: 'Locked immediately past deadline',
+  },
+  {
+    id: 'no_fine_zero_stars',
+    emoji: '⭐',
+    labelTh: 'ไม่มีค่าปรับ (ไม่ได้ดาวเมื่อเลยเส้นตาย)',
+    labelEn: 'No Fine (0 Stars After Deadline)',
+    defaultNoteTh: 'ไม่ได้ดาวเมื่อเลยเส้นตาย',
+    defaultNoteEn: 'No stars awarded past deadline',
+  },
+];
+
+export function getPenaltyPresetMeta(presetId?: string): PenaltyPresetOption | null {
+  if (!presetId) return null;
+  return PENALTY_PRESET_OPTIONS.find((p) => p.id === presetId) ?? null;
+}
+
+export function getPenaltySummaryText(
+  presetId: string | undefined,
+  penaltyNote: string | undefined,
+  lang: Language
+): string {
+  const cleanNote = (penaltyNote ?? '').trim();
+  if (cleanNote) return cleanNote;
+  const meta = getPenaltyPresetMeta(presetId);
+  if (meta) return lang === 'th' ? meta.defaultNoteTh : meta.defaultNoteEn;
+  if (presetId && presetId.trim()) return presetId.trim();
+  return lang === 'th' ? 'ไม่ได้ดาวเมื่อเลยเส้นตาย' : 'No stars past deadline';
+}
 
 export interface HomeQuickActionConfig {
   id: HomeQuickActionId;
   emoji: string;
   startMins: number;
   endMins: number;
+  earlyGraceMins: number;
+  deadlineMins: number;
+  rewardStars: number;
+  penaltyPreset: string;
+  penaltyNote: string;
+  commandType: LoginCommandType;
+  defaultAuthMode: CommandAuthMode;
+  enabled: boolean;
+  hidden: boolean;
   windowLabelTh: string;
   windowLabelEn: string;
   titleTh: string;
   titleEn: string;
+  descriptionTh: string;
+  descriptionEn: string;
   tapLabelTh: string;
   tapLabelEn: string;
   doneLabelTh: string;
@@ -573,10 +733,21 @@ export const HOME_QUICK_ACTIONS: HomeQuickActionConfig[] = [
     emoji: '📱',
     startMins: 6 * 60,
     endMins: 7 * 60,
+    earlyGraceMins: 5,
+    deadlineMins: 7 * 60,
+    rewardStars: 5,
+    penaltyPreset: 'lock_after_deadline',
+    penaltyNote: 'ล็อกปุ่มทันทีเมื่อเลยเส้นตาย',
+    commandType: 'routine',
+    defaultAuthMode: 'self_tap',
+    enabled: true,
+    hidden: false,
     windowLabelTh: '06:00–07:00 น.',
     windowLabelEn: '06:00–07:00',
     titleTh: 'มาขอรับมือถือ',
     titleEn: 'Morning Phone Pickup',
+    descriptionTh: 'เช็คอินรับมือถือช่วงเช้าก่อนไปโรงเรียน / ฝึกงาน',
+    descriptionEn: 'Morning phone pickup check-in before school or internship.',
     tapLabelTh: '📱 มาขอรับมือถือ',
     tapLabelEn: '📱 Get Phone',
     doneLabelTh: '✅ รับมือถือแล้ว',
@@ -585,12 +756,23 @@ export const HOME_QUICK_ACTIONS: HomeQuickActionConfig[] = [
   {
     id: 'morning_breakfast',
     emoji: '🍚',
-    startMins: 6 * 60 + 30,
+    startMins: 6 * 60 + 10,
     endMins: 7 * 60 + 30,
-    windowLabelTh: '06:30–07:30 น.',
-    windowLabelEn: '06:30–07:30',
+    earlyGraceMins: 10,
+    deadlineMins: 6 * 60 + 40,
+    rewardStars: 5,
+    penaltyPreset: 'no_fine_zero_stars',
+    penaltyNote: 'ไม่ได้ดาวเมื่อเลยเส้นตาย',
+    commandType: 'routine',
+    defaultAuthMode: 'staff_pin',
+    enabled: true,
+    hidden: false,
+    windowLabelTh: '06:10–07:30 น.',
+    windowLabelEn: '06:10–07:30',
     titleTh: 'กินข้าวเช้า',
     titleEn: 'Breakfast',
+    descriptionTh: 'เช็คอินทานข้าวเช้าน้องกลุ่ม 1 (ก่อน 06:40 น. รับ +5 ⭐)',
+    descriptionEn: 'Breakfast check-in (before 06:40 earns +5 ⭐).',
     tapLabelTh: '🍚 กินข้าวเช้า',
     tapLabelEn: '🍚 Breakfast',
     doneLabelTh: '✅ กินข้าวแล้ว',
@@ -601,10 +783,21 @@ export const HOME_QUICK_ACTIONS: HomeQuickActionConfig[] = [
     emoji: '🚌',
     startMins: 6 * 60 + 30,
     endMins: 7 * 60 + 30,
+    earlyGraceMins: 10,
+    deadlineMins: 7 * 60 + 21,
+    rewardStars: 10,
+    penaltyPreset: 'per_minute_fine_thb',
+    penaltyNote: 'ปรับนาทีละ 5 บาท (สูงสุด 50 บ.)',
+    commandType: 'routine',
+    defaultAuthMode: 'staff_pin',
+    enabled: true,
+    hidden: false,
     windowLabelTh: '06:30–07:30 น.',
     windowLabelEn: '06:30–07:30',
     titleTh: 'ไปโรงเรียน',
     titleEn: 'Go to School',
+    descriptionTh: 'เช็คอินขึ้นรถตู้ / ออกเดินทางไปโรงเรียนหรือฝึกงาน',
+    descriptionEn: 'Check in boarding van / leaving for school or internship.',
     tapLabelTh: '🚌 ไปโรงเรียน',
     tapLabelEn: '🚌 Go to School',
     doneLabelTh: '✅ ไปแล้ว',
@@ -615,10 +808,21 @@ export const HOME_QUICK_ACTIONS: HomeQuickActionConfig[] = [
     emoji: '🏡',
     startMins: 15 * 60,
     endMins: 17 * 60,
+    earlyGraceMins: 15,
+    deadlineMins: 17 * 60,
+    rewardStars: 5,
+    penaltyPreset: 'no_fine_zero_stars',
+    penaltyNote: 'ไม่ได้ดาวเมื่อเลยเส้นตาย',
+    commandType: 'routine',
+    defaultAuthMode: 'self_tap',
+    enabled: true,
+    hidden: false,
     windowLabelTh: '15:00–17:00 น.',
     windowLabelEn: '15:00–17:00',
     titleTh: 'กลับบ้านแล้ว',
     titleEn: 'Returned Home',
+    descriptionTh: 'เช็คอินกลับถึงบ้านเรียบร้อย เก็บมือถือและเปลี่ยนชุด',
+    descriptionEn: 'Check in arriving home, storing phone and changing clothes.',
     tapLabelTh: '🏡 กลับบ้านแล้ว',
     tapLabelEn: '🏡 Home Now',
     doneLabelTh: '✅ กลับบ้านแล้ว',
@@ -626,15 +830,26 @@ export const HOME_QUICK_ACTIONS: HomeQuickActionConfig[] = [
   },
   {
     id: 'evening_uniform_phone',
-    emoji: '👔📱',
+    emoji: '👕',
     startMins: 18 * 60,
     endMins: 20 * 60 + 30,
+    earlyGraceMins: 10,
+    deadlineMins: 19 * 60 + 30,
+    rewardStars: 10,
+    penaltyPreset: 'no_fine_zero_stars',
+    penaltyNote: 'ไม่ได้ดาวเมื่อเลยเส้นตาย',
+    commandType: 'routine',
+    defaultAuthMode: 'self_tap',
+    enabled: true,
+    hidden: false,
     windowLabelTh: '18:00–20:30 น.',
     windowLabelEn: '18:00–20:30',
     titleTh: 'ตรวจชุด & รับมือถือ',
     titleEn: 'Uniform & Get Phone',
-    tapLabelTh: '📱 ตรวจชุด & รับมือถือ',
-    tapLabelEn: '📱 Uniform & Phone',
+    descriptionTh: 'ซัก-รีด-ตรวจชุดนักเรียน & อาบน้ำเรียบร้อย รับมือถือรอบเย็น',
+    descriptionEn: 'Uniform checked & showered, collect evening phone.',
+    tapLabelTh: '👕 ตรวจชุด & รับมือถือ',
+    tapLabelEn: '👕 Uniform & Phone',
     doneLabelTh: '✅ รับมือถือแล้ว',
     doneLabelEn: '✅ Phone Collected',
   },
@@ -643,10 +858,21 @@ export const HOME_QUICK_ACTIONS: HomeQuickActionConfig[] = [
     emoji: '📺',
     startMins: 20 * 60,
     endMins: 20 * 60 + 40,
+    earlyGraceMins: 5,
+    deadlineMins: 20 * 60 + 40,
+    rewardStars: 10,
+    penaltyPreset: 'lock_after_deadline',
+    penaltyNote: 'ล็อกปุ่มทันทีเมื่อเลยเส้นตาย',
+    commandType: 'routine',
+    defaultAuthMode: 'self_tap',
+    enabled: true,
+    hidden: false,
     windowLabelTh: '20:00–20:40 น.',
     windowLabelEn: '20:00–20:40',
     titleTh: 'ปลดล็อคดูการ์ตูน',
     titleEn: 'Unlock Cartoons',
+    descriptionTh: 'ผ่านด่านทบทวนภาษา 20:00 น. รับสิทธิ์ดูการ์ตูน 20:00–20:40 น.',
+    descriptionEn: 'Pass language review at 20:00 to unlock cartoon time 20:00–20:40.',
     tapLabelTh: '📺 ปลดล็อคการ์ตูน',
     tapLabelEn: '📺 Unlock Cartoons',
     doneLabelTh: '✅ ดูการ์ตูนแล้ว',
@@ -657,10 +883,21 @@ export const HOME_QUICK_ACTIONS: HomeQuickActionConfig[] = [
     emoji: '📝',
     startMins: 20 * 60 + 30,
     endMins: 20 * 60 + 45,
+    earlyGraceMins: 5,
+    deadlineMins: 20 * 60 + 45,
+    rewardStars: 5,
+    penaltyPreset: 'lock_after_deadline',
+    penaltyNote: 'ล็อกปุ่มทันทีเมื่อเลยเส้นตาย',
+    commandType: 'routine',
+    defaultAuthMode: 'kid_pin',
+    enabled: true,
+    hidden: false,
     windowLabelTh: '20:30–20:45 น.',
     windowLabelEn: '20:30–20:45',
     titleTh: 'ขออนุญาตทำการบ้าน',
     titleEn: 'Homework Permission',
+    descriptionTh: 'ลงทะเบียนใช้อุปกรณ์ทำการบ้านต่อหลัง 21:00 น. (ถึง 22:45 น.)',
+    descriptionEn: 'Register device permission for homework past 21:00 (until 22:45).',
     tapLabelTh: '📝 ขออนุญาตทำการบ้าน',
     tapLabelEn: '📝 Homework Permission',
     doneLabelTh: '✅ ขออนุญาตแล้ว',
@@ -669,16 +906,52 @@ export const HOME_QUICK_ACTIONS: HomeQuickActionConfig[] = [
   {
     id: 'night_return_phone',
     emoji: '🌙',
-    startMins: 20 * 60 + 30,
+    startMins: 20 * 60 + 46,
     endMins: 23 * 60,
-    windowLabelTh: '20:30–23:00 น. (Curfew 21:00)',
-    windowLabelEn: '20:30–23:00 (21:00 Curfew)',
+    earlyGraceMins: 5,
+    deadlineMins: 21 * 60,
+    rewardStars: 5,
+    penaltyPreset: 'deduct_free_day',
+    penaltyNote: 'หัก Free Day 1 วัน',
+    commandType: 'routine',
+    defaultAuthMode: 'kid_pin',
+    enabled: true,
+    hidden: false,
+    windowLabelTh: '20:46–23:00 น. (Curfew 21:00)',
+    windowLabelEn: '20:46–23:00 (21:00 Curfew)',
     titleTh: 'คืนมือถือ',
     titleEn: 'Return Phone',
+    descriptionTh: 'ส่งคืนมือถือเข้าตู้ก่อน Curfew 21:00 น.',
+    descriptionEn: 'Return mobile phone to staff cabinet before 21:00 curfew.',
     tapLabelTh: '🌙 คืนมือถือ',
     tapLabelEn: '🌙 Return Phone',
     doneLabelTh: '✅ คืนมือถือแล้ว',
     doneLabelEn: '✅ Phone Returned',
+  },
+  {
+    id: 'daily_penalty',
+    emoji: '⚖️',
+    startMins: 0,
+    endMins: 23 * 60 + 59,
+    earlyGraceMins: 0,
+    deadlineMins: 23 * 60 + 59,
+    rewardStars: 0,
+    penaltyPreset: 'deduct_free_day',
+    penaltyNote: 'หัก Free Day 1 วัน',
+    commandType: 'penalty',
+    defaultAuthMode: 'staff_pin',
+    enabled: true,
+    hidden: false,
+    windowLabelTh: '00:00–23:59 น.',
+    windowLabelEn: '00:00–23:59',
+    titleTh: 'บทลงโทษ',
+    titleEn: 'Daily Penalty',
+    descriptionTh: 'บันทึกบทลงโทษประจำวัน (พี่เลี้ยงใส่ PIN ยืนยันเพื่อบันทึกโทษทันที)',
+    descriptionEn: 'Record daily penalty immediately (Staff PIN confirmation).',
+    tapLabelTh: '⚖️ บันทึกบทลงโทษ',
+    tapLabelEn: '⚖️ Record Penalty',
+    doneLabelTh: '⚖️ บันทึกแล้ว',
+    doneLabelEn: '⚖️ Recorded',
   },
 ];
 
@@ -706,11 +979,12 @@ export function formatThaiCurfewClock(totalMins: number): string {
 }
 
 export function getEffectiveHomeQuickActions(
-  settings?: Partial<AppSettings>
+  settings?: Partial<AppSettings>,
+  includeHidden = false
 ): HomeQuickActionConfig[] {
   const overrides = settings?.timedCommandSchedule;
   const curfewHHMM = minsToHHMM(getEffectiveHomeworkCurfewMins(settings));
-  return HOME_QUICK_ACTIONS.map((action) => {
+  const mapped = HOME_QUICK_ACTIONS.map((action) => {
     const ov = overrides?.[action.id];
     const startMins =
       ov &&
@@ -728,19 +1002,71 @@ export function getEffectiveHomeQuickActions(
       ov.endMins < 1440
         ? Math.round(ov.endMins)
         : action.endMins;
+    const earlyGraceMins =
+      ov &&
+      typeof ov.earlyGraceMins === 'number' &&
+      Number.isFinite(ov.earlyGraceMins) &&
+      ov.earlyGraceMins >= 0 &&
+      ov.earlyGraceMins <= 120
+        ? Math.round(ov.earlyGraceMins)
+        : action.earlyGraceMins;
+    const deadlineMins =
+      ov &&
+      typeof ov.deadlineMins === 'number' &&
+      Number.isFinite(ov.deadlineMins) &&
+      ov.deadlineMins >= 0 &&
+      ov.deadlineMins < 1440
+        ? Math.round(ov.deadlineMins)
+        : action.id === 'night_return_phone' && typeof settings?.homeworkCurfewMins === 'number'
+        ? getEffectiveHomeworkCurfewMins(settings)
+        : action.deadlineMins;
+    const rewardStars =
+      ov && typeof ov.rewardStars === 'number' && Number.isFinite(ov.rewardStars)
+        ? Math.max(0, Math.min(50, Math.round(ov.rewardStars)))
+        : action.rewardStars;
+    const emoji = ov?.emoji?.trim() || action.emoji;
+    const titleTh = ov?.titleTh?.trim() || action.titleTh;
+    const titleEn = ov?.titleEn?.trim() || action.titleEn;
+    const descriptionTh = ov?.descriptionTh !== undefined ? ov.descriptionTh : action.descriptionTh;
+    const descriptionEn = ov?.descriptionEn !== undefined ? ov.descriptionEn : action.descriptionEn;
+    const penaltyPreset = ov?.penaltyPreset !== undefined ? ov.penaltyPreset : action.penaltyPreset;
+    const penaltyNote = ov?.penaltyNote !== undefined ? ov.penaltyNote : action.penaltyNote;
+    const commandType: LoginCommandType = ov?.commandType ?? action.commandType;
+    const enabled = ov?.enabled !== undefined ? Boolean(ov.enabled) : action.enabled;
+    const hidden = ov?.hidden !== undefined ? Boolean(ov.hidden) : action.hidden;
+
     const sStr = minsToHHMM(startMins);
     const eStr = minsToHHMM(endMins);
     const isReturn = action.id === 'night_return_phone';
+    const dStr = minsToHHMM(deadlineMins);
     return {
       ...action,
+      emoji,
+      titleTh,
+      titleEn,
+      descriptionTh,
+      descriptionEn,
       startMins,
       endMins,
+      earlyGraceMins,
+      deadlineMins,
+      rewardStars,
+      penaltyPreset,
+      penaltyNote,
+      commandType,
+      enabled,
+      hidden,
+      tapLabelTh: `${emoji} ${titleTh}`,
+      tapLabelEn: `${emoji} ${titleEn}`,
       windowLabelTh: isReturn
-        ? `${sStr}–${eStr} น. (Curfew ${curfewHHMM})`
+        ? `${sStr}–${eStr} น. (Curfew ${ov?.deadlineMins !== undefined ? dStr : curfewHHMM})`
         : `${sStr}–${eStr} น.`,
-      windowLabelEn: isReturn ? `${sStr}–${eStr} (${curfewHHMM} Curfew)` : `${sStr}–${eStr}`,
+      windowLabelEn: isReturn
+        ? `${sStr}–${eStr} (${ov?.deadlineMins !== undefined ? dStr : curfewHHMM} Curfew)`
+        : `${sStr}–${eStr}`,
     };
   });
+  return includeHidden ? mapped : mapped.filter((a) => !a.hidden);
 }
 
 export function getEffectiveHomeworkPermissionWindow(settings?: Partial<AppSettings>): {
@@ -750,7 +1076,7 @@ export function getEffectiveHomeworkPermissionWindow(settings?: Partial<AppSetti
   labelEn: string;
 } {
   const found =
-    getEffectiveHomeQuickActions(settings).find((a) => a.id === 'night_homework_permission') ??
+    getEffectiveHomeQuickActions(settings, true).find((a) => a.id === 'night_homework_permission') ??
     HOME_QUICK_ACTIONS.find((a) => a.id === 'night_homework_permission')!;
   return {
     startMins: found.startMins,
@@ -767,7 +1093,7 @@ export function getEffectiveMorningPhoneWindow(settings?: Partial<AppSettings>):
   labelEn: string;
 } {
   const found =
-    getEffectiveHomeQuickActions(settings).find((a) => a.id === 'morning_phone_pickup') ??
+    getEffectiveHomeQuickActions(settings, true).find((a) => a.id === 'morning_phone_pickup') ??
     HOME_QUICK_ACTIONS.find((a) => a.id === 'morning_phone_pickup')!;
   return {
     startMins: found.startMins,
@@ -777,18 +1103,51 @@ export function getEffectiveMorningPhoneWindow(settings?: Partial<AppSettings>):
   };
 }
 
+export function isActionWithinTimeWindow(
+  startMins: number,
+  endMins: number,
+  earlyGraceMins: number,
+  deadlineMins: number | undefined,
+  penaltyPreset: string | undefined,
+  now: Date
+): boolean {
+  const mins = getMinutesOfDay(now);
+  const grace = Math.max(0, Math.min(120, Math.round(earlyGraceMins || 0)));
+  const effectiveStart =
+    startMins === 0 && endMins >= 23 * 60 + 59
+      ? 0
+      : ((startMins - grace) % 1440 + 1440) % 1440;
+  let effectiveEnd = endMins;
+  if (
+    penaltyPreset === 'lock_after_deadline' &&
+    typeof deadlineMins === 'number' &&
+    Number.isFinite(deadlineMins)
+  ) {
+    if (startMins <= endMins && deadlineMins >= startMins && deadlineMins <= endMins) {
+      effectiveEnd = deadlineMins;
+    }
+  }
+  if (effectiveStart <= effectiveEnd) {
+    return mins >= effectiveStart && mins <= effectiveEnd;
+  }
+  return mins >= effectiveStart || mins <= effectiveEnd;
+}
+
 export function isHomeActionOpenAt(
   actionId: HomeQuickActionId,
   now: Date,
   settings?: Partial<AppSettings>
 ): boolean {
   const cfg = getEffectiveHomeQuickActions(settings).find((a) => a.id === actionId);
-  if (!cfg) return false;
-  const mins = getMinutesOfDay(now);
-  if (cfg.startMins <= cfg.endMins) {
-    return mins >= cfg.startMins && mins <= cfg.endMins;
-  }
-  return mins >= cfg.startMins || mins <= cfg.endMins;
+  if (!cfg || !cfg.enabled || cfg.hidden) return false;
+  return isActionWithinTimeWindow(
+    cfg.startMins,
+    cfg.endMins,
+    cfg.earlyGraceMins,
+    cfg.deadlineMins,
+    cfg.penaltyPreset,
+    now
+  );
 }
 
 export function isHomeActionDoneForKid(actionId: HomeQuickActionId, kid: Member): boolean {
@@ -809,6 +1168,8 @@ export function isHomeActionDoneForKid(actionId: HomeQuickActionId, kid: Member)
       return Boolean(kid.daily.homeworkRegisteredSubject);
     case 'night_return_phone':
       return Boolean(kid.daily.phoneReturnedChecked);
+    case 'daily_penalty':
+      return false;
   }
 }
 
@@ -896,6 +1257,8 @@ export function getCommandAuthMode(
   if (mode === 'kid_pin' || mode === 'self_tap' || mode === 'staff_pin') {
     return mode;
   }
+  const coreDefault = HOME_QUICK_ACTIONS.find((a) => a.id === commandId)?.defaultAuthMode;
+  if (coreDefault) return coreDefault;
   return 'staff_pin';
 }
 
@@ -1045,6 +1408,54 @@ export function evaluateOneTapHomeAction(
     ].slice(0, 60),
   });
 
+  if (cfg.commandType === 'penalty' || actionId === 'daily_penalty') {
+    const preset = cfg.penaltyPreset || 'deduct_free_day';
+    const noteLabel = getPenaltySummaryText(preset, cfg.penaltyNote, lang);
+    const tomorrow = getTomorrowDateKey(now);
+    let penaltyPatch = { ...kid.penalty };
+    let starsDelta = 0;
+    let fineThb = 0;
+
+    if (preset === 'deduct_free_day') {
+      penaltyPatch = {
+        ...penaltyPatch,
+        fridayFreeDayDeductedCount: penaltyPatch.fridayFreeDayDeductedCount + 1,
+      };
+    } else if (preset === 'deduct_stars') {
+      starsDelta = -5;
+    } else if (preset === 'fixed_fine_thb') {
+      fineThb = 20;
+      penaltyPatch = { ...penaltyPatch, lateFineThb: penaltyPatch.lateFineThb + fineThb };
+    } else if (preset === 'per_minute_fine_thb') {
+      fineThb = 25;
+      penaltyPatch = { ...penaltyPatch, lateFineThb: penaltyPatch.lateFineThb + fineThb };
+    } else if (preset === 'no_phone_today_1830') {
+      penaltyPatch = { ...penaltyPatch, phoneConfiscatedUntil1830Date: todayKey };
+    } else if (preset === 'no_phone_tomorrow') {
+      penaltyPatch = { ...penaltyPatch, noEveningPhoneTomorrowDate: tomorrow };
+    }
+
+    const updated = appendStarTx(
+      kid,
+      starsDelta,
+      `${cfg.emoji} ${cfg.titleTh}: ${noteLabel}${detailOverride?.trim() ? ` (${detailOverride.trim()})` : ''}`,
+      { penalty: penaltyPatch }
+    );
+    return {
+      success: true,
+      emoji: cfg.emoji || '⚖️',
+      starsDelta,
+      fineThb: fineThb > 0 ? fineThb : undefined,
+      fineReason: noteLabel,
+      bannerTitle:
+        lang === 'th'
+          ? `บันทึกบทลงโทษ น้อง${kid.nickname} แล้ว`
+          : `Penalty Recorded for ${kid.nickname}`,
+      bannerSubtitle: `${noteLabel}${detailOverride?.trim() ? ` · ${detailOverride.trim()}` : ''}`,
+      updatedKid: updated,
+    };
+  }
+
   if (actionId === 'morning_phone_pickup') {
     if (kid.daily.morningPhonePickupChecked) {
       return {
@@ -1110,10 +1521,11 @@ export function evaluateOneTapHomeAction(
       };
     }
 
+    const pickupStars = Math.max(0, Math.round(cfg.rewardStars ?? 5));
     const updated = appendStarTx(
       kid,
-      0,
-      `📱 ปุ่มด่วน "มาขอรับมือถือ" (${cfg.windowLabelTh})`,
+      pickupStars,
+      `📱 ปุ่มด่วน "${cfg.titleTh}" (${cfg.windowLabelTh})${pickupStars > 0 ? ` +${pickupStars} ⭐` : ''}`,
       {
         daily: { ...kid.daily, morningPhonePickupChecked: true },
       }
@@ -1121,11 +1533,11 @@ export function evaluateOneTapHomeAction(
     return {
       success: true,
       emoji: '📱✨',
-      starsDelta: 0,
+      starsDelta: pickupStars,
       bannerTitle:
         lang === 'th'
-          ? `น้อง${kid.nickname} มาขอรับมือถือเรียบร้อยแล้ว!`
-          : `${kid.nickname} Morning Phone Pickup Confirmed!`,
+          ? `น้อง${kid.nickname} ${cfg.titleTh}เรียบร้อยแล้ว!${pickupStars > 0 ? ` +${pickupStars} ⭐` : ''}`
+          : `${kid.nickname} Morning Phone Pickup Confirmed!${pickupStars > 0 ? ` +${pickupStars} ⭐` : ''}`,
       bannerSubtitle:
         lang === 'th'
           ? `บันทึกขอรับมือถือรอบเช้า (${cfg.windowLabelTh}) เรียบร้อยค่ะ`
@@ -1144,15 +1556,16 @@ export function evaluateOneTapHomeAction(
         bannerSubtitle: lang === 'th' ? 'เช็คชื่อมื้อเช้าเรียบร้อยแล้วค่ะ' : 'Already checked breakfast today.',
       };
     }
-    const onTime = mins < 6 * 60 + 40;
+    const onTime = mins <= (cfg.deadlineMins ?? 6 * 60 + 40);
     const streakUpdate = onTime ? applyMorningStreakOnTime(kid, now) : null;
-    const stars = (onTime ? 5 : 0) + (streakUpdate?.milestoneBonusStars ?? 0);
+    const baseStars = Math.max(0, Math.round(cfg.rewardStars ?? 5));
+    const stars = (onTime ? baseStars : 0) + (streakUpdate?.milestoneBonusStars ?? 0);
     const updated = appendStarTx(
       kid,
       stars,
       onTime
-        ? `🍚 ปุ่มด่วน "กินข้าวเช้า" (ก่อน 06:40 น. +${stars} ⭐)`
-        : '🍚 ปุ่มด่วน "กินข้าวเช้า" (06:40–07:30 น.)',
+        ? `🍚 ปุ่มด่วน "${cfg.titleTh}" (≤${minsToHHMM(cfg.deadlineMins)} น. +${stars} ⭐)`
+        : `🍚 ปุ่มด่วน "${cfg.titleTh}" (หลัง ${minsToHHMM(cfg.deadlineMins)} น.)`,
       {
         avatar: { ...kid.avatar, outfitMode: 'uniform' },
         streak: streakUpdate ? streakUpdate.nextStreak : kid.streak,
@@ -1185,13 +1598,22 @@ export function evaluateOneTapHomeAction(
         bannerSubtitle: lang === 'th' ? 'เช็คอินกลับบ้านเรียบร้อยแล้วค่ะ' : 'Already checked return home.',
       };
     }
-    const stars = kid.group === 3 ? 20 : kid.group === 2 ? 5 : 0;
+    const onTimeHome = mins <= (cfg.deadlineMins ?? 17 * 60);
+    const baseHomeStars = Math.max(0, Math.round(cfg.rewardStars ?? 5));
+    const hasCustomStars = settings?.timedCommandSchedule?.[actionId]?.rewardStars !== undefined;
+    const stars = !onTimeHome
+      ? 0
+      : hasCustomStars
+      ? baseHomeStars
+      : kid.group === 3
+      ? Math.max(20, baseHomeStars)
+      : baseHomeStars;
     const isEarly15 = stars > 0 && mins <= 15 * 60 + 45 && earlyBonus > 0 ? 0 : 0;
     const totalStars = stars + isEarly15;
     const updated = appendStarTx(
       kid,
       totalStars,
-      `🏡 ปุ่มด่วน "กลับบ้านแล้ว"${totalStars > 0 ? ` (+${totalStars} ⭐)` : ' (เริ่ม Speedy Ninja 20 นาที)'}`,
+      `🏡 ปุ่มด่วน "${cfg.titleTh}"${totalStars > 0 ? ` (+${totalStars} ⭐)` : ' (เริ่ม Speedy Ninja 20 นาที)'}`,
       {
         avatar: { ...kid.avatar, outfitMode: 'lounge' },
         daily: {
@@ -1291,11 +1713,12 @@ export function evaluateOneTapHomeAction(
       };
     }
 
-    const stars = 10;
+    const onTimeUniform = mins <= (cfg.deadlineMins ?? 19 * 60 + 30);
+    const stars = onTimeUniform ? Math.max(0, Math.round(cfg.rewardStars ?? 10)) : 0;
     const updated = appendStarTx(
       kid,
       stars,
-      '👔📱 ปุ่มด่วน "ตรวจชุดนักเรียน & ขอรับมือถือ" (+10 ⭐)',
+      `👕 ปุ่มด่วน "${cfg.titleTh}"${stars > 0 ? ` (+${stars} ⭐)` : ' (หลังเส้นตาย 0 ⭐)'}`,
       {
         daily: {
           ...kid.daily,
@@ -1354,11 +1777,12 @@ export function evaluateOneTapHomeAction(
       };
     }
 
-    const stars = 10;
+    const onTimeCartoon = mins <= (cfg.deadlineMins ?? 20 * 60 + 40);
+    const stars = onTimeCartoon ? Math.max(0, Math.round(cfg.rewardStars ?? 10)) : 0;
     const updated = appendStarTx(
       kid,
       stars,
-      '📺 ปุ่มด่วน "ปลดล็อคดูการ์ตูน" (ด่านบอส 20:00 น. +10 ⭐)',
+      `📺 ปุ่มด่วน "${cfg.titleTh}" (ด่านบอส 20:00 น.${stars > 0 ? ` +${stars} ⭐` : ''})`,
       {
         daily: {
           ...kid.daily,
@@ -1440,7 +1864,11 @@ export function evaluateOneTapHomeAction(
     };
   }
 
-  const curfewMins = getEffectiveHomeworkCurfewMins(settings);
+  const customDeadlineOverride = settings?.timedCommandSchedule?.night_return_phone?.deadlineMins;
+  const curfewMins =
+    typeof customDeadlineOverride === 'number'
+      ? customDeadlineOverride
+      : getEffectiveHomeworkCurfewMins(settings);
   const curfewTh = formatThaiCurfewClock(curfewMins);
   const curfewEn = minsToHHMM(curfewMins);
   const use21Curfew = kid.group === 1 || kid.group === 2 || Boolean(kid.daily.homeworkRegisteredSubject);
@@ -1448,11 +1876,11 @@ export function evaluateOneTapHomeAction(
   const onTime = mins <= deadlineMins;
 
   if (onTime) {
-    const stars = 5;
+    const stars = Math.max(0, Math.round(cfg.rewardStars ?? 5));
     const updated = appendStarTx(
       kid,
       stars,
-      '🌙 ปุ่มด่วน "คืนมือถือ" ตรงเวลา (+5 ⭐)',
+      `🌙 ปุ่มด่วน "${cfg.titleTh}" ตรงเวลา (+${stars} ⭐)`,
       {
         daily: { ...kid.daily, phoneReturnedChecked: true },
       }
@@ -1528,13 +1956,17 @@ export function getEffectiveCustomQuickCommands(
 }
 
 export function isCustomCommandOpenAt(cmd: CustomQuickCommand, now: Date): boolean {
+  if (cmd.enabled === false) return false;
   if (cmd.alwaysOpen) return true;
   if (typeof cmd.startMins !== 'number' || typeof cmd.endMins !== 'number') return true;
-  const mins = getMinutesOfDay(now);
-  if (cmd.startMins <= cmd.endMins) {
-    return mins >= cmd.startMins && mins <= cmd.endMins;
-  }
-  return mins >= cmd.startMins || mins <= cmd.endMins;
+  return isActionWithinTimeWindow(
+    cmd.startMins,
+    cmd.endMins,
+    cmd.earlyGraceMins ?? 0,
+    cmd.deadlineMins,
+    cmd.penaltyPreset,
+    now
+  );
 }
 
 function fmtMinsClock(totalMins: number): string {
@@ -1558,6 +1990,9 @@ export function isCustomCommandDoneForKid(
   kid: Member,
   now: Date
 ): boolean {
+  if (cmd.kind === 'penalty') {
+    return false;
+  }
   if (cmd.kind === 'homework_permission') {
     return Boolean(kid.daily.homeworkRegisteredSubject);
   }
@@ -1604,7 +2039,62 @@ export function evaluateOneTapCustomCommand(
   }
 
   const noteText = (subjectOrNoteOverride ?? cmd.defaultNote ?? '').trim().slice(0, 100);
-  const stars = Math.max(0, Math.min(20, Math.round(Number(cmd.starsDelta ?? 0))));
+  const stars = Math.max(0, Math.min(50, Math.round(Number(cmd.starsDelta ?? 0))));
+
+  if (cmd.kind === 'penalty') {
+    const preset = cmd.penaltyPreset || 'deduct_free_day';
+    const noteLabel = getPenaltySummaryText(preset, cmd.penaltyNote, lang);
+    const todayKey = getDateKey(now);
+    const tomorrow = getTomorrowDateKey(now);
+    let penaltyPatch = { ...kid.penalty };
+    let penaltyStarsDelta = 0;
+    let fineThb = 0;
+    if (preset === 'deduct_free_day') {
+      penaltyPatch = {
+        ...penaltyPatch,
+        fridayFreeDayDeductedCount: penaltyPatch.fridayFreeDayDeductedCount + 1,
+      };
+    } else if (preset === 'deduct_stars') {
+      penaltyStarsDelta = -5;
+    } else if (preset === 'fixed_fine_thb') {
+      fineThb = 20;
+      penaltyPatch = { ...penaltyPatch, lateFineThb: penaltyPatch.lateFineThb + fineThb };
+    } else if (preset === 'per_minute_fine_thb') {
+      fineThb = 25;
+      penaltyPatch = { ...penaltyPatch, lateFineThb: penaltyPatch.lateFineThb + fineThb };
+    } else if (preset === 'no_phone_today_1830') {
+      penaltyPatch = { ...penaltyPatch, phoneConfiscatedUntil1830Date: todayKey };
+    } else if (preset === 'no_phone_tomorrow') {
+      penaltyPatch = { ...penaltyPatch, noEveningPhoneTomorrowDate: tomorrow };
+    }
+    const updated: Member = {
+      ...kid,
+      stars: Math.max(0, kid.stars + penaltyStarsDelta),
+      penalty: penaltyPatch,
+      starHistory: [
+        {
+          id: `tx_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+          timestamp: now.toISOString(),
+          reason: `${cmd.emoji} บทลงโทษ "${cmd.titleTh}": ${noteLabel}${noteText ? ` (${noteText})` : ''} [cmd:${cmd.id}]`,
+          amount: penaltyStarsDelta,
+        },
+        ...(kid.starHistory ?? []),
+      ].slice(0, 60),
+    };
+    return {
+      success: true,
+      emoji: cmd.emoji || '⚖️',
+      starsDelta: penaltyStarsDelta,
+      fineThb: fineThb > 0 ? fineThb : undefined,
+      fineReason: noteLabel,
+      bannerTitle:
+        lang === 'th'
+          ? `บันทึกบทลงโทษ "${cmd.titleTh}" · น้อง${kid.nickname}`
+          : `Penalty "${cmd.titleEn}" · ${kid.nickname}`,
+      bannerSubtitle: `${noteLabel}${noteText ? ` · ${noteText}` : ''}`,
+      updatedKid: updated,
+    };
+  }
 
   if (cmd.kind === 'homework_permission') {
     const subjectLabel = noteText || 'ทำการบ้าน';
@@ -1662,17 +2152,24 @@ export function evaluateOneTapCustomCommand(
     };
   }
 
+  const mins = getMinutesOfDay(now);
+  const pastDeadline =
+    typeof cmd.deadlineMins === 'number' &&
+    Number.isFinite(cmd.deadlineMins) &&
+    mins > cmd.deadlineMins;
+  const effectiveStars = pastDeadline ? 0 : stars;
+
   const updated: Member = {
     ...kid,
-    stars: Math.max(0, kid.stars + stars),
+    stars: Math.max(0, kid.stars + effectiveStars),
     starHistory: [
       {
         id: `tx_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
         timestamp: now.toISOString(),
-        reason: `${cmd.emoji} คีย์ลัด "${cmd.titleTh}"${noteText ? `: ${noteText}` : ''}${
-          stars > 0 ? ` (+${stars} ⭐)` : ''
+        reason: `${cmd.emoji} คำสั่ง "${cmd.titleTh}"${noteText ? `: ${noteText}` : ''}${
+          effectiveStars > 0 ? ` (+${effectiveStars} ⭐)` : pastDeadline ? ' (เลยเส้นตาย 0 ⭐)' : ''
         } [cmd:${cmd.id}]`,
-        amount: stars,
+        amount: effectiveStars,
       },
       ...(kid.starHistory ?? []),
     ].slice(0, 60),
@@ -1681,16 +2178,18 @@ export function evaluateOneTapCustomCommand(
   return {
     success: true,
     emoji: cmd.emoji || '⚡',
-    starsDelta: stars,
+    starsDelta: effectiveStars,
     bannerTitle:
       lang === 'th'
-        ? `น้อง${kid.nickname}: ${cmd.titleTh} เรียบร้อย!${stars > 0 ? ` +${stars} ⭐` : ''}`
-        : `${kid.nickname}: ${cmd.titleEn} Recorded!${stars > 0 ? ` +${stars} ⭐` : ''}`,
+        ? `น้อง${kid.nickname}: ${cmd.titleTh} เรียบร้อย!${effectiveStars > 0 ? ` +${effectiveStars} ⭐` : ''}`
+        : `${kid.nickname}: ${cmd.titleEn} Recorded!${effectiveStars > 0 ? ` +${effectiveStars} ⭐` : ''}`,
     bannerSubtitle:
       noteText ||
-      (lang === 'th'
+      (pastDeadline && cmd.penaltyNote
+        ? cmd.penaltyNote
+        : lang === 'th'
         ? 'บันทึกลงประวัติคีย์ลัดประจำวันเรียบร้อยแล้วค่ะ'
-        : 'Recorded via custom quick shortcut.'),
+        : 'Recorded via custom quick command.'),
     updatedKid: updated,
   };
 }

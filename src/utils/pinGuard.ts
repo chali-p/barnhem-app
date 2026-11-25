@@ -125,6 +125,11 @@ export interface PinConflictResult {
 }
 
 export const ACTIVITY_LOG_VIEWER_PIN = '0001';
+export const KIDS_STAR_SUMMARY_PIN = '0002';
+export const KIDS_DUTY_ROSTER_PIN = '0003';
+export const SECRET_VOTE_PIN = '0004';
+export const SUPPLY_REQUEST_PIN = '0005';
+export const LOST_FOUND_PIN = '0006';
 
 /**
  * Ensures 4-digit PINs never collide between kids, staff, chefs, tutors, managers, creator master PINs, or reserved viewer PINs.
@@ -142,6 +147,41 @@ export function findPinConflict(
     return {
       conflict: true,
       conflictOwnerLabel: 'รหัส 0001 (ดูประวัติบันทึกการทำรายการของเด็ก)',
+    };
+  }
+
+  if (clean === KIDS_STAR_SUMMARY_PIN) {
+    return {
+      conflict: true,
+      conflictOwnerLabel: 'รหัส 0002 (เช็คยอดดาวของเด็กๆ ทั้งหมด)',
+    };
+  }
+
+  if (clean === KIDS_DUTY_ROSTER_PIN) {
+    return {
+      conflict: true,
+      conflictOwnerLabel: 'รหัส 0003 (เช็คตารางเวรเด็กทั้งหมด)',
+    };
+  }
+
+  if (clean === SECRET_VOTE_PIN) {
+    return {
+      conflict: true,
+      conflictOwnerLabel: 'รหัส 0004 (โหวตลับ)',
+    };
+  }
+
+  if (clean === SUPPLY_REQUEST_PIN) {
+    return {
+      conflict: true,
+      conflictOwnerLabel: 'รหัส 0005 (ขอเบิกของใช้)',
+    };
+  }
+
+  if (clean === LOST_FOUND_PIN) {
+    return {
+      conflict: true,
+      conflictOwnerLabel: 'รหัส 0006 (แจ้งของหาย/แจ้งพบเจอของเก็บได้)',
     };
   }
 

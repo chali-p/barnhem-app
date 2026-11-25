@@ -4,7 +4,12 @@ import { CenteredAlertModal, QrScannerModal } from './components/CenteredAlertMo
 import { ChefView } from './components/ChefView';
 import { CreatorView } from './components/CreatorView';
 import { KidActivityHistoryView } from './components/KidActivityHistoryView';
+import { KidDutyRosterView } from './components/KidDutyRosterView';
 import { KidHubView } from './components/KidHubView';
+import { KidLostFoundView } from './components/KidLostFoundView';
+import { KidSecretVoteView } from './components/KidSecretVoteView';
+import { KidStarSummaryView } from './components/KidStarSummaryView';
+import { KidSupplyRequestView } from './components/KidSupplyRequestView';
 import { MagicDoorView } from './components/MagicDoorView';
 import { ManagerView } from './components/ManagerView';
 import { PlatformPortalView } from './components/PlatformPortalView';
@@ -751,6 +756,23 @@ export default function App() {
           announcements: [ann, ...prev.announcements],
         }),
         `Add Announcement (${ann.title})`
+      );
+    },
+    [commitStateChange]
+  );
+
+  const handleUpdateAnnouncement = useCallback(
+    (annId: string, updates: Partial<Announcement>) => {
+      commitStateChange(
+        (prev) => ({
+          ...prev,
+          announcements: prev.announcements.map((a) =>
+            a.id === annId
+              ? { ...a, ...updates, updatedAt: new Date().toISOString() }
+              : a
+          ),
+        }),
+        'Update Announcement'
       );
     },
     [commitStateChange]
@@ -1510,7 +1532,14 @@ export default function App() {
         commitStateChange((prev) => {
           const freshKid = prev.members.find((m) => m.id === kidId && m.role === 'kid');
           if (!freshKid) return prev;
-          if (actionId !== 'night_homework_permission' && isHomeActionDoneForKid(actionId, freshKid)) {
+          const isPenaltyAction =
+            actionId === 'daily_penalty' ||
+            prev.settings.timedCommandSchedule?.[actionId]?.commandType === 'penalty';
+          if (
+            !isPenaltyAction &&
+            actionId !== 'night_homework_permission' &&
+            isHomeActionDoneForKid(actionId, freshKid)
+          ) {
             return prev;
           }
           const freshSick = prev.sickReports.some(
@@ -1527,12 +1556,13 @@ export default function App() {
           );
           const updated = freshRes.updatedKid;
           if (!updated) return prev;
+          const customTitle = prev.settings.timedCommandSchedule?.[actionId]?.titleTh?.trim();
           const logEntry = makeWeeklyLog(
             updated,
-            actionMeta?.titleTh ?? actionId,
-            'on_time',
+            customTitle || actionMeta?.titleTh || actionId,
+            isPenaltyAction ? 'late' : 'on_time',
             'ปุ่มด่วนหน้าแรก',
-            detailOverride
+            detailOverride || freshRes.fineReason
           );
           return {
             ...prev,
@@ -1567,8 +1597,10 @@ export default function App() {
         commitStateChange((prev) => {
           const freshKid = prev.members.find((m) => m.id === kidId && m.role === 'kid');
           if (!freshKid) return prev;
-          const allowHomeworkEdit = cmd.kind === 'homework_permission' && Boolean(subjectOrNote?.trim());
-          if (!allowHomeworkEdit && isCustomCommandDoneForKid(cmd, freshKid, now)) return prev;
+          const allowRepeat =
+            cmd.kind === 'penalty' ||
+            (cmd.kind === 'homework_permission' && Boolean(subjectOrNote?.trim()));
+          if (!allowRepeat && isCustomCommandDoneForKid(cmd, freshKid, now)) return prev;
           const freshRes = evaluateOneTapCustomCommand(
             cmd,
             freshKid,
@@ -1582,9 +1614,9 @@ export default function App() {
           const logEntry = makeWeeklyLog(
             updated,
             `${cmd.emoji} ${cmd.titleTh}`,
-            'on_time',
+            cmd.kind === 'penalty' ? 'late' : 'on_time',
             'คีย์ลัดหน้าแรก',
-            subjectOrNote || cmd.defaultNote
+            subjectOrNote || freshRes.fineReason || cmd.defaultNote
           );
           return {
             ...prev,
@@ -1962,11 +1994,41 @@ export default function App() {
     [commitStateChange, now]
   );
 
-  const handleAutoLoginRole = (target: Member | 'creator' | 'activity_log') => {
+  const handleAutoLoginRole = (
+    target:
+      | Member
+      | 'creator'
+      | 'activity_log'
+      | 'star_summary'
+      | 'duty_roster'
+      | 'secret_vote'
+      | 'supply_request'
+      | 'lost_found'
+  ) => {
     setSelectedKidId(null);
     setReturnToManagerAfterKid(false);
     if (target === 'activity_log') {
       setMode('activity_log');
+      return;
+    }
+    if (target === 'star_summary') {
+      setMode('star_summary');
+      return;
+    }
+    if (target === 'duty_roster') {
+      setMode('duty_roster');
+      return;
+    }
+    if (target === 'secret_vote') {
+      setMode('secret_vote');
+      return;
+    }
+    if (target === 'supply_request') {
+      setMode('supply_request');
+      return;
+    }
+    if (target === 'lost_found') {
+      setMode('lost_found');
       return;
     }
     if (target === 'creator') {
@@ -2082,6 +2144,26 @@ export default function App() {
                 (lang === 'th'
                   ? '📋 ประวัติทำรายการเด็ก (PIN 0001)'
                   : '📋 Kid Activity History (PIN 0001)')}
+              {mode === 'star_summary' &&
+                (lang === 'th'
+                  ? '⭐ ยอดดาวของเด็กๆ ทั้งหมด (PIN 0002)'
+                  : '⭐ All Kids Star Balances (PIN 0002)')}
+              {mode === 'duty_roster' &&
+                (lang === 'th'
+                  ? '📅 ตารางเวรเด็กทั้งหมด (PIN 0003)'
+                  : '📅 All Kids Duty Roster (PIN 0003)')}
+              {mode === 'secret_vote' &&
+                (lang === 'th'
+                  ? '🗳️ โหวตลับ (PIN 0004)'
+                  : '🗳️ Secret Polls (PIN 0004)')}
+              {mode === 'supply_request' &&
+                (lang === 'th'
+                  ? '📦 ขอเบิกของใช้ (PIN 0005)'
+                  : '📦 Supply Requests (PIN 0005)')}
+              {mode === 'lost_found' &&
+                (lang === 'th'
+                  ? '🔎 แจ้งของหาย / เก็บของได้ (PIN 0006)'
+                  : '🔎 Lost & Found (PIN 0006)')}
             </span>
 
             <button
@@ -2129,8 +2211,19 @@ export default function App() {
             onAcknowledgeLeave={handleAcknowledgeStaffLeave}
             onCancelLeave={handleCancelStaffLeave}
             onAddAnnouncement={handleAddAnnouncement}
+            onUpdateAnnouncement={handleUpdateAnnouncement}
+            onTogglePinAnnouncement={handleTogglePinAnnouncement}
             onDeleteAnnouncement={handleDeleteAnnouncement}
             onToggleStaffTaskDone={handleToggleStaffTaskDone}
+            onUpdateSettings={(partial) =>
+              commitStateChange(
+                (prev) => ({
+                  ...prev,
+                  settings: { ...prev.settings, ...partial },
+                }),
+                'Home Update Settings'
+              )
+            }
             onShowAlert={showAlert}
             organizationName={activeTenant?.orgName}
             linkedKidSession={linkedKidSession}
@@ -2486,6 +2579,7 @@ export default function App() {
               setMode('staff');
             }}
             onAddAnnouncement={handleAddAnnouncement}
+            onUpdateAnnouncement={handleUpdateAnnouncement}
             onTogglePinAnnouncement={handleTogglePinAnnouncement}
             onDeleteAnnouncement={handleDeleteAnnouncement}
             onCreatePoll={handleCreatePoll}
@@ -2536,6 +2630,98 @@ export default function App() {
             logs={state.weeklyActivityLogs ?? []}
             now={now}
             lang={lang}
+            onShowAlert={showAlert}
+            onBackHome={() => {
+              setMode('magic_door');
+              setSelectedKidId(null);
+            }}
+          />
+        )}
+
+        {mode === 'star_summary' && (
+          <KidStarSummaryView
+            orgName={activeTenant?.orgName ?? 'Barnhem Care & Kids'}
+            kids={state.members.filter((m) => m.role === 'kid')}
+            lang={lang}
+            onShowAlert={showAlert}
+            onBackHome={() => {
+              setMode('magic_door');
+              setSelectedKidId(null);
+            }}
+          />
+        )}
+
+        {mode === 'duty_roster' && (
+          <KidDutyRosterView
+            orgName={activeTenant?.orgName ?? 'Barnhem Care & Kids'}
+            kids={state.members.filter((m) => m.role === 'kid')}
+            now={now}
+            lang={lang}
+            isPublicHolidayToday={state.settings.isPublicHolidayToday}
+            onShowAlert={showAlert}
+            onBackHome={() => {
+              setMode('magic_door');
+              setSelectedKidId(null);
+            }}
+          />
+        )}
+
+        {mode === 'secret_vote' && (
+          <KidSecretVoteView
+            orgName={activeTenant?.orgName ?? 'Barnhem Care & Kids'}
+            kids={state.members.filter((m) => m.role === 'kid')}
+            polls={state.polls}
+            linkedKidMember={
+              linkedKidSession
+                ? state.members.find((m) => m.id === linkedKidSession.memberId) ?? null
+                : null
+            }
+            lang={lang}
+            onCastSecretVote={handleCastSecretVote}
+            onShowAlert={showAlert}
+            onBackHome={() => {
+              setMode('magic_door');
+              setSelectedKidId(null);
+            }}
+          />
+        )}
+
+        {mode === 'supply_request' && (
+          <KidSupplyRequestView
+            orgName={activeTenant?.orgName ?? 'Barnhem Care & Kids'}
+            kids={state.members.filter((m) => m.role === 'kid')}
+            supplyRequests={state.supplyRequests}
+            linkedKidMember={
+              linkedKidSession
+                ? state.members.find((m) => m.id === linkedKidSession.memberId) ?? null
+                : null
+            }
+            now={now}
+            lang={lang}
+            onSubmitSupplyRequest={handleSubmitSupplyRequest}
+            onShowAlert={showAlert}
+            onBackHome={() => {
+              setMode('magic_door');
+              setSelectedKidId(null);
+            }}
+          />
+        )}
+
+        {mode === 'lost_found' && (
+          <KidLostFoundView
+            orgName={activeTenant?.orgName ?? 'Barnhem Care & Kids'}
+            members={state.members}
+            lostFoundItems={state.lostFoundItems}
+            linkedKidMember={
+              linkedKidSession
+                ? state.members.find((m) => m.id === linkedKidSession.memberId) ?? null
+                : null
+            }
+            now={now}
+            lang={lang}
+            onAddLostFound={handleAddLostFound}
+            onClaimLostFound={handleClaimLostFound}
+            onResolveLostFound={handleResolveLostFound}
             onShowAlert={showAlert}
             onBackHome={() => {
               setMode('magic_door');
