@@ -978,6 +978,50 @@ export function formatThaiCurfewClock(totalMins: number): string {
   return safe === 21 * 60 ? `${hhmm} น. (3 ทุ่ม)` : `${hhmm} น.`;
 }
 
+export function compareLoginCommandsByTime(
+  a: {
+    startMins?: number;
+    endMins?: number;
+    deadlineMins?: number;
+    alwaysOpen?: boolean;
+    commandType?: LoginCommandType;
+    kind?: CustomQuickCommand['kind'];
+  },
+  b: {
+    startMins?: number;
+    endMins?: number;
+    deadlineMins?: number;
+    alwaysOpen?: boolean;
+    commandType?: LoginCommandType;
+    kind?: CustomQuickCommand['kind'];
+  }
+): number {
+  const aStart = typeof a.startMins === 'number' ? a.startMins : 0;
+  const aEnd = typeof a.endMins === 'number' ? a.endMins : 23 * 60 + 59;
+  const bStart = typeof b.startMins === 'number' ? b.startMins : 0;
+  const bEnd = typeof b.endMins === 'number' ? b.endMins : 23 * 60 + 59;
+
+  const aAllDay = Boolean(a.alwaysOpen) || (aStart === 0 && aEnd >= 23 * 60 + 59);
+  const bAllDay = Boolean(b.alwaysOpen) || (bStart === 0 && bEnd >= 23 * 60 + 59);
+
+  if (aAllDay !== bAllDay) {
+    return aAllDay ? 1 : -1;
+  }
+  if (!aAllDay) {
+    if (aStart !== bStart) return aStart - bStart;
+    if (aEnd !== bEnd) return aEnd - bEnd;
+    const aDeadline = typeof a.deadlineMins === 'number' ? a.deadlineMins : aEnd;
+    const bDeadline = typeof b.deadlineMins === 'number' ? b.deadlineMins : bEnd;
+    if (aDeadline !== bDeadline) return aDeadline - bDeadline;
+  }
+  const aIsPenalty = a.commandType === 'penalty' || a.kind === 'penalty';
+  const bIsPenalty = b.commandType === 'penalty' || b.kind === 'penalty';
+  if (aIsPenalty !== bIsPenalty) {
+    return aIsPenalty ? 1 : -1;
+  }
+  return 0;
+}
+
 export function getEffectiveHomeQuickActions(
   settings?: Partial<AppSettings>,
   includeHidden = false
@@ -1066,7 +1110,8 @@ export function getEffectiveHomeQuickActions(
         : `${sStr}–${eStr}`,
     };
   });
-  return includeHidden ? mapped : mapped.filter((a) => !a.hidden);
+  const list = includeHidden ? mapped : mapped.filter((a) => !a.hidden);
+  return [...list].sort(compareLoginCommandsByTime);
 }
 
 export function getEffectiveHomeworkPermissionWindow(settings?: Partial<AppSettings>): {
@@ -1133,6 +1178,43 @@ export function isActionWithinTimeWindow(
   return mins >= effectiveStart || mins <= effectiveEnd;
 }
 
+export function isActionPastCloseTime(
+  startMins: number,
+  endMins: number,
+  earlyGraceMins: number,
+  deadlineMins: number | undefined,
+  penaltyPreset: string | undefined,
+  now: Date
+): boolean {
+  if (
+    isActionWithinTimeWindow(
+      startMins,
+      endMins,
+      earlyGraceMins,
+      deadlineMins,
+      penaltyPreset,
+      now
+    )
+  ) {
+    return false;
+  }
+  const mins = getMinutesOfDay(now);
+  let effectiveEnd = endMins;
+  if (
+    penaltyPreset === 'lock_after_deadline' &&
+    typeof deadlineMins === 'number' &&
+    Number.isFinite(deadlineMins)
+  ) {
+    if (startMins <= endMins && deadlineMins >= startMins && deadlineMins <= endMins) {
+      effectiveEnd = deadlineMins;
+    }
+  }
+  if (startMins <= endMins) {
+    return mins > effectiveEnd;
+  }
+  return false;
+}
+
 export function isHomeActionOpenAt(
   actionId: HomeQuickActionId,
   now: Date,
@@ -1141,6 +1223,23 @@ export function isHomeActionOpenAt(
   const cfg = getEffectiveHomeQuickActions(settings).find((a) => a.id === actionId);
   if (!cfg || !cfg.enabled || cfg.hidden) return false;
   return isActionWithinTimeWindow(
+    cfg.startMins,
+    cfg.endMins,
+    cfg.earlyGraceMins,
+    cfg.deadlineMins,
+    cfg.penaltyPreset,
+    now
+  );
+}
+
+export function isHomeActionExpiredAt(
+  actionId: HomeQuickActionId,
+  now: Date,
+  settings?: Partial<AppSettings>
+): boolean {
+  const cfg = getEffectiveHomeQuickActions(settings).find((a) => a.id === actionId);
+  if (!cfg || !cfg.enabled || cfg.hidden) return true;
+  return isActionPastCloseTime(
     cfg.startMins,
     cfg.endMins,
     cfg.earlyGraceMins,
@@ -1950,7 +2049,7 @@ export function getEffectiveCustomQuickCommands(
   settings?: Partial<AppSettings>
 ): CustomQuickCommand[] {
   if (Array.isArray(settings?.customQuickCommands)) {
-    return settings.customQuickCommands;
+    return [...settings.customQuickCommands].sort(compareLoginCommandsByTime);
   }
   return DEFAULT_EXTRA_QUICK_COMMANDS;
 }
@@ -1960,6 +2059,20 @@ export function isCustomCommandOpenAt(cmd: CustomQuickCommand, now: Date): boole
   if (cmd.alwaysOpen) return true;
   if (typeof cmd.startMins !== 'number' || typeof cmd.endMins !== 'number') return true;
   return isActionWithinTimeWindow(
+    cmd.startMins,
+    cmd.endMins,
+    cmd.earlyGraceMins ?? 0,
+    cmd.deadlineMins,
+    cmd.penaltyPreset,
+    now
+  );
+}
+
+export function isCustomCommandExpiredAt(cmd: CustomQuickCommand, now: Date): boolean {
+  if (cmd.enabled === false) return true;
+  if (cmd.alwaysOpen) return false;
+  if (typeof cmd.startMins !== 'number' || typeof cmd.endMins !== 'number') return false;
+  return isActionPastCloseTime(
     cmd.startMins,
     cmd.endMins,
     cmd.earlyGraceMins ?? 0,

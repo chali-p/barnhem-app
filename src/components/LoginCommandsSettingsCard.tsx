@@ -11,6 +11,7 @@ import {
   TimedScheduleSlot,
 } from '../types/barnhem';
 import {
+  compareLoginCommandsByTime,
   DEFAULT_HOMEWORK_CURFEW_MINS,
   getCommandAuthMode,
   getCommandAuthModeMeta,
@@ -241,7 +242,7 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
       defaultNote: cmd.defaultNote,
     }));
 
-    return [...coreItems, ...customItems];
+    return [...coreItems, ...customItems].sort(compareLoginCommandsByTime);
   }, [effectiveCoreActions, customCommands, kids, settings]);
 
   const [draft, setDraft] = useState<EditorDraftState | null>(() =>
@@ -535,10 +536,11 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
       defaultNote: draft.defaultNote || cleanDesc,
     };
 
-    const nextCustoms =
+    const nextCustoms = (
       draft.mode === 'edit'
         ? customCommands.map((c) => (c.id === cmdId ? builtCustom : c))
-        : [...customCommands, builtCustom];
+        : [...customCommands, builtCustom]
+    ).sort(compareLoginCommandsByTime);
 
     const nextPerms: Record<string, CommandAccessRule> = {
       ...(settings.commandPermissions ?? {}),

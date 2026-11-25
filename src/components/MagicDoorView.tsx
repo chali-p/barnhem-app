@@ -23,6 +23,7 @@ import {
 } from '../types/barnhem';
 import {
   canKidUseCommand,
+  compareLoginCommandsByTime,
   doesKidHavePhone,
   formatCustomCommandWindow,
   formatThaiCurfewClock,
@@ -36,8 +37,10 @@ import {
   getEffectiveHomeworkPermissionWindow,
   HomeQuickActionId,
   isCustomCommandDoneForKid,
+  isCustomCommandExpiredAt,
   isCustomCommandOpenAt,
   isHomeActionDoneForKid,
+  isHomeActionExpiredAt,
   isHomeActionOpenAt,
   KioskResult,
   minsToHHMM,
@@ -249,6 +252,10 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     () => getEffectiveCustomQuickCommands(appState.settings).filter((c) => c.enabled !== false),
     [appState.settings]
   );
+  const visibleCustomCommands = useMemo(
+    () => customQuickCommands.filter((c) => !isCustomCommandExpiredAt(c, now)),
+    [customQuickCommands, now]
+  );
   const openCustomCommands = useMemo(
     () => customQuickCommands.filter((c) => isCustomCommandOpenAt(c, now)),
     [customQuickCommands, now]
@@ -257,6 +264,14 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     () => getEffectiveHomeQuickActions(appState.settings).filter((a) => a.enabled),
     [appState.settings]
   );
+  const visibleHomeActions = useMemo(
+    () => effectiveHomeActions.filter((a) => !isHomeActionExpiredAt(a.id, now, appState.settings)),
+    [effectiveHomeActions, now, appState.settings]
+  );
+  const hiddenExpiredCount =
+    effectiveHomeActions.length -
+    visibleHomeActions.length +
+    (customQuickCommands.length - visibleCustomCommands.length);
   const hwPermWin = useMemo(
     () => getEffectiveHomeworkPermissionWindow(appState.settings),
     [appState.settings]
@@ -271,11 +286,53 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     () => effectiveHomeActions.filter((a) => isHomeActionOpenAt(a.id, now, appState.settings)),
     [effectiveHomeActions, now, appState.settings]
   );
-  const totalCommandCount = effectiveHomeActions.length + customQuickCommands.length;
+  const totalCommandCount = visibleHomeActions.length + visibleCustomCommands.length;
   const totalOpenCount = openHomeActions.length + openCustomCommands.length;
   const openRoutineCount =
     openHomeActions.filter((a) => a.commandType !== 'penalty').length +
     openCustomCommands.filter((c) => c.kind !== 'penalty').length;
+  const visibleUnifiedCommands = useMemo(() => {
+    const coreEntries = visibleHomeActions.map((action) => ({
+      source: 'core' as const,
+      startMins: action.startMins,
+      endMins: action.endMins,
+      deadlineMins: action.deadlineMins,
+      alwaysOpen: false,
+      commandType: action.commandType,
+      action,
+    }));
+    const customEntries = visibleCustomCommands.map((cmd) => ({
+      source: 'custom' as const,
+      startMins: cmd.alwaysOpen ? 0 : cmd.startMins ?? 0,
+      endMins: cmd.alwaysOpen ? 23 * 60 + 59 : cmd.endMins ?? 23 * 60 + 59,
+      deadlineMins: cmd.deadlineMins,
+      alwaysOpen: cmd.alwaysOpen,
+      kind: cmd.kind,
+      cmd,
+    }));
+    return [...coreEntries, ...customEntries].sort(compareLoginCommandsByTime);
+  }, [visibleHomeActions, visibleCustomCommands]);
+  const openUnifiedCommands = useMemo(() => {
+    const coreEntries = openHomeActions.map((action) => ({
+      source: 'core' as const,
+      startMins: action.startMins,
+      endMins: action.endMins,
+      deadlineMins: action.deadlineMins,
+      alwaysOpen: false,
+      commandType: action.commandType,
+      action,
+    }));
+    const customEntries = openCustomCommands.map((cmd) => ({
+      source: 'custom' as const,
+      startMins: cmd.alwaysOpen ? 0 : cmd.startMins ?? 0,
+      endMins: cmd.alwaysOpen ? 23 * 60 + 59 : cmd.endMins ?? 23 * 60 + 59,
+      deadlineMins: cmd.deadlineMins,
+      alwaysOpen: cmd.alwaysOpen,
+      kind: cmd.kind,
+      cmd,
+    }));
+    return [...coreEntries, ...customEntries].sort(compareLoginCommandsByTime);
+  }, [openHomeActions, openCustomCommands]);
   const isPublicHolidayToday = Boolean(appState.settings.isPublicHolidayToday);
   const staffWorkTasks = useMemo(() => {
     const items = appState.announcements.filter((a) => a.audience === 'staff_only');
@@ -1318,8 +1375,12 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                 </h3>
                 <p className="text-xs text-[#6E5C52] mt-0.5 tabular-nums">
                   {lang === 'th'
-                    ? `ขณะนี้ ${formatDigitalClock(now)} น. · กด + เพิ่มปุ่มคำสั่ง หรือ 🎛️ ตั้งค่าปุ่มคำสั่ง`
-                    : `Time ${formatDigitalClock(now)} · + Add Button or 🎛️ Command Settings`}
+                    ? `ขณะนี้ ${formatDigitalClock(now)} น. · กด + เพิ่มปุ่มคำสั่ง หรือ 🎛️ ตั้งค่าปุ่มคำสั่ง${
+                        hiddenExpiredCount > 0 ? ` (ซ่อน ${hiddenExpiredCount} ปุ่มที่เลยเวลาปิดแล้ว)` : ''
+                      }`
+                    : `Time ${formatDigitalClock(now)} · + Add Button or 🎛️ Command Settings${
+                        hiddenExpiredCount > 0 ? ` (${hiddenExpiredCount} closed hidden)` : ''
+                      }`}
                 </p>
                 {activeAwaySecretCode && (
                   <div className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-[#F5F0FF] border border-[#C8B7EB] px-2 py-0.5 text-[11px] font-bold text-[#3E2B63]">
@@ -1370,16 +1431,31 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                 />
               )}
 
-              {/* Custom Quick Shortcuts Section (Ready for rush moments like Homework Permission!) */}
-              {customQuickCommands.length > 0 && (
-                <div className="space-y-2">
-                  <div className="text-xs font-extrabold text-[#114A42] flex items-center justify-between">
-                    <span>⚡ {lang === 'th' ? 'คีย์ลัดพิเศษ / ตอนรีบ (เพิ่มเองได้)' : 'Custom Quick Shortcuts'}</span>
+              {/* Unified Chronological Command Buttons (Sorted Earliest -> Latest) */}
+              <div className="space-y-2 pt-1">
+                <div className="text-xs font-extrabold text-[#6E5C52] flex items-center justify-between gap-2">
+                  <span>
+                    ⏰{' '}
+                    {lang === 'th'
+                      ? `ปุ่มคำสั่งเรียงตามเวลา (${visibleUnifiedCommands.length} คำสั่ง)`
+                      : `Commands in Time Order (${visibleUnifiedCommands.length})`}
+                  </span>
+                  {visibleCustomCommands.length > 0 && (
                     <span className="text-[11px] font-semibold text-[#6E5C52]">
-                      {customQuickCommands.length}/20
+                      ⚡ {lang === 'th' ? `เพิ่มเอง ${visibleCustomCommands.length}/20` : `${visibleCustomCommands.length}/20 custom`}
                     </span>
+                  )}
+                </div>
+                {visibleUnifiedCommands.length === 0 && (
+                  <div className="rounded-2xl border border-dashed border-[#DFD2C3] bg-[#FAF6F0] px-4 py-4 text-center text-xs font-semibold text-[#7B695F]">
+                    {lang === 'th'
+                      ? 'คำสั่งเช็คชื่อตามเวลาของวันนี้เลยเวลาปิดระบบหมดแล้วค่ะ (กด "🎛️ ตั้งค่าปุ่มคำสั่ง" เพื่อแก้ไขเวลาได้)'
+                      : 'All timed check-in buttons for today have passed their closing time.'}
                   </div>
-                  {customQuickCommands.map((cmd) => {
+                )}
+                {visibleUnifiedCommands.map((entry) => {
+                  if (entry.source === 'custom') {
+                    const cmd = entry.cmd;
                     const isOpen = isCustomCommandOpenAt(cmd, now);
                     const isPenaltyCmd = cmd.kind === 'penalty';
                     const eligibleKids = kids.filter((k) => canKidUseCommand(cmd.id, k, appState.settings));
@@ -1483,19 +1559,9 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                         </button>
                       </div>
                     );
-                  })}
-                </div>
-              )}
+                  }
 
-              {/* Core Timed Commands */}
-              <div className="space-y-2 pt-1">
-                <div className="text-xs font-extrabold text-[#6E5C52]">
-                  ⏰{' '}
-                  {lang === 'th'
-                    ? `คำสั่งเช็คชื่อตามเวลาหลัก (${effectiveHomeActions.length} คำสั่ง)`
-                    : `Core Timed Schedules (${effectiveHomeActions.length})`}
-                </div>
-                {effectiveHomeActions.map((action) => {
+                  const action = entry.action;
                   const isOpen = isHomeActionOpenAt(action.id, now, appState.settings);
                   const isPenaltyBtn = action.commandType === 'penalty';
                   const eligibleKids = kids.filter((k) => canKidUseCommand(action.id, k, appState.settings));
@@ -1931,37 +1997,39 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
               </div>
             </div>
 
-            {(openHomeActions.length + openCustomCommands.length) > 1 && (
+            {openUnifiedCommands.length > 1 && (
               <div className="flex flex-wrap gap-2 mt-3">
-                {openCustomCommands.map((cmd) => {
-                  const isSelected = activeCustomCmd?.id === cmd.id;
-                  const cnt = kids.filter((k) => isCustomCommandDoneForKid(cmd, k, now)).length;
-                  const tabMode = getCommandAuthMode(cmd.id, appState.settings);
-                  const needsStaff = tabMode === 'staff_pin' && !boardUnlockedByStaff;
-                  return (
-                    <button
-                      key={`modal-cmd-${cmd.id}`}
-                      type="button"
-                      onClick={() => {
-                        if (needsStaff) {
-                          setSchoolBoardOpen(false);
-                          setPendingBoardUnlock({ type: 'custom', cmdId: cmd.id });
-                          return;
-                        }
-                        openCommandBoardDirect({ type: 'custom', cmdId: cmd.id }, boardUnlockedByStaff);
-                      }}
-                      className={`rounded-xl border px-3.5 py-2 text-xs font-extrabold cursor-pointer transition-colors ${
-                        isSelected
-                          ? 'border-[#114A42] bg-[#114A42] text-white'
-                          : 'border-[#9FE2D6] bg-[#F3FCFA] text-[#114A42] hover:bg-[#DCF7F2]'
-                      }`}
-                    >
-                      {needsStaff ? '🔐 ' : ''}
-                      {cmd.emoji} {lang === 'th' ? cmd.titleTh : cmd.titleEn} ({cnt}/{kids.length})
-                    </button>
-                  );
-                })}
-                {openHomeActions.map((act) => {
+                {openUnifiedCommands.map((entry) => {
+                  if (entry.source === 'custom') {
+                    const cmd = entry.cmd;
+                    const isSelected = activeCustomCmd?.id === cmd.id;
+                    const cnt = kids.filter((k) => isCustomCommandDoneForKid(cmd, k, now)).length;
+                    const tabMode = getCommandAuthMode(cmd.id, appState.settings);
+                    const needsStaff = tabMode === 'staff_pin' && !boardUnlockedByStaff;
+                    return (
+                      <button
+                        key={`modal-cmd-${cmd.id}`}
+                        type="button"
+                        onClick={() => {
+                          if (needsStaff) {
+                            setSchoolBoardOpen(false);
+                            setPendingBoardUnlock({ type: 'custom', cmdId: cmd.id });
+                            return;
+                          }
+                          openCommandBoardDirect({ type: 'custom', cmdId: cmd.id }, boardUnlockedByStaff);
+                        }}
+                        className={`rounded-xl border px-3.5 py-2 text-xs font-extrabold cursor-pointer transition-colors ${
+                          isSelected
+                            ? 'border-[#114A42] bg-[#114A42] text-white'
+                            : 'border-[#9FE2D6] bg-[#F3FCFA] text-[#114A42] hover:bg-[#DCF7F2]'
+                        }`}
+                      >
+                        {needsStaff ? '🔐 ' : ''}
+                        {cmd.emoji} {lang === 'th' ? cmd.titleTh : cmd.titleEn} ({cnt}/{kids.length})
+                      </button>
+                    );
+                  }
+                  const act = entry.action;
                   const isSelected = !activeCustomCmd && modalActionConfig?.id === act.id;
                   const cnt = kids.filter((k) => isHomeActionDoneForKid(act.id, k)).length;
                   const tabMode = getCommandAuthMode(act.id, appState.settings);
