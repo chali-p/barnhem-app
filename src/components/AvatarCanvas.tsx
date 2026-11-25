@@ -1076,19 +1076,10 @@ export const AvatarCanvas: React.FC<AvatarCanvasProps> = ({
                 </span>
               </div>
 
-              {!emailBonusClaimed && (
-                <div className="rounded-2xl border border-[#F2C36B] bg-gradient-to-r from-[#FFF6D6] via-[#FFF9E6] to-[#FFF2C2] px-3 py-2 text-xs sm:text-sm font-extrabold text-[#6E4500] shadow-2xs">
-                  🎁{' '}
-                  {lang === 'th'
-                    ? 'ล็อกอินอีเมลครั้งแรก รับดาวพิเศษ +1,000 ⭐ ทันที!'
-                    : 'First email login bonus: Get +1,000 ⭐ immediately!'}
-                </div>
-              )}
-
               <p className="text-[11px] sm:text-xs text-[#5E4E45] leading-relaxed">
                 {lang === 'th'
-                  ? 'สามารถนำดาวมาช็อปปิ้งที่ร้านมินิมาร์ท เพื่อรับของรางวัลมากมาย และอัปเดตข้อมูลได้ก่อนใคร'
-                  : 'Use your stars to shop at the foundation minimart, claim rewards, and get priority updates!'}
+                  ? 'ล็อกอินด้วยอีเมลของหนูเพื่อปลดล็อกภาพสีสดใสและนำดาวที่สะสมมาใช้ในร้านมินิมาร์ทค่ะ'
+                  : 'Sign in with your Google email to unlock full-color view and spend your earned stars at the minimart.'}
                 {linkedEmail ? (
                   <span className="block mt-0.5 font-bold text-[#114A42]">
                     📧 {lang === 'th' ? `อีเมลที่ผูกไว้: ${linkedEmail}` : `Linked: ${linkedEmail}`}
@@ -1104,12 +1095,7 @@ export const AvatarCanvas: React.FC<AvatarCanvasProps> = ({
                       onClick={onOpenLinkEmailModal}
                       className="min-h-[40px] rounded-2xl bg-[#114A42] hover:bg-[#0D3A34] text-white px-4 py-2 text-xs font-extrabold shadow-sm cursor-pointer transition-colors"
                     >
-                      📧{' '}
-                      {lang === 'th'
-                        ? !emailBonusClaimed
-                          ? 'เพิ่มอีเมลของหนู (+1,000 ⭐)'
-                          : 'เพิ่มอีเมลของหนู'
-                        : 'Add My Email'}
+                      📧 {lang === 'th' ? 'เพิ่มอีเมลของหนู' : 'Add My Email'}
                     </button>
                   )
                 ) : (
@@ -1126,10 +1112,6 @@ export const AvatarCanvas: React.FC<AvatarCanvasProps> = ({
                           ? lang === 'th'
                             ? 'กำลังเปิด Google...'
                             : 'Signing in...'
-                          : !emailBonusClaimed
-                          ? lang === 'th'
-                            ? 'ล็อกอินอีเมลรับ 1,000 ⭐'
-                            : 'Sign In & Claim 1,000 ⭐'
                           : lang === 'th'
                           ? 'ล็อกอินด้วยอีเมลน้อง'
                           : 'Sign In with Kid Email'}

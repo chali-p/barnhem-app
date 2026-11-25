@@ -124,8 +124,10 @@ export interface PinConflictResult {
   conflictOwnerLabel?: string;
 }
 
+export const ACTIVITY_LOG_VIEWER_PIN = '0001';
+
 /**
- * Ensures 4-digit PINs never collide between kids, staff, chefs, tutors, managers, or creator master PINs.
+ * Ensures 4-digit PINs never collide between kids, staff, chefs, tutors, managers, creator master PINs, or reserved viewer PINs.
  */
 export function findPinConflict(
   pin: string,
@@ -135,6 +137,13 @@ export function findPinConflict(
 ): PinConflictResult {
   const clean = pin.trim();
   if (!/^\d{4}$/.test(clean)) return { conflict: false };
+
+  if (clean === ACTIVITY_LOG_VIEWER_PIN) {
+    return {
+      conflict: true,
+      conflictOwnerLabel: 'รหัส 0001 (ดูประวัติบันทึกการทำรายการของเด็ก)',
+    };
+  }
 
   if (creatorPins.includes(clean)) {
     return {

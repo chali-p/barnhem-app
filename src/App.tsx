@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { CenteredAlertModal, QrScannerModal } from './components/CenteredAlertModal';
 import { ChefView } from './components/ChefView';
 import { CreatorView } from './components/CreatorView';
+import { KidActivityHistoryView } from './components/KidActivityHistoryView';
 import { KidHubView } from './components/KidHubView';
 import { MagicDoorView } from './components/MagicDoorView';
 import { ManagerView } from './components/ManagerView';
@@ -78,6 +79,10 @@ import {
   loadTenantAppState,
   saveTenantAppStateLocal,
 } from './utils/tenantTemplate';
+import {
+  hasExpiredWeeklyActivityLogs,
+  pruneWeeklyActivityLogs,
+} from './utils/activityLogRetention';
 import { getDateKey, getEffectiveNow } from './utils/timeRules';
 
 const THEME_OPTIONS: { id: PastelTheme; swatch: string; labelTh: string; labelEn: string }[] = [
@@ -164,7 +169,6 @@ export default function App() {
   const linkedKidSessionRef = useRef<LinkedKidSession | null>(linkedKidSession);
   linkedKidSessionRef.current = linkedKidSession;
   const manualLeftTenantRef = useRef(false);
-  const claimedBonusDocIdsRef = useRef<Set<string>>(new Set());
   const langRef = useRef<Language>(lang);
   langRef.current = lang;
 
@@ -271,46 +275,6 @@ export default function App() {
           user,
           ({ member, session }) => {
             if (activeTenantRef.current) return;
-            let effectiveMember = member;
-            const normalizedSessionEmail = session.email.trim().toLowerCase();
-            const normalizedMemberEmail = (member.linkedEmail ?? '').trim().toLowerCase();
-            if (
-              normalizedMemberEmail &&
-              normalizedMemberEmail === normalizedSessionEmail &&
-              !member.emailLoginBonusClaimed &&
-              !claimedBonusDocIdsRef.current.has(session.memberDocId)
-            ) {
-              claimedBonusDocIdsRef.current.add(session.memberDocId);
-              const nowIso = new Date().toISOString();
-              const rewardedMember: Member = {
-                ...member,
-                stars: (member.stars ?? 0) + 1000,
-                emailLoginBonusClaimed: true,
-                starHistory: [
-                  {
-                    id: `tx_email_bonus_${Date.now()}`,
-                    timestamp: nowIso,
-                    reason: '🎁 โบนัสล็อกอินอีเมลครั้งแรก (+1,000 ⭐)',
-                    amount: 1000,
-                  },
-                  ...(member.starHistory ?? []),
-                ].slice(0, 60),
-              };
-              effectiveMember = rewardedMember;
-              void syncLinkedKidSelfToCloud(member, rewardedMember, session, user);
-              setAlertPayload({
-                icon: '🎉⭐',
-                title:
-                  langRef.current === 'th'
-                    ? 'ปลดล็อกตัวการ์ตูน + รับโบนัส 1,000 ดวง!'
-                    : 'Cartoon Unlocked + 1,000 ⭐ Bonus!',
-                message:
-                  langRef.current === 'th'
-                    ? `ยินดีต้อนรับ น้อง${member.nickname} (${session.email})! ภาพตัวการ์ตูนสีสดใสปลดล็อกแล้ว และรับโบนัสล็อกอินอีเมลครั้งแรก +1,000 ⭐ เข้ากระเป๋าเรียบร้อยค่ะ`
-                    : `Welcome ${member.nickname}! Your full-color cartoon is unlocked and +1,000 ⭐ bonus stars have been added!`,
-                tone: 'yellow',
-              });
-            }
             const isInitialKidActivation =
               !linkedKidSessionRef.current ||
               linkedKidSessionRef.current.memberDocId !== session.memberDocId;
@@ -319,7 +283,7 @@ export default function App() {
             setState((prev) => {
               const next: AppState = {
                 ...prev,
-                members: [effectiveMember],
+                members: [member],
                 lastSyncedAt: new Date().toISOString(),
               };
               stateRef.current = next;
@@ -327,7 +291,7 @@ export default function App() {
             });
             if (isInitialKidActivation) {
               setMode('magic_door');
-              setSelectedKidId(effectiveMember.id);
+              setSelectedKidId(member.id);
             }
             setCloudSyncing(false);
           },
@@ -451,7 +415,8 @@ export default function App() {
         const needsWeekRollover = prev.members.some(
           (m) => m.role === 'kid' && m.allowance?.weekKey !== currentWeekKey
         );
-        if (!needsDailyReset && !needsWeekRollover) return prev;
+        const needsLogRetentionPrune = hasExpiredWeeklyActivityLogs(prev.weeklyActivityLogs, current);
+        if (!needsDailyReset && !needsWeekRollover && !needsLogRetentionPrune) return prev;
         const next: AppState = {
           ...prev,
           members: prev.members.map((m) => {
@@ -463,6 +428,9 @@ export default function App() {
             }
             return nextMember;
           }),
+          weeklyActivityLogs: needsLogRetentionPrune
+            ? pruneWeeklyActivityLogs(prev.weeklyActivityLogs, current)
+            : prev.weeklyActivityLogs,
         };
         stateRef.current = next;
         persistActiveStateLocal(next, activeTenantRef.current);
@@ -476,8 +444,10 @@ export default function App() {
     (updater: (prev: AppState) => AppState, eventLabel: string) => {
       const prev = stateRef.current;
       const next = updater(prev);
+      const effectiveNow = getEffectiveNow(next.settings.simulatedTimeIso);
       const withSyncMeta: AppState = {
         ...next,
+        weeklyActivityLogs: pruneWeeklyActivityLogs(next.weeklyActivityLogs, effectiveNow),
         lastSyncedAt: new Date().toISOString(),
       };
       const tenant = activeTenantRef.current;
@@ -594,6 +564,14 @@ export default function App() {
           const prevAway = prevKid.allowance?.awayUntilDateKey ?? '';
           const nextAway = nextKid.allowance?.awayUntilDateKey ?? '';
           const dailyChanged = JSON.stringify(prevKid.daily) !== JSON.stringify(nextKid.daily);
+          const starHistoryChanged =
+            (nextKid.starHistory?.length ?? 0) !== (prevKid.starHistory?.length ?? 0) ||
+            nextKid.stars !== prevKid.stars;
+          const shopChanged =
+            (nextKid.ownedShopItemIds?.length ?? 0) !== (prevKid.ownedShopItemIds?.length ?? 0);
+          const coinChanged =
+            (nextKid.allowance?.coinHistory?.length ?? 0) !==
+            (prevKid.allowance?.coinHistory?.length ?? 0);
           const isLateLabel =
             eventLabel.toLowerCase().includes('late') || eventLabel.includes('สาย');
 
@@ -615,6 +593,17 @@ export default function App() {
             extraLogs = [
               makeWeeklyLog(nextKid, eventLabel || 'ใช้งาน / เช็คอินประจำวัน', 'on_time', 'น้องกดเช็คอิน'),
             ];
+          } else if (starHistoryChanged || shopChanged || coinChanged) {
+            const latestReason = nextKid.starHistory?.[0]?.reason;
+            extraLogs = [
+              makeWeeklyLog(
+                nextKid,
+                eventLabel || latestReason || 'ทำรายการโปรไฟล์ / มินิมาร์ท',
+                'on_time',
+                'น้องทำรายการ',
+                latestReason && latestReason !== eventLabel ? latestReason : undefined
+              ),
+            ];
           }
         }
 
@@ -623,9 +612,9 @@ export default function App() {
           members: prev.members.map((m) => (m.id === kidId ? nextKid : m)),
           ...(extraLogs.length > 0
             ? {
-                weeklyActivityLogs: [...extraLogs, ...(prev.weeklyActivityLogs ?? [])].slice(
-                  0,
-                  300
+                weeklyActivityLogs: pruneWeeklyActivityLogs(
+                  [...extraLogs, ...(prev.weeklyActivityLogs ?? [])],
+                  now
                 ),
               }
             : {}),
@@ -1973,9 +1962,13 @@ export default function App() {
     [commitStateChange, now]
   );
 
-  const handleAutoLoginRole = (target: Member | 'creator') => {
+  const handleAutoLoginRole = (target: Member | 'creator' | 'activity_log') => {
     setSelectedKidId(null);
     setReturnToManagerAfterKid(false);
+    if (target === 'activity_log') {
+      setMode('activity_log');
+      return;
+    }
     if (target === 'creator') {
       setCreatorUnlocked(true);
       setMode('creator');
@@ -2085,6 +2078,10 @@ export default function App() {
               {mode === 'manager' && (lang === 'th' ? '📊 โหมดผู้จัดการ' : '📊 Manager Dashboard')}
               {mode === 'creator' && (lang === 'th' ? '👑 โหมดผู้สร้างสูงสุด' : '👑 Creator Admin')}
               {mode === 'portal' && (lang === 'th' ? '🌐 พอร์ทัลสมัครใช้งานระบบ' : '🌐 Platform Portal')}
+              {mode === 'activity_log' &&
+                (lang === 'th'
+                  ? '📋 ประวัติทำรายการเด็ก (PIN 0001)'
+                  : '📋 Kid Activity History (PIN 0001)')}
             </span>
 
             <button
@@ -2529,6 +2526,21 @@ export default function App() {
                 'Resolve Sick Case'
               )
             }
+          />
+        )}
+
+        {mode === 'activity_log' && (
+          <KidActivityHistoryView
+            orgName={activeTenant?.orgName ?? 'Barnhem Care & Kids'}
+            kids={state.members.filter((m) => m.role === 'kid')}
+            logs={state.weeklyActivityLogs ?? []}
+            now={now}
+            lang={lang}
+            onShowAlert={showAlert}
+            onBackHome={() => {
+              setMode('magic_door');
+              setSelectedKidId(null);
+            }}
           />
         )}
 

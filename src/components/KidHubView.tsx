@@ -237,7 +237,6 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   const [emailLoginBusy, setEmailLoginBusy] = useState(false);
   const [petHeroToast, setPetHeroToast] = useState<string | null>(null);
   const [pinRequestAction, setPinRequestAction] = useState<null | { type: 'boss_stage' | 'g2_evening_phone' }>(null);
-  const claimedLocalBonusKidIdsRef = useRef<Set<string>>(new Set());
 
   const isKidSignedInWithEmail =
     Boolean(linkedKidSession && linkedKidSession.memberId === kid.id) ||
@@ -252,51 +251,6 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   useEffect(() => {
     setLinkedEmailForm(kid.linkedEmail ?? '');
   }, [kid.id, kid.linkedEmail]);
-
-  useEffect(() => {
-    if (
-      !linkedKidSession &&
-      isKidSignedInWithEmail &&
-      !kid.emailLoginBonusClaimed &&
-      !claimedLocalBonusKidIdsRef.current.has(kid.id)
-    ) {
-      claimedLocalBonusKidIdsRef.current.add(kid.id);
-      const bonusTimeIso = new Date().toISOString();
-      onUpdateKid(
-        kid.id,
-        (prev) => {
-          if (prev.emailLoginBonusClaimed) return prev;
-          return {
-            ...prev,
-            stars: (prev.stars ?? 0) + 1000,
-            emailLoginBonusClaimed: true,
-            starHistory: [
-              {
-                id: `tx_email_bonus_${Date.now()}`,
-                timestamp: bonusTimeIso,
-                reason: '🎁 โบนัสล็อกอินอีเมลครั้งแรก (+1,000 ⭐)',
-                amount: 1000,
-              },
-              ...(prev.starHistory ?? []),
-            ].slice(0, 60),
-          };
-        },
-        `First Email Login Bonus (+1,000 ⭐) (${kid.nickname})`
-      );
-      onShowAlert({
-        icon: '🎉⭐',
-        title:
-          lang === 'th'
-            ? 'ปลดล็อกตัวการ์ตูน + รับโบนัส 1,000 ดวง!'
-            : 'Cartoon Unlocked + 1,000 ⭐ Bonus!',
-        message:
-          lang === 'th'
-            ? `ยินดีต้อนรับ น้อง${kid.nickname}! ดาวปลดล็อกแล้ว พร้อมรับโบนัสล็อกอินอีเมลครั้งแรก +1,000 ⭐ สำหรับช็อปปิ้งที่ร้านมินิมาร์ทและแลกของรางวัลค่ะ`
-            : `Welcome ${kid.nickname}! Your stars are unlocked with +1,000 ⭐ first-login bonus ready for the Minimart!`,
-        tone: 'yellow',
-      });
-    }
-  }, [isKidSignedInWithEmail, kid.emailLoginBonusClaimed, kid.id, kid.nickname, lang, linkedKidSession, onShowAlert, onUpdateKid]);
 
   // Health profile editor state
   const [healthForm, setHealthForm] = useState<HealthProfile>(
@@ -1540,8 +1494,8 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
         title: lang === 'th' ? 'กรุณาล็อกอินอีเมลเพื่อปลดล็อกดาว (0 ⭐)' : 'Sign In with Email to Unlock Stars',
         message:
           lang === 'th'
-            ? 'ตัวละครที่ยังไม่ล็อกอิน ดาวจะอยู่ที่ 0 ⭐ ค่ะ เมื่อล็อกอินอีเมลครั้งแรก รับดาวพิเศษ +1,000 ⭐ ทันที พร้อมนำดาวมาแลกของในร้านมินิมาร์ทและออมสินได้เลย!'
-            : 'Stars remain at 0 ⭐ until you sign in with your email. First login grants +1,000 ⭐!',
+            ? 'ตัวละครที่ยังไม่ล็อกอิน ดาวจะอยู่ที่ 0 ⭐ ค่ะ เมื่อล็อกอินด้วยอีเมลแล้วจึงจะนำดาวที่สะสมมาแลกของในร้านมินิมาร์ทและออมสินได้ค่ะ'
+            : 'Stars remain at 0 ⭐ until you sign in with your email to access Minimart and piggy bank exchanges.',
         tone: 'yellow',
       });
       return;
@@ -1630,8 +1584,8 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
             : 'Sign In to Unlock Stars & Minimart!',
         message:
           lang === 'th'
-            ? 'ตอนนี้ยอดดาวอยู่ที่ 0 ⭐ เพราะยังไม่ได้ล็อกอินอีเมลค่ะ · 🎁 ล็อกอินอีเมลครั้งแรก รับดาวพิเศษ +1,000 ⭐ ทันที สามารถนำดาวมาช็อปปิ้งที่ร้านมินิมาร์ท รับของรางวัลมากมาย และอัปเดตข้อมูลได้ก่อนใคร!'
-            : 'Your stars are at 0 ⭐ until you sign in with your Google email. First login gives +1,000 ⭐ for Minimart shopping!',
+            ? 'ตอนนี้ยอดดาวอยู่ที่ 0 ⭐ เพราะยังไม่ได้ล็อกอินอีเมลค่ะ เมื่อล็อกอินด้วย Google Email ของหนูแล้ว ดาวที่สะสมไว้จะปลดล็อกให้นำมาช็อปปิ้งที่ร้านมินิมาร์ทได้เลยค่ะ'
+            : 'Your stars are at 0 ⭐ until you sign in with your Google email to unlock Minimart shopping.',
         tone: 'yellow',
       });
       return;
@@ -2176,10 +2130,10 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
               >
                 {emailLoginBusy
                   ? '⏳...'
-                  : !kid.emailLoginBonusClaimed
+                  : kid.linkedEmail
                   ? lang === 'th'
-                    ? '📧 ล็อกอินรับ +1,000 ⭐'
-                    : '📧 Login +1,000 ⭐'
+                    ? '📧 ล็อกอินอีเมล'
+                    : '📧 Sign In Email'
                   : lang === 'th'
                   ? '📧 ผูกอีเมล'
                   : '📧 Sync Email'}
@@ -4476,13 +4430,6 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                     {lang === 'th'
                       ? 'ใส่อีเมล Google (Gmail) ของหนูไว้ที่นี่ เมื่อหนูล็อกอินด้วยอีเมลนี้บนมือถือหรือแท็บเล็ตส่วนตัว ภาพตัวการ์ตูนจะปลดล็อกเป็นสีสดใสซิงค์แบบเรียลไทม์'
                       : 'Save your Google email here. Sign in with this email on your phone to unlock full-color live avatar sync.'}
-                    {!kid.emailLoginBonusClaimed && (
-                      <span className="font-extrabold text-[#8A5A00]">
-                        {lang === 'th'
-                          ? ' · 🎁 ล็อกอินครั้งแรก รับโบนัส +1,000 ⭐ ทันที!'
-                          : ' · 🎁 First login gets +1,000 ⭐ bonus!'}
-                      </span>
-                    )}
                   </p>
                   <div className="flex flex-wrap items-center gap-2">
                     <input
@@ -4756,12 +4703,12 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                       <div className="font-extrabold text-sm">
                         🔒{' '}
                         {lang === 'th'
-                          ? 'ดาวอยู่ที่ 0 ⭐ จนกว่าจะล็อกอินอีเมล · 🎁 ล็อกอินครั้งแรก รับโบนัส +1,000 ⭐ ทันที!'
-                          : 'Stars stay at 0 ⭐ until Email Sign-In · 🎁 First login grants +1,000 ⭐!'}
+                          ? 'ดาวอยู่ที่ 0 ⭐ จนกว่าจะล็อกอินอีเมล'
+                          : 'Stars stay at 0 ⭐ until Email Sign-In'}
                       </div>
                       <div>
                         {lang === 'th'
-                          ? 'เมื่อล็อกอินแล้ว ดาวจะขึ้นอัตโนมัติ สามารถนำดาวมาช็อปปิ้งที่ร้านมินิมาร์ท รับของรางวัลมากมาย และอัปเดตข้อมูลได้ก่อนใคร'
+                          ? 'เมื่อล็อกอินแล้ว ดาวที่สะสมไว้จะขึ้นอัตโนมัติ สามารถนำดาวมาช็อปปิ้งที่ร้านมินิมาร์ทและแลกของรางวัลได้ค่ะ'
                           : 'Sign in with your email to unlock your stars automatically and shop at the foundation minimart!'}
                       </div>
                     </div>
@@ -4800,8 +4747,8 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                           ? 'กำลังเปิด Google...'
                           : 'Signing in...'
                         : lang === 'th'
-                        ? '🔑 ล็อกอินอีเมลรับ +1,000 ⭐'
-                        : '🔑 Sign In (+1,000 ⭐)'}
+                        ? '🔑 ล็อกอินอีเมลปลดล็อกดาว'
+                        : '🔑 Sign In with Email'}
                     </button>
                   </div>
                 )}
@@ -5095,17 +5042,9 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                                 : 'Minimart Items & Photos Locked'}
                             </span>
                           </div>
-                          {!kid.emailLoginBonusClaimed && (
-                            <div className="rounded-2xl border border-[#F2C36B] bg-[#FFF6D6] px-3 py-2 text-xs sm:text-sm font-extrabold text-[#6E4500]">
-                              🎁{' '}
-                              {lang === 'th'
-                                ? 'ล็อกอินอีเมลครั้งแรก รับดาวพิเศษ +1,000 ⭐ ทันที!'
-                                : 'First email login bonus: +1,000 ⭐!'}
-                            </div>
-                          )}
                           <p className="text-xs text-[#5E4E45] leading-relaxed">
                             {lang === 'th'
-                              ? 'ล็อกอินด้วยอีเมลของหนูเพื่อเปิดดูภาพขนม ของรางวัล ไอเทมแต่งตัว และอัปเดตข้อมูลได้ก่อนใคร'
+                              ? 'ล็อกอินด้วยอีเมลของหนูเพื่อเปิดดูภาพขนม ของรางวัล และไอเทมแต่งตัวแบบเต็มรูปแบบค่ะ'
                               : 'Sign in with your Google email to unlock minimart product photos, items, and rewards.'}
                           </p>
                           <button
@@ -5143,7 +5082,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                                 ? 'กำลังเปิด Google...'
                                 : 'Signing in...'
                               : lang === 'th'
-                              ? '🔑 ล็อกอินอีเมลเปิดร้านค้า (+1,000 ⭐)'
+                              ? '🔑 ล็อกอินอีเมลเปิดร้านค้า'
                               : '🔑 Sign In to Unlock Shop'}
                           </button>
                         </div>
@@ -5541,14 +5480,6 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                             : 'Wardrobe & Items Locked'}
                         </span>
                       </div>
-                      {!kid.emailLoginBonusClaimed && (
-                        <div className="rounded-2xl border border-[#F2C36B] bg-[#FFF6D6] px-3 py-2 text-xs sm:text-sm font-extrabold text-[#6E4500]">
-                          🎁{' '}
-                          {lang === 'th'
-                            ? 'ล็อกอินอีเมลครั้งแรก รับดาวพิเศษ +1,000 ⭐ ทันที!'
-                            : 'First email login bonus: +1,000 ⭐!'}
-                        </div>
-                      )}
                       <p className="text-xs text-[#5E4E45] leading-relaxed">
                         {lang === 'th'
                           ? 'ล็อกอินด้วยอีเมลของหนูเพื่อเปิดดูภาพชุดแต่งตัว ไอเทมสะสม และฉากหลังทั้งหมดแบบสีสดใสค่ะ'
@@ -5589,7 +5520,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                             ? 'กำลังเปิด Google...'
                             : 'Signing in...'
                           : lang === 'th'
-                          ? '🔑 ล็อกอินอีเมลเปิดตู้แต่งตัว (+1,000 ⭐)'
+                          ? '🔑 ล็อกอินอีเมลเปิดตู้แต่งตัว'
                           : '🔑 Sign In to Unlock Wardrobe'}
                       </button>
                     </div>

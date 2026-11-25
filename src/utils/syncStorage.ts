@@ -1,5 +1,6 @@
 import { createEmptyDaily, INITIAL_APP_STATE } from '../data/initialData';
 import { AppState } from '../types/barnhem';
+import { pruneWeeklyActivityLogs } from './activityLogRetention';
 import { ensureCurrentWeekAllowance } from './piggyBank';
 import { getDateKey } from './timeRules';
 
@@ -100,7 +101,10 @@ export function loadAppState(): AppState {
       friendVisits: Array.isArray(parsed.friendVisits) ? parsed.friendVisits : [],
       goldenPoolLogs: Array.isArray(parsed.goldenPoolLogs) ? parsed.goldenPoolLogs : [],
       staffLeaves: Array.isArray(parsed.staffLeaves) ? parsed.staffLeaves : [],
-      weeklyActivityLogs: Array.isArray(parsed.weeklyActivityLogs) ? parsed.weeklyActivityLogs : [],
+      weeklyActivityLogs: pruneWeeklyActivityLogs(
+        Array.isArray(parsed.weeklyActivityLogs) ? parsed.weeklyActivityLogs : [],
+        new Date()
+      ),
       settings: {
         ...INITIAL_APP_STATE.settings,
         ...(parsed.settings ?? {}),
@@ -115,7 +119,11 @@ export function loadAppState(): AppState {
 
 export function saveAppStateLocal(state: AppState): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    const pruned: AppState = {
+      ...state,
+      weeklyActivityLogs: pruneWeeklyActivityLogs(state.weeklyActivityLogs, new Date()),
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(pruned));
   } catch {
     // Handle storage quota gracefully
   }

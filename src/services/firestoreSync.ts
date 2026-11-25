@@ -35,6 +35,7 @@ import {
   SupplyRequest,
   WeeklyActivityLog,
 } from '../types/barnhem';
+import { pruneWeeklyActivityLogs } from '../utils/activityLogRetention';
 
 export const MASTER_ADMIN_EMAIL = 'chali6939p@gmail.com';
 export const DEFAULT_ORG_ID = 'barnhem_main';
@@ -315,7 +316,7 @@ function extractRecordsMap(
   addList('friend_visit', (state.friendVisits ?? []).filter((f) => isWithinRecentDays(f.createdAt, 8)));
   addList('golden_pool_log', (state.goldenPoolLogs ?? []).filter((g) => isWithinRecentDays(g.createdAt, 14)));
   addList('staff_leave', (state.staffLeaves ?? []).filter((l) => isWithinRecentDays(l.dateKey, 14)));
-  addList('weekly_activity_log', (state.weeklyActivityLogs ?? []).filter((w) => isWithinRecentDays(w.createdAt, 8)));
+  addList('weekly_activity_log', (state.weeklyActivityLogs ?? []).filter((w) => isWithinRecentDays(w.createdAt, 7)));
 
   return map;
 }
@@ -704,7 +705,7 @@ export function subscribeFoundationCloud(
         friendVisits,
         goldenPoolLogs,
         staffLeaves,
-        weeklyActivityLogs,
+        weeklyActivityLogs: pruneWeeklyActivityLogs(weeklyActivityLogs, new Date()),
         ...(effectiveShopItems.length > 0 ? { shopItems: effectiveShopItems } : {}),
       });
     },

@@ -1,3 +1,4 @@
+import { pruneWeeklyActivityLogs } from './activityLogRetention';
 import { createEmptyDaily, INITIAL_APP_STATE } from '../data/initialData';
 import { getOrganizationPreset } from '../data/organizationPresets';
 import {
@@ -274,6 +275,10 @@ export function loadTenantAppState(
       ...starter,
       ...parsed,
       members,
+      weeklyActivityLogs: pruneWeeklyActivityLogs(
+        Array.isArray(parsed.weeklyActivityLogs) ? parsed.weeklyActivityLogs : [],
+        new Date()
+      ),
       settings: {
         ...starter.settings,
         ...(parsed.settings ?? {}),
@@ -292,7 +297,11 @@ export function loadTenantAppState(
 
 export function saveTenantAppStateLocal(orgId: string, state: AppState): void {
   try {
-    localStorage.setItem(`${TENANT_STORAGE_PREFIX}${orgId}`, JSON.stringify(state));
+    const pruned: AppState = {
+      ...state,
+      weeklyActivityLogs: pruneWeeklyActivityLogs(state.weeklyActivityLogs, new Date()),
+    };
+    localStorage.setItem(`${TENANT_STORAGE_PREFIX}${orgId}`, JSON.stringify(pruned));
   } catch {
     // Ignore storage quota errors
   }

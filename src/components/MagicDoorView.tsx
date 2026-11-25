@@ -5,7 +5,7 @@ import {
   getShiftCoverageAtDateTime,
   getStaffScheduleForDate,
 } from '../data/staffSchedule';
-import { signInWithGoogleCloud, signOutCloud } from '../firebase';
+import { signOutCloud } from '../firebase';
 import { MASTER_ADMIN_EMAIL } from '../services/firestoreSync';
 import {
   Announcement,
@@ -49,6 +49,7 @@ import {
 } from '../utils/festivalAndEvents';
 import { isKidAwayOnDate } from '../utils/piggyBank';
 import {
+  ACTIVITY_LOG_VIEWER_PIN,
   formatPinAttemptsHint,
   formatPinLockoutMessage,
   getActiveKidAwaySecretCode,
@@ -94,7 +95,7 @@ interface MagicDoorViewProps {
   cloudSyncing: boolean;
   onForceSeedCloud: () => Promise<void>;
   onSelectKid: (kidId: string) => void;
-  onAutoLoginRole: (member: Member | 'creator') => void;
+  onAutoLoginRole: (member: Member | 'creator' | 'activity_log') => void;
   onExpressKioskScan: (code: string) => KioskResult | null;
   onQuickGoToSchool: (kidId: string) => KioskResult | null;
   onQuickHomeAction?: (actionId: HomeQuickActionId, kidId: string, detailOverride?: string) => KioskResult | null;
@@ -164,7 +165,6 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
   onSignOutLinkedKid,
 }) => {
   const [quickInput, setQuickInput] = useState('');
-  const [kidGoogleBusy, setKidGoogleBusy] = useState(false);
   const [showPinText, setShowPinText] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [activeBoardAction, setActiveBoardAction] = useState<HomeQuickActionId>('morning_school');
@@ -562,6 +562,11 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
 
   const resolvePinLogin = (pin: string): PinLoginOutcome => {
     if (pinGuard.isLocked) return 'not_found';
+    if (pin === ACTIVITY_LOG_VIEWER_PIN) {
+      pinGuard.recordSuccess();
+      onAutoLoginRole('activity_log');
+      return 'logged_in';
+    }
     if (creatorPins.includes(pin)) {
       pinGuard.recordSuccess();
       onAutoLoginRole('creator');
@@ -891,44 +896,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                     )}
                   </div>
                 </div>
-              ) : !cloudUser ? (
-                <button
-                  type="button"
-                  disabled={kidGoogleBusy}
-                  onClick={async () => {
-                    setKidGoogleBusy(true);
-                    try {
-                      await signInWithGoogleCloud();
-                    } catch (err) {
-                      onShowAlert({
-                        icon: '⚠️',
-                        title: lang === 'th' ? 'เข้าสู่ระบบ Google ไม่สำเร็จ' : 'Google Sign-In Failed',
-                        message: err instanceof Error ? err.message : String(err),
-                        tone: 'pink',
-                      });
-                    } finally {
-                      setKidGoogleBusy(false);
-                    }
-                  }}
-                  className="min-h-[44px] w-full rounded-2xl border border-[#B5E5DC] bg-[#F2FCF9] hover:bg-[#E2F7F2] px-4 py-2 text-xs sm:text-sm font-extrabold text-[#114A42] flex items-center justify-between gap-2 cursor-pointer transition-colors disabled:opacity-60"
-                >
-                  <span className="flex items-center gap-2 min-w-0">
-                    <span>📧</span>
-                    <span className="truncate">
-                      {kidGoogleBusy
-                        ? lang === 'th'
-                          ? 'กำลังเปิดหน้าต่าง Google...'
-                          : 'Opening Google Sign-In...'
-                        : lang === 'th'
-                        ? 'น้องๆ ล็อกอินด้วย Google Email (รับ +1,000 ⭐ ช็อปปิ้งมินิมาร์ท · อัปเดตก่อนใคร)'
-                        : 'Kid Google Sign-In (+1,000 ⭐ Minimart & Early Updates)'}
-                    </span>
-                  </span>
-                  <span className="rounded-xl bg-white px-2.5 py-0.5 text-[11px] font-bold text-[#114A42] shrink-0">
-                    {lang === 'th' ? 'ล็อกอิน →' : 'Sign In →'}
-                  </span>
-                </button>
-              ) : cloudUser.email !== MASTER_ADMIN_EMAIL && !organizationName ? (
+              ) : cloudUser && cloudUser.email !== MASTER_ADMIN_EMAIL && !organizationName ? (
                 <div className="rounded-2xl border border-[#F2DA84] bg-[#FFFBEB] p-3 flex flex-wrap items-center justify-between gap-2 text-xs text-[#6E5311]">
                   <span className="min-w-0">
                     {cloudSyncing

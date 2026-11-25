@@ -1,6 +1,14 @@
 export type Language = 'th' | 'en';
 
-export type AppMode = 'magic_door' | 'staff' | 'chef' | 'tutor' | 'manager' | 'creator' | 'portal';
+export type AppMode =
+  | 'magic_door'
+  | 'staff'
+  | 'chef'
+  | 'tutor'
+  | 'manager'
+  | 'creator'
+  | 'portal'
+  | 'activity_log';
 
 export type MemberRole = 'manager' | 'staff' | 'chef' | 'tutor' | 'kid';
 
