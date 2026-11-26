@@ -1,12 +1,12 @@
 import { User } from 'firebase/auth';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CORE_ROSTER_STAFF,
   getShiftCoverageAtDateTime,
   getStaffScheduleForDate,
 } from '../data/staffSchedule';
 import { signOutCloud } from '../firebase';
-import { MASTER_ADMIN_EMAIL } from '../services/firestoreSync';
+import { isMasterAdminEmail, MASTER_ADMIN_EMAIL } from '../services/firestoreSync';
 import {
   Announcement,
   AppState,
@@ -25,8 +25,10 @@ import {
   canKidUseCommand,
   compareLoginCommandsByTime,
   doesKidHavePhone,
+  evaluateKidReturnPhoneSchedule,
   formatCustomCommandWindow,
   formatThaiCurfewClock,
+  getAutoReturnPhoneRuleConfig,
   getCommandAuthMode,
   getCommandAuthModeMeta,
   getCommandDenialReason,
@@ -42,6 +44,7 @@ import {
   isHomeActionDoneForKid,
   isHomeActionExpiredAt,
   isHomeActionOpenAt,
+  KioskPenaltyAlert,
   KioskResult,
   minsToHHMM,
 } from '../utils/expressKiosk';
@@ -74,6 +77,7 @@ import { CloudSyncBanner } from './CloudSyncBanner';
 import { HomeAnnouncementBox } from './HomeAnnouncementBox';
 import { KidDutySchedulesPanel } from './KidDutySchedulesPanel';
 import { LoginCommandsSettingsCard } from './LoginCommandsSettingsCard';
+import { PenaltyNoticeModal } from './PenaltyNoticeModal';
 import { StaffLeavePanel } from './StaffLeavePanel';
 import { StaffRosterPanel } from './StaffRosterPanel';
 
@@ -95,7 +99,9 @@ interface MagicDoorViewProps {
   appState: AppState;
   cloudUser: User | null;
   cloudSyncing: boolean;
+  cloudSyncError?: string | null;
   onForceSeedCloud: () => Promise<void>;
+  onPullFromCloud?: () => Promise<void>;
   onSelectKid: (kidId: string) => void;
   onAutoLoginRole: (
     member:
@@ -153,7 +159,9 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
   appState,
   cloudUser,
   cloudSyncing,
+  cloudSyncError = null,
   onForceSeedCloud,
+  onPullFromCloud,
   onSelectKid,
   onAutoLoginRole,
   onExpressKioskScan,
@@ -226,11 +234,26 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     nextDone: boolean;
   } | null>(null);
   const [trashPinInput, setTrashPinInput] = useState('');
+  const [penaltyNoticePopup, setPenaltyNoticePopup] = useState<KioskPenaltyAlert | null>(null);
+  const cloudSyncSectionRef = useRef<HTMLDivElement | null>(null);
   const pinGuard = usePinGuard('magic_door');
   const staffBoardPinGuard = usePinGuard('magic_door_staff_board');
   const kidCmdPinGuard = usePinGuard('magic_door_kid_cmd');
   const homeStaffWorkPinGuard = usePinGuard('magic_door_staff_work');
   const trashPinGuard = usePinGuard('magic_door_trash');
+
+  const isCloudAccountAuthorized = Boolean(
+    cloudUser && (organizationName || isMasterAdminEmail(cloudUser.email))
+  );
+  const isMainCloudSyncActive = Boolean(
+    isCloudAccountAuthorized && !appState.settings.useOwnStorageOnly
+  );
+  const openCloudSyncSettings = () => {
+    setShowCloudSync(true);
+    window.setTimeout(() => {
+      cloudSyncSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 60);
+  };
 
   const kids = members.filter((m) => m.role === 'kid');
   const staffPins = useMemo(
@@ -278,6 +301,10 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
   );
   const hwCurfewMins = useMemo(
     () => getEffectiveHomeworkCurfewMins(appState.settings),
+    [appState.settings]
+  );
+  const autoReturnRule = useMemo(
+    () => getAutoReturnPhoneRuleConfig(appState.settings),
     [appState.settings]
   );
   const hwCurfewTh = formatThaiCurfewClock(hwCurfewMins);
@@ -874,7 +901,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                     )}
                   </div>
                 </div>
-              ) : cloudUser && cloudUser.email !== MASTER_ADMIN_EMAIL && !organizationName ? (
+              ) : cloudUser && !isMasterAdminEmail(cloudUser.email) && !organizationName ? (
                 <div className="rounded-2xl border border-[#F2DA84] bg-[#FFFBEB] p-3 flex flex-wrap items-center justify-between gap-2 text-xs text-[#6E5311]">
                   <span className="min-w-0">
                     {cloudSyncing
@@ -882,8 +909,8 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                         ? `⏳ กำลังค้นหาตัวการ์ตูนของ ${cloudUser.email}...`
                         : `⏳ Looking up character for ${cloudUser.email}...`
                       : lang === 'th'
-                      ? `📧 ล็อกอินด้วย ${cloudUser.email} แล้ว (หากยังไม่เห็นตัวการ์ตูน กรุณาเพิ่มอีเมลนี้ในช่องโปรไฟล์ของน้องก่อนนะคะ)`
-                      : `📧 Signed in as ${cloudUser.email} (Add this email in the kid profile first to sync your cartoon)`}
+                      ? `📧 ล็อกอินด้วย ${cloudUser.email} อยู่ (หากต้องการซิงค์ข้อมูลบ้านหลักข้ามแท็บเล็ตกับคอม กรุณาใช้บัญชี ${MASTER_ADMIN_EMAIL} หรือเพิ่มอีเมลในโปรไฟล์น้องค่ะ)`
+                      : `📧 Signed in as ${cloudUser.email} (Use ${MASTER_ADMIN_EMAIL} for house-wide sync, or link this email to a kid profile)`}
                   </span>
                   <button
                     type="button"
@@ -1076,16 +1103,48 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
               · {lang === 'th' ? trashToday.nextTrashDayLabelTh : trashToday.nextTrashDayLabelEn}
             </span>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              setUsefulInfoTab('duties');
-              setUsefulInfoOpen(true);
-            }}
-            className="text-xs font-bold text-[#245A80] hover:underline cursor-pointer whitespace-nowrap shrink-0"
-          >
-            {lang === 'th' ? 'ดูตารางเวรทั้งหมด →' : 'Full Schedule →'}
-          </button>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {!isMainCloudSyncActive && !linkedKidSession && !appState.settings.useOwnStorageOnly && (
+              <button
+                type="button"
+                onClick={openCloudSyncSettings}
+                className="rounded-xl border border-[#F2DA84] bg-[#FFFBEB] hover:bg-[#FFF3C4] px-2.5 py-1 text-[11px] font-extrabold text-[#7A5411] cursor-pointer whitespace-nowrap"
+                title={
+                  lang === 'th'
+                    ? 'เครื่องนี้ยังไม่ได้เชื่อม Google Cloud Sync ข้อมูลจึงยังไม่เด้งไปเครื่องอื่น'
+                    : 'Device is not connected to Cloud Sync'
+                }
+              >
+                📴 {lang === 'th' ? 'ยังไม่ซิงค์ข้ามเครื่อง · เชื่อมต่อ' : 'Offline · Connect Sync'}
+              </button>
+            )}
+            {isMainCloudSyncActive && onPullFromCloud && (
+              <button
+                type="button"
+                disabled={cloudSyncing}
+                onClick={() => void onPullFromCloud()}
+                className="rounded-xl border border-[#C4DCF0] bg-[#F4FAFF] hover:bg-[#E4F2FC] px-2.5 py-1 text-[11px] font-bold text-[#1E445C] cursor-pointer whitespace-nowrap disabled:opacity-50"
+              >
+                {cloudSyncing
+                  ? lang === 'th'
+                    ? '⏳ กำลังซิงค์...'
+                    : '⏳ Syncing...'
+                  : lang === 'th'
+                  ? '🔄 รีเฟรชสถานะ'
+                  : '🔄 Refresh'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setUsefulInfoTab('duties');
+                setUsefulInfoOpen(true);
+              }}
+              className="text-xs font-bold text-[#245A80] hover:underline cursor-pointer whitespace-nowrap shrink-0"
+            >
+              {lang === 'th' ? 'ดูตารางเวรทั้งหมด →' : 'Full Schedule →'}
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -1222,18 +1281,50 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
       />
 
       {/* Collapsible Cloud Sync Settings Link */}
-      <div className="space-y-3 pt-1">
+      <div ref={cloudSyncSectionRef} className="space-y-3 pt-1">
         <div className="flex justify-center">
           <button
             type="button"
             onClick={() => setShowCloudSync((p) => !p)}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-[#7B695F] hover:text-[#3D322C] cursor-pointer transition-colors"
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-bold cursor-pointer transition-colors ${
+              cloudSyncError
+                ? 'border-[#EE9CAF] bg-[#FFE8ED] text-[#8B1D36] hover:bg-[#FFD6DF]'
+                : isMainCloudSyncActive
+                ? 'border-[#B9E8DF] bg-[#F1FBF8] text-[#114A42] hover:bg-[#E2F7F1]'
+                : appState.settings.useOwnStorageOnly
+                ? 'border-[#DCEEF8] bg-[#F4FAFF] text-[#1E445C] hover:bg-[#E4F2FC]'
+                : 'border-[#F2DA84] bg-[#FFFBEB] text-[#7A5411] hover:bg-[#FFF3C4]'
+            }`}
           >
-            <span>☁️</span>
             <span>
-              {lang === 'th'
-                ? 'ตั้งค่าซิงก์ข้อมูล (Cloud Sync)'
-                : 'Cloud Sync Settings'}
+              {cloudSyncError
+                ? '⚠️'
+                : isMainCloudSyncActive
+                ? '☁️'
+                : appState.settings.useOwnStorageOnly
+                ? '💾'
+                : '📲'}
+            </span>
+            <span>
+              {cloudSyncError
+                ? lang === 'th'
+                  ? 'การซิงค์คลาวด์ขัดข้อง · แตะเพื่อตรวจสอบ'
+                  : 'Cloud Sync Error · Tap to Retry'
+                : isMainCloudSyncActive
+                ? lang === 'th'
+                  ? `ซิงค์ข้ามเครื่องเปิดอยู่ (${cloudUser?.email})`
+                  : `Cloud Sync Active (${cloudUser?.email})`
+                : cloudUser && !isCloudAccountAuthorized && !linkedKidSession
+                ? lang === 'th'
+                  ? `บัญชี ${cloudUser.email} ยังไม่ได้ซิงค์บ้านหลัก · แตะเพื่อเปลี่ยน`
+                  : `${cloudUser.email} not syncing main house`
+                : appState.settings.useOwnStorageOnly
+                ? lang === 'th'
+                  ? 'โหมดเก็บข้อมูลองค์กรเอง (Cloud Sync)'
+                  : 'Own Org Storage (Cloud Sync)'
+                : lang === 'th'
+                ? 'ยังไม่เชื่อม Cloud Sync (ข้อมูลอยู่แค่ในเครื่องนี้) · แตะเพื่อเชื่อมต่อ'
+                : 'Cloud Sync Off (Local Only) · Tap to Connect'}
             </span>
             <span>{showCloudSync ? '⌃' : '⌄'}</span>
           </button>
@@ -1243,10 +1334,13 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
           <CloudSyncBanner
             cloudUser={cloudUser}
             cloudSyncing={cloudSyncing}
+            cloudSyncError={cloudSyncError}
+            isCloudAccountAuthorized={isCloudAccountAuthorized}
             state={appState}
             now={now}
             lang={lang}
             onForceSeedCloud={onForceSeedCloud}
+            onPullFromCloud={onPullFromCloud}
             onShowAlert={onShowAlert}
           />
         )}
@@ -1564,7 +1658,9 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                   const action = entry.action;
                   const isOpen = isHomeActionOpenAt(action.id, now, appState.settings);
                   const isPenaltyBtn = action.commandType === 'penalty';
-                  const eligibleKids = kids.filter((k) => canKidUseCommand(action.id, k, appState.settings));
+                  const eligibleKids = kids.filter((k) =>
+                    canKidUseCommand(action.id, k, appState.settings)
+                  );
                   const doneCount = eligibleKids.filter((k) => isHomeActionDoneForKid(action.id, k)).length;
                   const permSummary = getCommandPermissionSummary(action.id, kids, lang, appState.settings);
                   const authMeta = getCommandAuthModeMeta(permSummary.authMode, lang);
@@ -1789,12 +1885,18 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                 targetKid.id,
                 customSubjectInput
               );
-              if (res) setSchoolBoardResult(res);
+              if (res) {
+                setSchoolBoardResult(res);
+                if (res.penaltyAlert) setPenaltyNoticePopup(res.penaltyAlert);
+              }
               return;
             }
             if (modalActionConfig) {
               const res = runHomeAction(modalActionConfig.id, targetKid.id);
-              if (res) setSchoolBoardResult(res);
+              if (res) {
+                setSchoolBoardResult(res);
+                if (res.penaltyAlert) setPenaltyNoticePopup(res.penaltyAlert);
+              }
             }
           } else {
             const res = kidCmdPinGuard.recordFailure();
@@ -1826,11 +1928,14 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
         const activeAuthMode = getCommandAuthMode(activePermCmdId, appState.settings);
         const activeAuthMeta = getCommandAuthModeMeta(activeAuthMode, lang);
         const requiresKidPin = activeAuthMode === 'kid_pin' && !boardUnlockedByStaff;
+        const isReturnPhoneBoard = !activeCustomCmd && modalActionConfig?.id === 'night_return_phone';
         const eligibleAllCount = kids.filter((k) =>
           canKidUseCommand(activePermCmdId, k, appState.settings)
         ).length;
         const displayedBoardKids = showOnlyEligibleKids
-          ? filteredSchoolKids.filter((k) => canKidUseCommand(activePermCmdId, k, appState.settings))
+          ? filteredSchoolKids.filter((k) =>
+              canKidUseCommand(activePermCmdId, k, appState.settings)
+            )
           : filteredSchoolKids;
 
         const executeBoardCheckInForKid = (targetKid: Member) => {
@@ -1840,12 +1945,18 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
               targetKid.id,
               customSubjectInput
             );
-            if (res) setSchoolBoardResult(res);
+            if (res) {
+              setSchoolBoardResult(res);
+              if (res.penaltyAlert) setPenaltyNoticePopup(res.penaltyAlert);
+            }
             return;
           }
           if (modalActionConfig) {
             const res = runHomeAction(modalActionConfig.id, targetKid.id);
-            if (res) setSchoolBoardResult(res);
+            if (res) {
+              setSchoolBoardResult(res);
+              if (res.penaltyAlert) setPenaltyNoticePopup(res.penaltyAlert);
+            }
           }
         };
 
@@ -2101,6 +2212,16 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
               </form>
             )}
 
+            {/* Auto Phone Return Rule Info Banner */}
+            {isReturnPhoneBoard && autoReturnRule?.enabled && (
+              <div className="mt-3 rounded-2xl border border-[#E7CFA2] bg-[#FFF8EA] px-3.5 py-2.5 text-xs font-bold text-[#6D4C14]">
+                🤖{' '}
+                {lang === 'th'
+                  ? `ระบบคำนวณอัตโนมัติ: ไม่ได้ขอทำการบ้านก่อน ${minsToHHMM(hwPermWin.endMins)} น. เล่นได้ถึง ${minsToHHMM(autoReturnRule.noHomeworkDeadlineMins)} น. · ขอทำการบ้านแล้วใช้ได้ถึง ${minsToHHMM(autoReturnRule.homeworkExtendedDeadlineMins)} น. (คืนเกินกำหนดทั้งคู่ถูกลงโทษทันทีค่ะ)`
+                  : `Auto Rule: No homework request before ${minsToHHMM(hwPermWin.endMins)} limited to ${minsToHHMM(autoReturnRule.noHomeworkDeadlineMins)} · Registered homework until ${minsToHHMM(autoReturnRule.homeworkExtendedDeadlineMins)} (both penalized past deadline).`}
+              </div>
+            )}
+
             {/* Quick Note Input for Custom Check-In Shortcut */}
             {activeCustomCmd && activeCustomCmd.kind !== 'homework_permission' && (
               <div className="mt-3 rounded-2xl border border-[#B9E8DF] bg-[#F3FCFA] p-3">
@@ -2216,6 +2337,10 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                     : isHomeActionDoneForKid(modalActionConfig!.id, kid);
                   const isAway = isKidAwayOnDate(kid, todayKey);
                   const canTap = isEligible && !done && isModalActionOpen;
+                  const returnEval =
+                    isReturnPhoneBoard && isEligible && !done
+                      ? evaluateKidReturnPhoneSchedule(kid, now, appState.settings, lang)
+                      : null;
                   return (
                     <button
                       key={kid.id}
@@ -2236,6 +2361,8 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                           ? 'border-[#C5EAE2] bg-[#F2FBF9] opacity-80 cursor-default'
                           : isAway
                           ? 'border-[#D9CCE8] bg-[#F7F3FC] hover:bg-[#EFE8FC] cursor-pointer active:scale-[0.98]'
+                          : returnEval?.isPastDeadline
+                          ? 'border-[#EEB4C0] bg-[#FFF8FA] hover:bg-[#FFEFF3] hover:border-[#DE8096] cursor-pointer active:scale-[0.98] shadow-2xs'
                           : 'border-[#B9E8DF] bg-white hover:bg-[#E8FAF6] hover:border-[#64CBB9] cursor-pointer active:scale-[0.98] shadow-2xs'
                       }`}
                     >
@@ -2249,6 +2376,19 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                       <div className="font-extrabold text-base text-[#3D322C] truncate">
                         {kid.nickname}
                       </div>
+                      {returnEval && (
+                        <div
+                          className={`rounded-lg px-2 py-0.5 text-[10px] font-bold truncate ${
+                            returnEval.isPastDeadline
+                              ? 'bg-[#FFE5EC] text-[#8B1D36]'
+                              : returnEval.caseKind === 'homework_registered'
+                              ? 'bg-[#E3F8F3] text-[#0F4C42]'
+                              : 'bg-[#FFF3D6] text-[#7A5411]'
+                          }`}
+                        >
+                          {lang === 'th' ? returnEval.statusBadgeTh : returnEval.statusBadgeEn}
+                        </div>
+                      )}
                       <div
                         className={`rounded-xl px-2.5 py-1.5 text-xs font-extrabold text-center ${
                           !isEligible
@@ -2257,6 +2397,8 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                             ? 'bg-[#D6F5EE] text-[#1B5E52]'
                             : isAway
                             ? 'bg-[#EAE4F2] text-[#463A59]'
+                            : returnEval?.isPastDeadline
+                            ? 'bg-[#8B1D36] text-white'
                             : 'bg-[#114A42] text-white'
                         }`}
                       >
@@ -2290,7 +2432,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                 })}
               </div>
               {displayedBoardKids.length === 0 && (
-                <div className="py-10 text-center text-sm text-[#7B695F]">
+                <div className="py-10 px-4 text-center text-sm font-semibold text-[#7B695F]">
                   {lang === 'th' ? 'ไม่พบรายชื่อที่ค้นหา / มีสิทธิ์ในเงื่อนไขนี้' : 'No matching names'}
                 </div>
               )}
@@ -2436,8 +2578,8 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                           </div>
                           <div className="text-[11px] text-[#5B4782] truncate">
                             {lang === 'th'
-                              ? `กติกา 3 กลุ่ม · เส้นตายการบ้าน ${hwCurfewTh}`
-                              : `3 Groups · Curfew ${hwCurfewEn}`}
+                              ? `ไม่ขอทำการบ้านคืน ${minsToHHMM(autoReturnRule.noHomeworkDeadlineMins)} น. · ขอทำการบ้านคืน ${minsToHHMM(autoReturnRule.homeworkExtendedDeadlineMins)} น.`
+                              : `No HW ${minsToHHMM(autoReturnRule.noHomeworkDeadlineMins)} · HW ${minsToHHMM(autoReturnRule.homeworkExtendedDeadlineMins)}`}
                           </div>
                         </div>
                       </div>
@@ -2572,7 +2714,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                     <p>• เช้าเสาร์: 08:00–08:30 น. | เช้าอาทิตย์: 08:00–08:15 น. (+15 ⭐)</p>
                     <p>• กลับบ้านเก็บมือถือเข้ากล่อง (+5 ⭐) และเช็คลิสต์ครบ 4 ข้อรับมือถือรอบเย็น 18:30 น.</p>
                     <p>
-                      • ขออนุญาตทำการบ้าน ({hwPermWin.labelTh}) ใช้เพิ่มได้ถึง {hwCurfewTh} (หากเกินถือว่ายินยอมงดใช้มือถือวัน Free Day 1 วัน)
+                      • ขออนุญาตทำการบ้าน (กดก่อน {minsToHHMM(hwPermWin.endMins)} น.) ใช้เพิ่มได้ถึง {minsToHHMM(autoReturnRule.homeworkExtendedDeadlineMins)} น. · ถ้าไม่ขอเล่นได้ถึง {minsToHHMM(autoReturnRule.noHomeworkDeadlineMins)} น. (คืนเกินกำหนดทั้งคู่ลงโทษทันที)
                     </p>
                   </div>
 
@@ -2802,6 +2944,16 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                 );
                 setTrashConfirmTarget(null);
                 setTrashPinInput('');
+                const syncNote =
+                  !isMainCloudSyncActive && !linkedKidSession && !appState.settings.useOwnStorageOnly
+                    ? lang === 'th'
+                      ? `\n\n⚠️ หมายเหตุ: เครื่องนี้ยังไม่ได้เชื่อมต่อ Cloud Sync (${MASTER_ADMIN_EMAIL}) สถานะจะบันทึกเฉพาะในเครื่องนี้ ยังไม่เด้งไปเครื่องอื่นค่ะ`
+                      : `\n\n⚠️ Note: This device is not connected to Cloud Sync (${MASTER_ADMIN_EMAIL}). Saved locally only.`
+                    : cloudSyncError
+                    ? lang === 'th'
+                      ? '\n\n⚠️ ขณะนี้คลาวด์เชื่อมต่อขัดข้องชั่วคราว ระบบบันทึกในเครื่องไว้แล้ว และจะพยายามซิงค์ให้อัตโนมัติเมื่อออนไลน์ค่ะ'
+                      : '\n\n⚠️ Cloud connection issue detected. Saved locally and will retry when online.'
+                    : '';
                 onShowAlert({
                   icon: nextDone ? '🗑️✅' : '↩️',
                   title: nextDone
@@ -2811,7 +2963,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                     : lang === 'th'
                     ? 'อัปเดตสถานะเป็นรอทิ้งขยะแล้ว'
                     : 'Reset to Pending',
-                  message: `${displayName} · ${lang === 'th' ? 'โดย' : 'By'} ${confirmer}`,
+                  message: `${displayName} · ${lang === 'th' ? 'โดย' : 'By'} ${confirmer}${syncNote}`,
                   tone: nextDone ? 'mint' : 'yellow',
                 });
               }}
@@ -3298,6 +3450,12 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
           </div>
         </div>
       )}
+
+      <PenaltyNoticeModal
+        notice={penaltyNoticePopup}
+        lang={lang}
+        onClose={() => setPenaltyNoticePopup(null)}
+      />
     </div>
   );
 };

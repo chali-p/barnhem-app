@@ -11,8 +11,10 @@ import {
   TimedScheduleSlot,
 } from '../types/barnhem';
 import {
+  canKidUseCommand,
   compareLoginCommandsByTime,
   DEFAULT_HOMEWORK_CURFEW_MINS,
+  getAutoReturnPhoneRuleConfig,
   getCommandAuthMode,
   getCommandAuthModeMeta,
   getEffectiveCustomQuickCommands,
@@ -81,6 +83,18 @@ interface EditorDraftState {
   enabled: boolean;
   alwaysOpen: boolean;
   defaultNote: string;
+}
+
+interface AutoReturnRuleDraftState {
+  enabled: boolean;
+  targetMode: 'match_homework_permission' | 'all_eligible' | 'custom_kids';
+  targetKidIds: string[];
+  noHomeworkDeadlineHHMM: string;
+  noHomeworkPenaltyPreset: string;
+  noHomeworkPenaltyNote: string;
+  homeworkExtendedDeadlineHHMM: string;
+  homeworkExtendedPenaltyPreset: string;
+  homeworkExtendedPenaltyNote: string;
 }
 
 const QUICK_EMOJI_CHOICES = [
@@ -251,6 +265,113 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [addingPenaltyText, setAddingPenaltyText] = useState(false);
   const [newPenaltyTextInput, setNewPenaltyTextInput] = useState('');
+  const [autoReturnDraft, setAutoReturnDraft] = useState<AutoReturnRuleDraftState | null>(null);
+  const [addingAutoPenaltyTarget, setAddingAutoPenaltyTarget] = useState<'no_hw' | 'hw_ext' | null>(
+    null
+  );
+  const [newAutoPenaltyTextInput, setNewAutoPenaltyTextInput] = useState('');
+
+  const autoReturnRule = useMemo(
+    () => getAutoReturnPhoneRuleConfig(settings),
+    [settings]
+  );
+
+  const openAutoReturnRuleModal = () => {
+    const hwKidsDefault = kids
+      .filter((k) => canKidUseCommand('night_homework_permission', k, settings))
+      .map((k) => k.id);
+    setAddingAutoPenaltyTarget(null);
+    setNewAutoPenaltyTextInput('');
+    setAutoReturnDraft({
+      enabled: autoReturnRule.enabled,
+      targetMode: autoReturnRule.targetMode,
+      targetKidIds:
+        autoReturnRule.targetKidIds.length > 0
+          ? autoReturnRule.targetKidIds
+          : hwKidsDefault,
+      noHomeworkDeadlineHHMM: minsToHHMM(autoReturnRule.noHomeworkDeadlineMins),
+      noHomeworkPenaltyPreset: autoReturnRule.noHomeworkPenaltyPreset,
+      noHomeworkPenaltyNote: autoReturnRule.noHomeworkPenaltyNote,
+      homeworkExtendedDeadlineHHMM: minsToHHMM(
+        autoReturnRule.homeworkExtendedDeadlineMins
+      ),
+      homeworkExtendedPenaltyPreset: autoReturnRule.homeworkExtendedPenaltyPreset,
+      homeworkExtendedPenaltyNote: autoReturnRule.homeworkExtendedPenaltyNote,
+    });
+  };
+
+  const handleAddAutoCustomPenaltyPreset = () => {
+    const clean = newAutoPenaltyTextInput.trim().slice(0, 120);
+    if (!clean || !addingAutoPenaltyTarget) return;
+    const nextPresets = Array.from(new Set([...customPenaltyPresets, clean])).slice(0, 30);
+    onUpdateSettings({ customPenaltyPresets: nextPresets });
+    setAutoReturnDraft((prev) => {
+      if (!prev) return prev;
+      if (addingAutoPenaltyTarget === 'hw_ext') {
+        return {
+          ...prev,
+          homeworkExtendedPenaltyPreset: clean,
+          homeworkExtendedPenaltyNote: clean,
+        };
+      }
+      return {
+        ...prev,
+        noHomeworkPenaltyPreset: clean,
+        noHomeworkPenaltyNote: clean,
+      };
+    });
+    setNewAutoPenaltyTextInput('');
+    setAddingAutoPenaltyTarget(null);
+  };
+
+  const handleSaveAutoReturnRule = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!autoReturnDraft) return;
+    const returnCore =
+      effectiveCoreActions.find((a) => a.id === 'night_return_phone') ??
+      HOME_QUICK_ACTIONS.find((a) => a.id === 'night_return_phone')!;
+    const existingSchedule = { ...(settings.timedCommandSchedule ?? {}) };
+    const prevSlot = existingSchedule.night_return_phone;
+    const noHwMins = parseHHMMToMins(autoReturnDraft.noHomeworkDeadlineHHMM, 21 * 60);
+    const hwExtMins = parseHHMMToMins(
+      autoReturnDraft.homeworkExtendedDeadlineHHMM,
+      22 * 60 + 45
+    );
+    const baseEndMins = prevSlot?.endMins ?? returnCore.endMins;
+    const minNeededEnd = Math.min(23 * 60 + 59, Math.max(noHwMins, hwExtMins) + 15);
+    const safeEndMins = autoReturnDraft.enabled ? Math.max(baseEndMins, minNeededEnd) : baseEndMins;
+    existingSchedule.night_return_phone = {
+      ...(prevSlot ?? {}),
+      startMins: prevSlot?.startMins ?? returnCore.startMins,
+      endMins: safeEndMins,
+      earlyGraceMins: prevSlot?.earlyGraceMins ?? returnCore.earlyGraceMins,
+      deadlineMins: prevSlot?.deadlineMins ?? returnCore.deadlineMins,
+      emoji: prevSlot?.emoji ?? returnCore.emoji,
+      titleTh: prevSlot?.titleTh ?? returnCore.titleTh,
+      titleEn: prevSlot?.titleEn ?? returnCore.titleEn,
+      descriptionTh: prevSlot?.descriptionTh ?? returnCore.descriptionTh,
+      descriptionEn: prevSlot?.descriptionEn ?? returnCore.descriptionEn,
+      rewardStars: prevSlot?.rewardStars ?? returnCore.rewardStars,
+      penaltyPreset: prevSlot?.penaltyPreset ?? returnCore.penaltyPreset,
+      penaltyNote: prevSlot?.penaltyNote ?? returnCore.penaltyNote,
+      commandType: prevSlot?.commandType ?? returnCore.commandType,
+      enabled: prevSlot?.enabled ?? returnCore.enabled,
+      hidden: prevSlot?.hidden ?? false,
+      autoNoHomeworkRuleEnabled: autoReturnDraft.enabled,
+      noHomeworkTargetMode: autoReturnDraft.targetMode,
+      noHomeworkTargetKidIds: autoReturnDraft.targetKidIds,
+      noHomeworkDeadlineMins: noHwMins,
+      noHomeworkPenaltyPreset: autoReturnDraft.noHomeworkPenaltyPreset,
+      noHomeworkPenaltyNote: autoReturnDraft.noHomeworkPenaltyNote.trim().slice(0, 120),
+      homeworkExtendedDeadlineMins: hwExtMins,
+      homeworkExtendedPenaltyPreset: autoReturnDraft.homeworkExtendedPenaltyPreset,
+      homeworkExtendedPenaltyNote: autoReturnDraft.homeworkExtendedPenaltyNote.trim().slice(0, 120),
+    };
+    onUpdateSettings({
+      timedCommandSchedule: existingSchedule,
+    });
+    setAutoReturnDraft(null);
+  };
 
   const closeDraftModal = () => {
     setDraft(null);
@@ -301,6 +422,7 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
       const existingSchedule = { ...(settings.timedCommandSchedule ?? {}) };
       const prevSlot = existingSchedule[item.id];
       existingSchedule[item.id] = {
+        ...(prevSlot ?? {}),
         startMins: prevSlot?.startMins ?? item.startMins,
         endMins: prevSlot?.endMins ?? item.endMins,
         earlyGraceMins: prevSlot?.earlyGraceMins ?? item.earlyGraceMins,
@@ -336,7 +458,7 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
           : `Delete "${item.titleEn}"?`,
       message: item.isCore
         ? lang === 'th'
-          ? 'ปุ่มนี้จะถูกซ่อนออกจากหน้าล็อคอิน สามารถกด "รีเซ็ตปุ่มมาตรฐาน (9 ปุ่ม)" เพื่อกู้คืนได้ทุกเมื่อค่ะ'
+          ? `ปุ่มนี้จะถูกซ่อนออกจากหน้าล็อคอิน สามารถกด "รีเซ็ตปุ่มมาตรฐาน (${HOME_QUICK_ACTIONS.length} ปุ่ม)" เพื่อกู้คืนได้ทุกเมื่อค่ะ`
           : 'This button will be hidden from the login screen. Use Reset Standard Buttons to restore anytime.'
         : lang === 'th'
         ? 'ปุ่มคำสั่งที่เพิ่มเองนี้จะถูกลบออกจากหน้าล็อคอินค่ะ'
@@ -373,14 +495,17 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
       icon: '🔄',
       title:
         lang === 'th'
-          ? 'รีเซ็ตปุ่มมาตรฐานทั้ง 9 ปุ่ม?'
-          : 'Reset All 9 Standard Buttons?',
+          ? `รีเซ็ตปุ่มมาตรฐานทั้ง ${HOME_QUICK_ACTIONS.length} ปุ่ม?`
+          : `Reset All ${HOME_QUICK_ACTIONS.length} Standard Buttons?`,
       message:
         lang === 'th'
           ? 'คืนค่าชื่อปุ่ม เวลาเปิด-ปิด กดก่อนเวลา เส้นตาย ดาวรางวัล บทลงโทษ และสิทธิ์การกดของปุ่มมาตรฐานทั้งหมดกลับเป็นค่าเริ่มต้นค่ะ'
-          : 'Restore all 9 standard buttons to default schedules, rewards, penalties, and permissions.',
+          : `Restore all ${HOME_QUICK_ACTIONS.length} standard buttons to default schedules, rewards, penalties, and permissions.`,
       tone: 'lavender',
-      confirmLabel: lang === 'th' ? '🔄 ยืนยันรีเซ็ต (9 ปุ่ม)' : 'Reset 9 Buttons',
+      confirmLabel:
+        lang === 'th'
+          ? `🔄 ยืนยันรีเซ็ต (${HOME_QUICK_ACTIONS.length} ปุ่ม)`
+          : `Reset ${HOME_QUICK_ACTIONS.length} Buttons`,
       onConfirm: () => {
         const nextSchedule: Record<string, TimedScheduleSlot> = {};
         const nextPerms: Record<string, CommandAccessRule> = {
@@ -460,9 +585,11 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
 
     if (draft.mode === 'edit' && draft.isCore && draft.targetId) {
       const actionId = draft.targetId as HomeQuickActionId;
+      const prevSlot = settings.timedCommandSchedule?.[actionId];
       const nextSchedule: Record<string, TimedScheduleSlot> = {
         ...(settings.timedCommandSchedule ?? {}),
         [actionId]: {
+          ...(prevSlot ?? {}),
           startMins,
           endMins,
           earlyGraceMins,
@@ -486,7 +613,6 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
       };
       onUpdateSettings({
         timedCommandSchedule: nextSchedule,
-        ...(actionId === 'night_return_phone' ? { homeworkCurfewMins: deadlineMins } : {}),
         commandPermissions: nextPerms,
       });
       closeDraftModal();
@@ -579,10 +705,17 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
+              onClick={openAutoReturnRuleModal}
+              className="rounded-xl border border-[#E7C67D] bg-[#FFF4DF] hover:bg-[#FFE9C2] px-3 py-2 text-xs font-extrabold text-[#6E4905] cursor-pointer transition-colors"
+            >
+              ⏰ {lang === 'th' ? 'ตั้งค่าคืนมือถือ (21:00)' : 'Auto Phone Curfew (21:00)'}
+            </button>
+            <button
+              type="button"
               onClick={handleResetStandardButtons}
               className="rounded-xl border border-[#DDD0C0] bg-white hover:bg-[#FAF5EF] px-3 py-2 text-xs font-bold text-[#3D322C] cursor-pointer transition-colors"
             >
-              🔄 {lang === 'th' ? 'รีเซ็ตปุ่มมาตรฐาน (9 ปุ่ม)' : 'Reset Standard (9)'}
+              🔄 {lang === 'th' ? `รีเซ็ตปุ่มมาตรฐาน (${HOME_QUICK_ACTIONS.length} ปุ่ม)` : `Reset Standard (${HOME_QUICK_ACTIONS.length})`}
             </button>
             <button
               type="button"
@@ -724,6 +857,28 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
                     {penaltySummary}
                   </span>
                 </div>
+
+                {item.id === 'night_return_phone' && (
+                  <div className="mt-1.5 rounded-xl border border-[#E7C67D] bg-[#FFF8EB] px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold text-[#6E4905]">
+                      🤖{' '}
+                      {autoReturnRule.enabled
+                        ? lang === 'th'
+                          ? `อัตโนมัติ: ไม่ขอทำการบ้านคืนถึง ${minsToHHMM(autoReturnRule.noHomeworkDeadlineMins)} น. · ขอทำการบ้านถึง ${minsToHHMM(autoReturnRule.homeworkExtendedDeadlineMins)} น. (คืนเกินเวลาทั้งคู่ลงโทษทันที)`
+                          : `Auto: No HW by ${minsToHHMM(autoReturnRule.noHomeworkDeadlineMins)} · HW by ${minsToHHMM(autoReturnRule.homeworkExtendedDeadlineMins)} (both penalized past deadline)`
+                        : lang === 'th'
+                        ? 'โหมดคำนวณอัตโนมัติปิดอยู่ (ใช้เส้นตายเดียว)'
+                        : 'Auto-deadline rule disabled'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={openAutoReturnRuleModal}
+                      className="rounded-lg border border-[#DEC07A] bg-white hover:bg-[#FFF0CE] px-2 py-0.5 text-[10px] font-extrabold text-[#6E4905] cursor-pointer shrink-0"
+                    >
+                      ⚙️ {lang === 'th' ? 'ตั้งค่าเพิ่มเติม' : 'Extra Settings'}
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -1134,6 +1289,35 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
                 </div>
               </div>
 
+              {draft.targetId === 'night_return_phone' && (
+                <div className="rounded-2xl border border-[#E7C67D] bg-[#FFF8EB] p-3.5 flex flex-wrap items-center justify-between gap-2.5">
+                  <div className="space-y-0.5 min-w-0">
+                    <div className="text-xs font-extrabold text-[#6E4905]">
+                      🤖 {lang === 'th' ? 'กติกาคำนวณอัตโนมัติ (ไม่ได้ขอทำการบ้าน 21:00 น.)' : 'Auto Rule (No Homework 21:00)'}
+                    </div>
+                    <div className="text-[11px] text-[#7B5D1E]">
+                      {autoReturnRule.enabled
+                        ? lang === 'th'
+                          ? `เปิดอยู่: ไม่ได้ขอทำการบ้านคืนถึง ${minsToHHMM(autoReturnRule.noHomeworkDeadlineMins)} น. · ขอทำการบ้านแล้วคืนถึง ${minsToHHMM(autoReturnRule.homeworkExtendedDeadlineMins)} น.`
+                          : `Active: No HW ${minsToHHMM(autoReturnRule.noHomeworkDeadlineMins)} · HW ${minsToHHMM(autoReturnRule.homeworkExtendedDeadlineMins)}`
+                        : lang === 'th'
+                        ? 'ปิดอยู่'
+                        : 'Disabled'}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeDraftModal();
+                      openAutoReturnRuleModal();
+                    }}
+                    className="rounded-xl border border-[#D8B25D] bg-white hover:bg-[#FFF1D2] px-3 py-1.5 text-xs font-extrabold text-[#6E4905] cursor-pointer shrink-0"
+                  >
+                    ⚙️ {lang === 'th' ? 'ตั้งค่าเพิ่มเติม' : 'Configure Auto Rule'}
+                  </button>
+                </div>
+              )}
+
               {/* 6. Kid Eligibility Picker */}
               <div className="rounded-2xl border border-[#EADCCB] bg-white p-3.5 space-y-2.5">
                 <div className="text-xs font-extrabold text-[#3D322C]">
@@ -1290,6 +1474,503 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
                 className="rounded-xl bg-[#3D322C] hover:bg-[#2B221E] text-white px-5 py-2.5 text-xs sm:text-sm font-extrabold cursor-pointer transition-colors"
               >
                 💾 {lang === 'th' ? 'บันทึกปุ่มคำสั่ง' : 'Save Command'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Extra Settings Modal: Auto Return Phone Curfew (Single Button Auto-Calculation) */}
+      {autoReturnDraft && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-[#3D322C]/45 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setAutoReturnDraft(null)}
+        >
+          <form
+            onSubmit={handleSaveAutoReturnRule}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-2xl max-h-[92dvh] flex flex-col rounded-[28px] border-2 border-[#E7C67D] bg-[#FFFDF9] shadow-2xl overflow-hidden"
+          >
+            <div className="border-b border-[#EFE5D9] bg-[#FFF8EB] px-5 py-4 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base sm:text-lg font-extrabold text-[#5E3E04] flex items-center gap-2">
+                  <span>⏰</span>
+                  <span>
+                    {lang === 'th'
+                      ? 'ตั้งค่าเพิ่มเติม: คำนวณคืนมือถืออัตโนมัติ (ปุ่มเดียว 🌙 คืนมือถือ)'
+                      : 'Extra Settings: Auto Return Phone Curfew'}
+                  </span>
+                </h3>
+                <p className="text-xs text-[#7B5D1E] mt-0.5">
+                  {lang === 'th'
+                    ? 'ใช้ปุ่ม "🌙 คืนมือถือ" ปุ่มเดียวหน้าล็อคอิน แล้วให้ระบบคำนวณเส้นตายและบทลงโทษอัตโนมัติตามการกดขอทำการบ้านค่ะ'
+                    : 'Use one "Return Phone" button and let the system auto-calculate each child’s deadline and penalty.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAutoReturnDraft(null)}
+                className="h-9 w-9 rounded-full bg-[#FADADD] hover:bg-[#F7C7CD] text-[#3D322C] font-bold cursor-pointer shrink-0"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+              {/* Toggle ON/OFF */}
+              <label className="rounded-2xl border border-[#EADCCB] bg-white p-3.5 flex items-center justify-between gap-3 cursor-pointer">
+                <div>
+                  <div className="text-xs sm:text-sm font-extrabold text-[#3D322C]">
+                    🤖 {lang === 'th' ? 'เปิดคำนวณเวลาคืนมือถืออัตโนมัติ' : 'Enable Auto Curfew Calculation'}
+                  </div>
+                  <div className="text-[11px] text-[#6E5C52] mt-0.5">
+                    {lang === 'th'
+                      ? 'ถ้ารายชื่อที่กำหนดไม่ได้กด "ขออนุญาตทำการบ้าน" ตามเวลา → เล่นได้ถึง 21:00 น. และถ้าคืนหลัง 21:00 น. จะลงโทษทันที'
+                      : 'If target kids did not request homework in time, limit them to 21:00 and penalize immediately past 21:00.'}
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={autoReturnDraft.enabled}
+                  onChange={(e) =>
+                    setAutoReturnDraft((prev) =>
+                      prev ? { ...prev, enabled: e.target.checked } : prev
+                    )
+                  }
+                  className="h-5 w-5 accent-[#3D322C] cursor-pointer shrink-0"
+                />
+              </label>
+
+              {/* Time Settings */}
+              <div className="rounded-2xl border border-[#EADCCB] bg-white p-4 grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div className="space-y-1">
+                  <label className="block text-xs font-extrabold text-[#9D174D]">
+                    ⏰ {lang === 'th' ? 'ไม่ได้กดขอทำการบ้าน → เล่นได้ถึง (เส้นตาย)' : 'No Homework Deadline'}
+                  </label>
+                  <input
+                    type="time"
+                    value={autoReturnDraft.noHomeworkDeadlineHHMM}
+                    onChange={(e) =>
+                      setAutoReturnDraft((prev) =>
+                        prev ? { ...prev, noHomeworkDeadlineHHMM: e.target.value } : prev
+                      )
+                    }
+                    className="w-full rounded-xl border-2 border-[#E7B5C2] bg-[#FFF9FB] px-3 py-2 text-sm font-extrabold tabular-nums text-[#3D322C]"
+                  />
+                  <p className="text-[11px] text-[#6E5C52]">
+                    {lang === 'th'
+                      ? 'คืนภายในเวลานี้รับดาวตรงเวลา · คืนหลังเวลานี้ลงโทษทันที'
+                      : 'On time until this clock; immediate penalty afterwards.'}
+                  </p>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-extrabold text-[#0F4C42]">
+                    📝 {lang === 'th' ? 'กดขอทำการบ้านแล้ว → ต่อเวลาคืนได้ถึง' : 'With Homework Deadline'}
+                  </label>
+                  <input
+                    type="time"
+                    value={autoReturnDraft.homeworkExtendedDeadlineHHMM}
+                    onChange={(e) =>
+                      setAutoReturnDraft((prev) =>
+                        prev
+                          ? { ...prev, homeworkExtendedDeadlineHHMM: e.target.value }
+                          : prev
+                      )
+                    }
+                    className="w-full rounded-xl border-2 border-[#8FD4C6] bg-[#F3FCFA] px-3 py-2 text-sm font-extrabold tabular-nums text-[#3D322C]"
+                  />
+                  <p className="text-[11px] text-[#6E5C52]">
+                    {lang === 'th'
+                      ? 'สำหรับน้องที่กด "ขออนุญาตทำการบ้าน" ตามเวลาแล้ว'
+                      : 'Applies when homework permission was registered today.'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Penalty when past 21:00 without homework registration */}
+              <div className="rounded-2xl border border-[#F0B8C3] bg-[#FFF8FA] p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="text-xs font-extrabold text-[#9D174D]">
+                    ⚖️{' '}
+                    {lang === 'th'
+                      ? `บทลงโทษทันทีเมื่อคืนหลัง ${autoReturnDraft.noHomeworkDeadlineHHMM} น. (กรณีไม่ได้ขอทำการบ้าน)`
+                      : `Immediate Penalty Past ${autoReturnDraft.noHomeworkDeadlineHHMM} (No Homework)`}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddingAutoPenaltyTarget('no_hw');
+                      setNewAutoPenaltyTextInput('');
+                    }}
+                    className="rounded-xl border border-[#DFC7CD] bg-white hover:bg-[#FFF0F4] px-3 py-1 text-[11px] font-extrabold text-[#3D322C] cursor-pointer"
+                  >
+                    + {lang === 'th' ? 'เพิ่มข้อความคำสั่ง' : 'Add Option'}
+                  </button>
+                </div>
+
+                <select
+                  value={autoReturnDraft.noHomeworkPenaltyPreset}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '__add_new__') {
+                      setAddingAutoPenaltyTarget('no_hw');
+                      setNewAutoPenaltyTextInput('');
+                      return;
+                    }
+                    const presetMeta = getPenaltyPresetMeta(val);
+                    const nextNote = presetMeta
+                      ? lang === 'th'
+                        ? presetMeta.defaultNoteTh
+                        : presetMeta.defaultNoteEn
+                      : val;
+                    setAutoReturnDraft((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            noHomeworkPenaltyPreset: val,
+                            noHomeworkPenaltyNote: nextNote,
+                          }
+                        : prev
+                    );
+                  }}
+                  className="w-full rounded-xl border-2 border-[#3D322C]/75 bg-white px-3 py-2.5 text-xs sm:text-sm font-bold text-[#3D322C]"
+                >
+                  {PENALTY_PRESET_OPTIONS.filter((opt) => opt.id !== 'lock_after_deadline').map(
+                    (opt) => (
+                      <option key={opt.id} value={opt.id}>
+                        {opt.emoji} {lang === 'th' ? opt.labelTh : opt.labelEn}
+                      </option>
+                    )
+                  )}
+                  {customPenaltyPresets.map((customText) => (
+                    <option key={`auto-custom-${customText}`} value={customText}>
+                      ✨ {customText}
+                    </option>
+                  ))}
+                  <option value="__add_new__">
+                    ➕ {lang === 'th' ? 'เพิ่มข้อความคำสั่งใหม่...' : 'Add new option...'}
+                  </option>
+                </select>
+
+                {addingAutoPenaltyTarget === 'no_hw' && (
+                  <div className="rounded-xl border border-[#E7B5C2] bg-white p-2.5 flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={newAutoPenaltyTextInput}
+                      onChange={(e) => setNewAutoPenaltyTextInput(e.target.value)}
+                      placeholder={
+                        lang === 'th'
+                          ? 'พิมพ์ข้อความบทลงโทษใหม่...'
+                          : 'Enter custom penalty...'
+                      }
+                      className="flex-1 min-w-[180px] rounded-lg border border-[#DFD2C3] px-3 py-1.5 text-xs text-[#3D322C] focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddAutoCustomPenaltyPreset}
+                      className="rounded-lg bg-[#8B1D36] hover:bg-[#6E162A] text-white px-3 py-1.5 text-xs font-extrabold cursor-pointer"
+                    >
+                      {lang === 'th' ? 'เพิ่มข้อความ' : 'Add'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAddingAutoPenaltyTarget(null)}
+                      className="rounded-lg border border-[#DDD0C0] bg-white px-2.5 py-1.5 text-xs font-bold text-[#6E5C52] cursor-pointer"
+                    >
+                      {lang === 'th' ? 'ยกเลิก' : 'Cancel'}
+                    </button>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <label className="block text-[11px] font-extrabold text-[#3D322C]">
+                    {lang === 'th' ? 'ข้อความอธิบายบทลงโทษ (กรณีไม่ได้ขอทำการบ้าน)' : 'Penalty Description (No Homework)'}
+                  </label>
+                  <input
+                    type="text"
+                    value={autoReturnDraft.noHomeworkPenaltyNote}
+                    onChange={(e) =>
+                      setAutoReturnDraft((prev) =>
+                        prev ? { ...prev, noHomeworkPenaltyNote: e.target.value } : prev
+                      )
+                    }
+                    className="w-full rounded-xl border border-[#E6CFD4] bg-white px-3.5 py-2 text-xs sm:text-sm text-[#3D322C]"
+                  />
+                </div>
+              </div>
+
+              {/* Penalty when past 22:45 WITH homework registration */}
+              <div className="rounded-2xl border border-[#A5DFD3] bg-[#F2FCF9] p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="text-xs font-extrabold text-[#0F4C42]">
+                    ⚖️{' '}
+                    {lang === 'th'
+                      ? `บทลงโทษทันทีเมื่อคืนหลัง ${autoReturnDraft.homeworkExtendedDeadlineHHMM} น. (กรณีขอทำการบ้านไว้แล้ว)`
+                      : `Immediate Penalty Past ${autoReturnDraft.homeworkExtendedDeadlineHHMM} (With Homework)`}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddingAutoPenaltyTarget('hw_ext');
+                      setNewAutoPenaltyTextInput('');
+                    }}
+                    className="rounded-xl border border-[#B9E2D9] bg-white hover:bg-[#E4F8F3] px-3 py-1 text-[11px] font-extrabold text-[#0F4C42] cursor-pointer"
+                  >
+                    + {lang === 'th' ? 'เพิ่มข้อความคำสั่ง' : 'Add Option'}
+                  </button>
+                </div>
+
+                <select
+                  value={autoReturnDraft.homeworkExtendedPenaltyPreset}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '__add_new__') {
+                      setAddingAutoPenaltyTarget('hw_ext');
+                      setNewAutoPenaltyTextInput('');
+                      return;
+                    }
+                    const presetMeta = getPenaltyPresetMeta(val);
+                    const nextNote = presetMeta
+                      ? lang === 'th'
+                        ? presetMeta.defaultNoteTh
+                        : presetMeta.defaultNoteEn
+                      : val;
+                    setAutoReturnDraft((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            homeworkExtendedPenaltyPreset: val,
+                            homeworkExtendedPenaltyNote: nextNote,
+                          }
+                        : prev
+                    );
+                  }}
+                  className="w-full rounded-xl border-2 border-[#0F4C42]/60 bg-white px-3 py-2.5 text-xs sm:text-sm font-bold text-[#3D322C]"
+                >
+                  {PENALTY_PRESET_OPTIONS.filter((opt) => opt.id !== 'lock_after_deadline').map(
+                    (opt) => (
+                      <option key={`hw-${opt.id}`} value={opt.id}>
+                        {opt.emoji} {lang === 'th' ? opt.labelTh : opt.labelEn}
+                      </option>
+                    )
+                  )}
+                  {customPenaltyPresets.map((customText) => (
+                    <option key={`auto-hw-custom-${customText}`} value={customText}>
+                      ✨ {customText}
+                    </option>
+                  ))}
+                  <option value="__add_new__">
+                    ➕ {lang === 'th' ? 'เพิ่มข้อความคำสั่งใหม่...' : 'Add new option...'}
+                  </option>
+                </select>
+
+                {addingAutoPenaltyTarget === 'hw_ext' && (
+                  <div className="rounded-xl border border-[#8FD4C6] bg-white p-2.5 flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={newAutoPenaltyTextInput}
+                      onChange={(e) => setNewAutoPenaltyTextInput(e.target.value)}
+                      placeholder={
+                        lang === 'th'
+                          ? 'พิมพ์ข้อความบทลงโทษใหม่...'
+                          : 'Enter custom penalty...'
+                      }
+                      className="flex-1 min-w-[180px] rounded-lg border border-[#DFD2C3] px-3 py-1.5 text-xs text-[#3D322C] focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddAutoCustomPenaltyPreset}
+                      className="rounded-lg bg-[#0F4C42] hover:bg-[#0A3830] text-white px-3 py-1.5 text-xs font-extrabold cursor-pointer"
+                    >
+                      {lang === 'th' ? 'เพิ่มข้อความ' : 'Add'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAddingAutoPenaltyTarget(null)}
+                      className="rounded-lg border border-[#DDD0C0] bg-white px-2.5 py-1.5 text-xs font-bold text-[#6E5C52] cursor-pointer"
+                    >
+                      {lang === 'th' ? 'ยกเลิก' : 'Cancel'}
+                    </button>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <label className="block text-[11px] font-extrabold text-[#0F4C42]">
+                    {lang === 'th' ? 'ข้อความอธิบายบทลงโทษ (กรณีขอทำการบ้านไว้แล้ว)' : 'Penalty Description (With Homework)'}
+                  </label>
+                  <input
+                    type="text"
+                    value={autoReturnDraft.homeworkExtendedPenaltyNote}
+                    onChange={(e) =>
+                      setAutoReturnDraft((prev) =>
+                        prev ? { ...prev, homeworkExtendedPenaltyNote: e.target.value } : prev
+                      )
+                    }
+                    className="w-full rounded-xl border border-[#A5DFD3] bg-white px-3.5 py-2 text-xs sm:text-sm text-[#3D322C]"
+                  />
+                </div>
+              </div>
+
+              {/* Target Kids Rule Mode */}
+              <div className="rounded-2xl border border-[#EADCCB] bg-white p-4 space-y-3">
+                <div className="text-xs font-extrabold text-[#3D322C]">
+                  👥{' '}
+                  {lang === 'th'
+                    ? 'รายชื่อน้องที่เข้ากติกา "ต้องกดขอทำการบ้าน (ถ้าไม่ขอ คืนไม่เกิน 21:00 น.)"'
+                    : 'Kids Subject to the Auto 21:00 No-Homework Rule'}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {[
+                    {
+                      id: 'match_homework_permission' as const,
+                      th: '📝 ตามปุ่มขอทำการบ้าน',
+                      en: 'Match HW Permission List',
+                    },
+                    {
+                      id: 'all_eligible' as const,
+                      th: '📱 ทุกคนที่กดคืนมือถือ',
+                      en: 'All Return-Phone Kids',
+                    },
+                    {
+                      id: 'custom_kids' as const,
+                      th: '🎯 เลือกรายชื่อเอง',
+                      en: 'Select Specific Kids',
+                    },
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() =>
+                        setAutoReturnDraft((prev) =>
+                          prev ? { ...prev, targetMode: m.id } : prev
+                        )
+                      }
+                      className={`rounded-xl border-2 px-3 py-2 text-xs font-extrabold cursor-pointer transition-colors ${
+                        autoReturnDraft.targetMode === m.id
+                          ? 'border-[#6ECAB6] bg-[#E3F8F3] text-[#0F4C42]'
+                          : 'border-[#EAE0D5] bg-[#FAF7F2] text-[#6E5C52] hover:bg-[#F3ECE3]'
+                      }`}
+                    >
+                      {lang === 'th' ? m.th : m.en}
+                    </button>
+                  ))}
+                </div>
+
+                {autoReturnDraft.targetMode === 'custom_kids' && (
+                  <div className="space-y-2.5 pt-1">
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        {
+                          label: lang === 'th' ? 'ทั้งหมด' : 'All',
+                          ids: kids.map((k) => k.id),
+                        },
+                        {
+                          label: lang === 'th' ? 'กลุ่ม 1' : 'Group 1',
+                          ids: kids.filter((k) => k.group === 1).map((k) => k.id),
+                        },
+                        {
+                          label: lang === 'th' ? 'กลุ่ม 2' : 'Group 2',
+                          ids: kids.filter((k) => k.group === 2).map((k) => k.id),
+                        },
+                        {
+                          label: lang === 'th' ? 'กลุ่ม 3' : 'Group 3',
+                          ids: kids.filter((k) => k.group === 3).map((k) => k.id),
+                        },
+                        {
+                          label: lang === 'th' ? 'กลุ่ม 2+3' : 'Group 2+3',
+                          ids: kids
+                            .filter((k) => k.group === 2 || k.group === 3)
+                            .map((k) => k.id),
+                        },
+                        {
+                          label: lang === 'th' ? 'ล้าง' : 'Clear',
+                          ids: [] as string[],
+                        },
+                      ].map((btn) => (
+                        <button
+                          key={btn.label}
+                          type="button"
+                          onClick={() =>
+                            setAutoReturnDraft((prev) =>
+                              prev ? { ...prev, targetKidIds: btn.ids } : prev
+                            )
+                          }
+                          className="rounded-lg border border-[#E2D6C8] bg-[#FAF6F0] hover:bg-[#EFE7DC] px-2.5 py-1 text-[11px] font-bold text-[#4E3F38] cursor-pointer"
+                        >
+                          {btn.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-52 overflow-y-auto pr-0.5">
+                      {kids.map((kid) => {
+                        const checked = autoReturnDraft.targetKidIds.includes(kid.id);
+                        return (
+                          <button
+                            key={kid.id}
+                            type="button"
+                            onClick={() =>
+                              setAutoReturnDraft((prev) => {
+                                if (!prev) return prev;
+                                const exists = prev.targetKidIds.includes(kid.id);
+                                return {
+                                  ...prev,
+                                  targetKidIds: exists
+                                    ? prev.targetKidIds.filter((id) => id !== kid.id)
+                                    : [...prev.targetKidIds, kid.id],
+                                };
+                              })
+                            }
+                            className={`rounded-xl border px-3 py-2 text-left flex items-center justify-between gap-2 cursor-pointer transition-colors ${
+                              checked
+                                ? 'border-[#6ECAB6] bg-[#E8FAF6] text-[#0F4C42]'
+                                : 'border-[#E6DCD2] bg-white text-[#5E4E45] hover:bg-[#FAF6F0]'
+                            }`}
+                          >
+                            <span className="flex items-center gap-2 min-w-0">
+                              <span
+                                className={`h-4 w-4 rounded flex items-center justify-center text-[10px] font-extrabold shrink-0 border ${
+                                  checked
+                                    ? 'bg-[#2F2824] border-[#2F2824] text-white'
+                                    : 'bg-white border-[#B9ABA0] text-transparent'
+                                }`}
+                              >
+                                ✓
+                              </span>
+                              <span className="text-xs font-extrabold truncate">
+                                {kid.emoji} {kid.nickname}
+                              </span>
+                            </span>
+                            <span className="text-[10px] font-bold opacity-65 shrink-0">
+                              {lang === 'th' ? `ก.${kid.group ?? 1}` : `G${kid.group ?? 1}`}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="border-t border-[#EFE5D9] bg-[#FFFDF9] px-5 py-3.5 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setAutoReturnDraft(null)}
+                className="rounded-xl border border-[#DFD2C3] bg-white hover:bg-[#FAF5EF] px-5 py-2.5 text-xs sm:text-sm font-extrabold text-[#4E3F38] cursor-pointer"
+              >
+                {lang === 'th' ? 'ยกเลิก' : 'Cancel'}
+              </button>
+              <button
+                type="submit"
+                className="rounded-xl bg-[#3D322C] hover:bg-[#2B221E] text-white px-5 py-2.5 text-xs sm:text-sm font-extrabold cursor-pointer"
+              >
+                💾 {lang === 'th' ? 'บันทึกตั้งค่าเพิ่มเติม' : 'Save Extra Settings'}
               </button>
             </div>
           </form>

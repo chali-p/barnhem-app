@@ -2,8 +2,9 @@ import { AppSettings, Language, Member, ModalAlertPayload } from '../types/barnh
 import {
   canKidUseCommand,
   doesKidHavePhone,
+  evaluateKidReturnPhoneSchedule,
   formatThaiCurfewClock,
-  getEffectiveHomeworkCurfewMins,
+  getAutoReturnPhoneRuleConfig,
   getEffectiveHomeworkPermissionWindow,
   minsToHHMM,
 } from './expressKiosk';
@@ -499,7 +500,7 @@ export function evaluateKidStepReminders(
     } else if (canReturnPhone && !kid.daily.phoneReturnedChecked) {
       // Check dynamic homework permission window & phone return curfew
       const hwWin = getEffectiveHomeworkPermissionWindow(settings);
-      const curfew = getEffectiveHomeworkCurfewMins(settings);
+      const curfew = getAutoReturnPhoneRuleConfig(settings).homeworkExtendedDeadlineMins;
       const curfewTh = formatThaiCurfewClock(curfew);
       const curfewEn = minsToHHMM(curfew);
       const hasHw = Boolean(kid.daily.homeworkRegisteredSubject);
@@ -528,29 +529,33 @@ export function evaluateKidStepReminders(
         });
       }
 
-      const delta = mins - curfew;
+      const returnEval = evaluateKidReturnPhoneSchedule(kid, now, settings, 'th');
+      const returnDeadline = returnEval.deadlineMins;
+      const returnDeadlineTh = returnEval.deadlineTh;
+      const returnDeadlineEn = returnEval.deadlineEn;
+      const delta = mins - returnDeadline;
       pendingSteps.push({
         id: 'g2_phone_return',
         shift: 'shift_night',
         targetModal: 'shift_night',
         urgent: delta > 0,
         approachingDeadline: delta >= -30 && delta <= 0,
-        deadlineMinutes: curfew,
+        deadlineMinutes: returnDeadline,
         minutesDelta: delta,
         titleTh: hasHw
-          ? `กะค่ำ: นำมือถือมาเก็บ (ต่อเวลาถึง ${curfewTh})`
-          : `กะค่ำ: ส่งคืนมือถือเข้าตู้พี่เลี้ยง (ไม่เกิน ${curfewTh})`,
+          ? `กะค่ำ: นำมือถือมาเก็บ (ขอทำการบ้าน · ถึง ${returnDeadlineTh})`
+          : `กะค่ำ: ส่งคืนมือถือเข้าตู้พี่เลี้ยง (ไม่เกิน ${returnDeadlineTh})`,
         titleEn: hasHw
-          ? `Night: Store Phone (Extension — By ${curfewEn})`
-          : `Night: Return Phone to Locker (By ${curfewEn})`,
+          ? `Night: Store Phone (HW Extension — By ${returnDeadlineEn})`
+          : `Night: Return Phone to Locker (By ${returnDeadlineEn})`,
         instructionTh:
           delta <= 0
-            ? `ต้องนำมือถือมาเก็บภายในเวลา ${curfewTh} (เหลือเวลาอีก ${Math.abs(delta)} นาที) หากเกินเวลานี้ ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วัน`
-            : `🚨 เลยเวลา ${curfewTh} มาแล้ว ${delta} นาที! หากยังไม่นำมาเก็บมือถือ ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วัน รีบส่งคืนทันที`,
+            ? `ต้องนำมือถือมาเก็บภายในเวลา ${returnDeadlineTh} (เหลือเวลาอีก ${Math.abs(delta)} นาที)`
+            : `🚨 เลยเวลา ${returnDeadlineTh} มาแล้ว ${delta} นาที! รีบส่งคืนทันทีเพื่อลดบทลงโทษ`,
         instructionEn:
           delta <= 0
-            ? `Store your phone by ${curfewEn} (${Math.abs(delta)} min left). Past ${curfewEn} forfeits 1 Free Day phone privilege.`
-            : `Past ${curfewEn} by ${delta} min! Keeping phone past ${curfewEn} forfeits 1 Free Day phone privilege. Return immediately!`,
+            ? `Store your phone by ${returnDeadlineEn} (${Math.abs(delta)} min left).`
+            : `Past ${returnDeadlineEn} by ${delta} min! Return immediately!`,
         ctaTh: '📱 ไปส่งคืนมือถือ',
         ctaEn: '📱 Return Phone',
       });
@@ -558,7 +563,8 @@ export function evaluateKidStepReminders(
   } else {
     // Group 3
     if (canReturnPhone && !kid.daily.phoneReturnedChecked && mins <= PHONE_RETURN_CEILING) {
-      const curfew = 22 * 60 + 45;
+      const returnEval = evaluateKidReturnPhoneSchedule(kid, now, settings, 'th');
+      const curfew = returnEval.deadlineMins;
       const delta = mins - curfew;
       const minsLeftToCeiling = Math.max(0, PHONE_RETURN_CEILING - mins);
       pendingSteps.push({

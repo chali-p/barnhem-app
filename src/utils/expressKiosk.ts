@@ -11,6 +11,15 @@ import { applyMorningStreakOnTime } from './houseChores';
 import { applyDailySchoolDeduction, getEconomyConfig, isKidAwayOnDate } from './piggyBank';
 import { getDateKey, getMinutesOfDay, getTomorrowDateKey, isPublicHoliday } from './timeRules';
 
+export interface KioskPenaltyAlert {
+  kidNickname: string;
+  kidEmoji?: string;
+  headline: string;
+  reasonLine: string;
+  penaltyText: string;
+  clockNote?: string;
+}
+
 export interface KioskResult {
   success: boolean;
   bannerTitle: string;
@@ -20,6 +29,7 @@ export interface KioskResult {
   updatedKid?: Member;
   fineThb?: number;
   fineReason?: string;
+  penaltyAlert?: KioskPenaltyAlert;
 }
 
 export function playKioskChime(success: boolean): void {
@@ -572,6 +582,29 @@ export function evaluateOneTapGoToSchool(
     starsDelta: 0,
     fineThb: fine,
     fineReason,
+    penaltyAlert:
+      fine > 0
+        ? {
+            kidNickname: kid.nickname,
+            kidEmoji: kid.emoji,
+            headline:
+              lang === 'th'
+                ? 'เลยกำหนดเวลาไปโรงเรียนแล้ว!'
+                : 'Past School Departure Deadline!',
+            reasonLine:
+              lang === 'th'
+                ? `เลยกำหนด ${minsToHHMM(deadlineMins)} น. มาแล้ว ${minsLate} นาที`
+                : `${minsLate} min past ${minsToHHMM(deadlineMins)} deadline`,
+            penaltyText:
+              lang === 'th'
+                ? `บันทึกค่าปรับ ${fine} บาท เข้ากระปุกทองคำ`
+                : `Fine recorded: ${fine} THB`,
+            clockNote:
+              lang === 'th'
+                ? `บันทึกเวลา ${minsToHHMM(mins)} น.`
+                : `Recorded at ${minsToHHMM(mins)}`,
+          }
+        : undefined,
     bannerTitle:
       lang === 'th'
         ? fine > 0
@@ -917,12 +950,12 @@ export const HOME_QUICK_ACTIONS: HomeQuickActionConfig[] = [
     defaultAuthMode: 'kid_pin',
     enabled: true,
     hidden: false,
-    windowLabelTh: '20:46–23:00 น. (Curfew 21:00)',
-    windowLabelEn: '20:46–23:00 (21:00 Curfew)',
+    windowLabelTh: '20:46–23:00 น. (คำนวณเส้นตายอัตโนมัติ)',
+    windowLabelEn: '20:46–23:00 (Auto Deadline)',
     titleTh: 'คืนมือถือ',
     titleEn: 'Return Phone',
-    descriptionTh: 'ส่งคืนมือถือเข้าตู้ก่อน Curfew 21:00 น.',
-    descriptionEn: 'Return mobile phone to staff cabinet before 21:00 curfew.',
+    descriptionTh: 'ส่งคืนมือถือเข้าตู้พี่เลี้ยง (ระบบคำนวณเวลาอัตโนมัติ: ไม่ขอทำการบ้านคืนถึง 21:00 น. / ขอทำการบ้านแล้วคืนถึง 22:45 น.)',
+    descriptionEn: 'Return mobile phone to cabinet (auto-calculates 21:00 if no homework registered vs 22:45 if registered).',
     tapLabelTh: '🌙 คืนมือถือ',
     tapLabelEn: '🌙 Return Phone',
     doneLabelTh: '✅ คืนมือถือแล้ว',
@@ -1222,6 +1255,24 @@ export function isHomeActionOpenAt(
 ): boolean {
   const cfg = getEffectiveHomeQuickActions(settings).find((a) => a.id === actionId);
   if (!cfg || !cfg.enabled || cfg.hidden) return false;
+  if (actionId === 'night_return_phone') {
+    const autoRule = getAutoReturnPhoneRuleConfig(settings);
+    if (autoRule.enabled) {
+      const minClose = Math.min(
+        23 * 60 + 59,
+        Math.max(autoRule.noHomeworkDeadlineMins, autoRule.homeworkExtendedDeadlineMins) + 15
+      );
+      const effectiveEnd = Math.max(cfg.endMins, minClose);
+      return isActionWithinTimeWindow(
+        cfg.startMins,
+        effectiveEnd,
+        cfg.earlyGraceMins,
+        cfg.deadlineMins,
+        'no_fine_zero_stars',
+        now
+      );
+    }
+  }
   return isActionWithinTimeWindow(
     cfg.startMins,
     cfg.endMins,
@@ -1239,6 +1290,24 @@ export function isHomeActionExpiredAt(
 ): boolean {
   const cfg = getEffectiveHomeQuickActions(settings).find((a) => a.id === actionId);
   if (!cfg || !cfg.enabled || cfg.hidden) return true;
+  if (actionId === 'night_return_phone') {
+    const autoRule = getAutoReturnPhoneRuleConfig(settings);
+    if (autoRule.enabled) {
+      const minClose = Math.min(
+        23 * 60 + 59,
+        Math.max(autoRule.noHomeworkDeadlineMins, autoRule.homeworkExtendedDeadlineMins) + 15
+      );
+      const effectiveEnd = Math.max(cfg.endMins, minClose);
+      return isActionPastCloseTime(
+        cfg.startMins,
+        effectiveEnd,
+        cfg.earlyGraceMins,
+        cfg.deadlineMins,
+        'no_fine_zero_stars',
+        now
+      );
+    }
+  }
   return isActionPastCloseTime(
     cfg.startMins,
     cfg.endMins,
@@ -1296,6 +1365,210 @@ export function canKidUseCommand(
     return allowed.includes(kid.id);
   }
   return true;
+}
+
+export interface AutoReturnPhoneRuleConfig {
+  enabled: boolean;
+  targetMode: 'match_homework_permission' | 'all_eligible' | 'custom_kids';
+  targetKidIds: string[];
+  noHomeworkDeadlineMins: number;
+  noHomeworkPenaltyPreset: string;
+  noHomeworkPenaltyNote: string;
+  homeworkExtendedDeadlineMins: number;
+  homeworkExtendedPenaltyPreset: string;
+  homeworkExtendedPenaltyNote: string;
+}
+
+export function getAutoReturnPhoneRuleConfig(
+  settings?: Partial<AppSettings>
+): AutoReturnPhoneRuleConfig {
+  const slot = settings?.timedCommandSchedule?.night_return_phone;
+  const noHomeworkDeadlineMins =
+    slot &&
+    typeof slot.noHomeworkDeadlineMins === 'number' &&
+    Number.isFinite(slot.noHomeworkDeadlineMins) &&
+    slot.noHomeworkDeadlineMins >= 0 &&
+    slot.noHomeworkDeadlineMins < 1440
+      ? Math.round(slot.noHomeworkDeadlineMins)
+      : DEFAULT_HOMEWORK_CURFEW_MINS;
+  const homeworkExtendedDeadlineMins =
+    slot &&
+    typeof slot.homeworkExtendedDeadlineMins === 'number' &&
+    Number.isFinite(slot.homeworkExtendedDeadlineMins) &&
+    slot.homeworkExtendedDeadlineMins >= 0 &&
+    slot.homeworkExtendedDeadlineMins < 1440
+      ? Math.round(slot.homeworkExtendedDeadlineMins)
+      : 22 * 60 + 45;
+  const noHomeworkPenaltyPreset =
+    slot?.noHomeworkPenaltyPreset?.trim() || 'deduct_free_day';
+  const noHomeworkPenaltyNote =
+    slot?.noHomeworkPenaltyNote !== undefined
+      ? slot.noHomeworkPenaltyNote
+      : `เลย ${minsToHHMM(noHomeworkDeadlineMins)} น. (ไม่ได้ขอทำการบ้าน) หัก Free Day 1 วัน`;
+  const fallbackSlotPenalty =
+    slot?.penaltyPreset && slot.penaltyPreset !== 'lock_after_deadline'
+      ? slot.penaltyPreset.trim()
+      : '';
+  const homeworkExtendedPenaltyPreset =
+    slot?.homeworkExtendedPenaltyPreset?.trim() || fallbackSlotPenalty || 'deduct_free_day';
+  const homeworkExtendedPenaltyNote =
+    slot?.homeworkExtendedPenaltyNote !== undefined
+      ? slot.homeworkExtendedPenaltyNote
+      : `เลย ${minsToHHMM(homeworkExtendedDeadlineMins)} น. (ขอทำการบ้าน) หัก Free Day 1 วัน`;
+  const targetMode =
+    slot?.noHomeworkTargetMode === 'all_eligible' ||
+    slot?.noHomeworkTargetMode === 'custom_kids'
+      ? slot.noHomeworkTargetMode
+      : 'match_homework_permission';
+  return {
+    enabled: slot?.autoNoHomeworkRuleEnabled !== false,
+    targetMode,
+    targetKidIds: Array.isArray(slot?.noHomeworkTargetKidIds)
+      ? slot.noHomeworkTargetKidIds
+      : [],
+    noHomeworkDeadlineMins,
+    noHomeworkPenaltyPreset,
+    noHomeworkPenaltyNote,
+    homeworkExtendedDeadlineMins,
+    homeworkExtendedPenaltyPreset,
+    homeworkExtendedPenaltyNote,
+  };
+}
+
+export function isKidInAutoNoHomework21Rule(
+  kid: Member,
+  settings?: Partial<AppSettings>
+): boolean {
+  const rule = getAutoReturnPhoneRuleConfig(settings);
+  if (!rule.enabled) return false;
+  if (rule.targetMode === 'custom_kids') {
+    return rule.targetKidIds.includes(kid.id);
+  }
+  if (rule.targetMode === 'all_eligible') {
+    return canKidUseCommand('night_return_phone', kid, settings);
+  }
+  return canKidUseCommand('night_homework_permission', kid, settings);
+}
+
+export interface KidReturnPhoneScheduleEval {
+  caseKind: 'homework_registered' | 'no_homework_21_rule' | 'standard_curfew';
+  hasRegisteredHomework: boolean;
+  isAutoNoHwTarget: boolean;
+  deadlineMins: number;
+  deadlineTh: string;
+  deadlineEn: string;
+  penaltyPreset: string;
+  penaltyNote: string;
+  isPastDeadline: boolean;
+  statusBadgeTh: string;
+  statusBadgeEn: string;
+}
+
+export function evaluateKidReturnPhoneSchedule(
+  kid: Member,
+  now: Date,
+  settings?: Partial<AppSettings>,
+  lang: Language = 'th'
+): KidReturnPhoneScheduleEval {
+  const mins = getMinutesOfDay(now);
+  const slot = settings?.timedCommandSchedule?.night_return_phone;
+  const cfg = getEffectiveHomeQuickActions(settings, true).find(
+    (a) => a.id === 'night_return_phone'
+  )!;
+  const rule = getAutoReturnPhoneRuleConfig(settings);
+  const hasRegisteredHomework = Boolean(kid.daily.homeworkRegisteredSubject);
+  const isAutoNoHwTarget = isKidInAutoNoHomework21Rule(kid, settings);
+
+  let caseKind: KidReturnPhoneScheduleEval['caseKind'] = 'standard_curfew';
+  let deadlineMins: number;
+  let penaltyPreset =
+    cfg.penaltyPreset && cfg.penaltyPreset !== 'lock_after_deadline'
+      ? cfg.penaltyPreset
+      : 'deduct_free_day';
+  let penaltyNote = cfg.penaltyNote || 'หัก Free Day 1 วัน';
+
+  if (rule.enabled) {
+    if (hasRegisteredHomework) {
+      caseKind = 'homework_registered';
+      deadlineMins = rule.homeworkExtendedDeadlineMins;
+      penaltyPreset = rule.homeworkExtendedPenaltyPreset;
+      penaltyNote = rule.homeworkExtendedPenaltyNote;
+    } else if (isAutoNoHwTarget) {
+      caseKind = 'no_homework_21_rule';
+      deadlineMins = rule.noHomeworkDeadlineMins;
+      penaltyPreset = rule.noHomeworkPenaltyPreset;
+      penaltyNote = rule.noHomeworkPenaltyNote;
+    } else {
+      caseKind = 'standard_curfew';
+      deadlineMins =
+        typeof slot?.deadlineMins === 'number'
+          ? slot.deadlineMins
+          : kid.group === 3
+          ? 22 * 60 + 45
+          : getEffectiveHomeworkCurfewMins(settings);
+      if (kid.group === 3 && !slot?.penaltyPreset) {
+        penaltyPreset = 'no_phone_tomorrow';
+        penaltyNote = getPenaltySummaryText('no_phone_tomorrow', undefined, lang);
+      }
+    }
+  } else {
+    deadlineMins = hasRegisteredHomework
+      ? rule.homeworkExtendedDeadlineMins
+      : typeof slot?.deadlineMins === 'number'
+      ? slot.deadlineMins
+      : kid.group === 3
+      ? 22 * 60 + 45
+      : getEffectiveHomeworkCurfewMins(settings);
+    if (hasRegisteredHomework) {
+      caseKind = 'homework_registered';
+      penaltyPreset = rule.homeworkExtendedPenaltyPreset;
+      penaltyNote = rule.homeworkExtendedPenaltyNote;
+    } else if (kid.group === 3 && !slot?.penaltyPreset) {
+      penaltyPreset = 'no_phone_tomorrow';
+      penaltyNote = getPenaltySummaryText('no_phone_tomorrow', undefined, lang);
+    }
+  }
+
+  const deadlineTh = formatThaiCurfewClock(deadlineMins);
+  const deadlineEn = minsToHHMM(deadlineMins);
+  const isPastDeadline = mins > deadlineMins;
+
+  let statusBadgeTh = '';
+  let statusBadgeEn = '';
+  if (caseKind === 'homework_registered') {
+    statusBadgeTh = isPastDeadline
+      ? `🚨 ขอทำการบ้าน · เลย ${deadlineEn} น. (ลงโทษทันที)`
+      : `📝 ขอทำการบ้าน · คืนก่อน ${deadlineEn} น.`;
+    statusBadgeEn = isPastDeadline
+      ? `🚨 HW Past ${deadlineEn} (Penalty)`
+      : `📝 HW By ${deadlineEn}`;
+  } else if (caseKind === 'no_homework_21_rule') {
+    statusBadgeTh = isPastDeadline
+      ? `🚨 ไม่ได้ขอทำการบ้าน · เลย ${deadlineEn} น. (ลงโทษทันที)`
+      : `⏰ ไม่ได้ขอทำการบ้าน · คืนก่อน ${deadlineEn} น.`;
+    statusBadgeEn = isPastDeadline
+      ? `🚨 No HW · Past ${deadlineEn} (Penalty)`
+      : `⏰ No HW · Before ${deadlineEn}`;
+  } else {
+    statusBadgeTh = isPastDeadline
+      ? `⚠️ เกิน ${deadlineEn} น.`
+      : `🌙 คืนก่อน ${deadlineEn} น.`;
+    statusBadgeEn = isPastDeadline ? `⚠️ Past ${deadlineEn}` : `🌙 By ${deadlineEn}`;
+  }
+
+  return {
+    caseKind,
+    hasRegisteredHomework,
+    isAutoNoHwTarget,
+    deadlineMins,
+    deadlineTh,
+    deadlineEn,
+    penaltyPreset,
+    penaltyNote,
+    isPastDeadline,
+    statusBadgeTh,
+    statusBadgeEn,
+  };
 }
 
 export function getCommandDenialReason(
@@ -1546,6 +1819,20 @@ export function evaluateOneTapHomeAction(
       starsDelta,
       fineThb: fineThb > 0 ? fineThb : undefined,
       fineReason: noteLabel,
+      penaltyAlert: {
+        kidNickname: kid.nickname,
+        kidEmoji: kid.emoji,
+        headline:
+          lang === 'th' ? `บันทึกบทลงโทษ: ${cfg.titleTh}` : `Penalty Recorded: ${cfg.titleEn}`,
+        reasonLine:
+          detailOverride?.trim() ||
+          (lang === 'th' ? 'พี่เลี้ยงบันทึกบทลงโทษประจำวันให้เรียบร้อยแล้วค่ะ' : 'Penalty recorded by staff.'),
+        penaltyText: noteLabel,
+        clockNote:
+          lang === 'th'
+            ? `บันทึกเวลา ${minsToHHMM(mins)} น.`
+            : `Recorded at ${minsToHHMM(mins)}`,
+      },
       bannerTitle:
         lang === 'th'
           ? `บันทึกบทลงโทษ น้อง${kid.nickname} แล้ว`
@@ -1906,6 +2193,15 @@ export function evaluateOneTapHomeAction(
   }
 
   if (actionId === 'night_homework_permission') {
+    const autoRule = getAutoReturnPhoneRuleConfig(settings);
+    const curfewMins = autoRule.homeworkExtendedDeadlineMins;
+    const curfewTh = formatThaiCurfewClock(curfewMins);
+    const curfewEn = minsToHHMM(curfewMins);
+    const hwLateSummary = getPenaltySummaryText(
+      autoRule.homeworkExtendedPenaltyPreset,
+      autoRule.homeworkExtendedPenaltyNote,
+      lang
+    );
     if (kid.daily.homeworkRegisteredSubject && !detailOverride?.trim()) {
       return {
         success: true,
@@ -1917,14 +2213,11 @@ export function evaluateOneTapHomeAction(
             : `${kid.nickname} Homework Already Permitted`,
         bannerSubtitle:
           lang === 'th'
-            ? `บันทึกขออนุญาตไว้เรียบร้อยแล้วค่ะ (ใช้เพิ่มได้ถึง ${formatThaiCurfewClock(getEffectiveHomeworkCurfewMins(settings))})`
-            : 'Already registered today.',
+            ? `บันทึกขออนุญาตไว้เรียบร้อยแล้วค่ะ (ใช้เพิ่มได้ถึง ${curfewTh} · เกินเวลาลงโทษทันที: ${hwLateSummary})`
+            : `Already registered today (until ${curfewEn}).`,
       };
     }
     const cleanChoice = (detailOverride ?? '').trim().slice(0, 100) || 'ทำการบ้าน';
-    const curfewMins = getEffectiveHomeworkCurfewMins(settings);
-    const curfewTh = formatThaiCurfewClock(curfewMins);
-    const curfewEn = minsToHHMM(curfewMins);
     const updated = appendStarTx(
       kid,
       0,
@@ -1946,13 +2239,13 @@ export function evaluateOneTapHomeAction(
           : `${kid.nickname}: "${cleanChoice}" Approved!`,
       bannerSubtitle:
         lang === 'th'
-          ? `ใช้เพิ่มได้จนถึงเวลา ${curfewTh} · หากเกิน ${curfewTh} ยังไม่นำมือถือมาเก็บ ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วัน`
-          : `Extended until ${curfewEn} (past ${curfewEn} forfeits 1 Free Day phone privilege).`,
+          ? `ใช้เพิ่มได้จนถึงเวลา ${curfewTh} · หากคืนหลัง ${curfewTh} จะถูกลงโทษทันที (${hwLateSummary})`
+          : `Extended until ${curfewEn} (returning past ${curfewEn} triggers penalty: ${hwLateSummary}).`,
       updatedKid: updated,
     };
   }
 
-  // 'night_return_phone'
+  // 'night_return_phone' (single smart button with automatic per-kid deadline calculation)
   if (kid.daily.phoneReturnedChecked) {
     return {
       success: true,
@@ -1963,23 +2256,29 @@ export function evaluateOneTapHomeAction(
     };
   }
 
-  const customDeadlineOverride = settings?.timedCommandSchedule?.night_return_phone?.deadlineMins;
-  const curfewMins =
-    typeof customDeadlineOverride === 'number'
-      ? customDeadlineOverride
-      : getEffectiveHomeworkCurfewMins(settings);
-  const curfewTh = formatThaiCurfewClock(curfewMins);
-  const curfewEn = minsToHHMM(curfewMins);
-  const use21Curfew = kid.group === 1 || kid.group === 2 || Boolean(kid.daily.homeworkRegisteredSubject);
-  const deadlineMins = use21Curfew ? curfewMins : 22 * 60 + 45;
+  const returnEval = evaluateKidReturnPhoneSchedule(kid, now, settings, lang);
+  const {
+    caseKind,
+    deadlineMins,
+    deadlineTh: curfewTh,
+    deadlineEn: curfewEn,
+    penaltyPreset: preset,
+    penaltyNote: rawPenaltyNote,
+  } = returnEval;
   const onTime = mins <= deadlineMins;
 
   if (onTime) {
     const stars = Math.max(0, Math.round(cfg.rewardStars ?? 5));
+    const onTimeDetail =
+      caseKind === 'homework_registered'
+        ? 'ขออนุญาตทำการบ้าน · คืนตรงเวลา'
+        : caseKind === 'no_homework_21_rule'
+        ? 'ไม่ได้ขอทำการบ้าน · คืนทันก่อน ' + curfewEn + ' น.'
+        : 'คืนตรงเวลา';
     const updated = appendStarTx(
       kid,
       stars,
-      `🌙 ปุ่มด่วน "${cfg.titleTh}" ตรงเวลา (+${stars} ⭐)`,
+      `${cfg.emoji} ปุ่มด่วน "${cfg.titleTh}" (${onTimeDetail} ≤${curfewEn} น. +${stars} ⭐)`,
       {
         daily: { ...kid.daily, phoneReturnedChecked: true },
       }
@@ -1994,51 +2293,127 @@ export function evaluateOneTapHomeAction(
           : `${kid.nickname} Phone Returned! +${stars} ⭐`,
       bannerSubtitle:
         lang === 'th'
-          ? 'ส่งคืนมือถือเข้าตู้พี่เลี้ยงตรงเวลา ฝันดีนะคะ!'
-          : 'Returned phone on time. Good night!',
+          ? caseKind === 'homework_registered'
+            ? `ขอทำการบ้านไว้ · ส่งคืนทันภายใน ${curfewTh} ฝันดีนะคะ!`
+            : caseKind === 'no_homework_21_rule'
+            ? `ไม่ได้ขอทำการบ้าน · คืนทันก่อน ${curfewTh} ฝันดีนะคะ!`
+            : `ส่งคืนมือถือเข้าตู้พี่เลี้ยงตรงเวลาภายใน ${curfewTh} ฝันดีนะคะ!`
+          : `Returned phone on time (before ${curfewEn}). Good night!`,
       updatedKid: updated,
     };
   }
 
   const tomorrow = getTomorrowDateKey(now);
-  const updated: Member = {
-    ...kid,
-    penalty:
-      isSickToday || isAwayToday
-        ? kid.penalty
-        : use21Curfew
-        ? { ...kid.penalty, fridayFreeDayDeductedCount: kid.penalty.fridayFreeDayDeductedCount + 1 }
-        : { ...kid.penalty, noEveningPhoneTomorrowDate: tomorrow },
-    daily: { ...kid.daily, phoneReturnedChecked: true },
-  };
+  const penaltySummary = getPenaltySummaryText(preset, rawPenaltyNote, lang);
+  let latePenaltyPatch = { ...kid.penalty };
+  let lateStarsDelta = 0;
+  let lateFineThb = 0;
+
+  if (!isSickToday && !isAwayToday) {
+    if (preset === 'deduct_free_day') {
+      latePenaltyPatch = {
+        ...latePenaltyPatch,
+        fridayFreeDayDeductedCount: latePenaltyPatch.fridayFreeDayDeductedCount + 1,
+      };
+    } else if (preset === 'deduct_stars') {
+      lateStarsDelta = -5;
+    } else if (preset === 'fixed_fine_thb') {
+      lateFineThb = 20;
+      latePenaltyPatch = { ...latePenaltyPatch, lateFineThb: latePenaltyPatch.lateFineThb + lateFineThb };
+    } else if (preset === 'per_minute_fine_thb') {
+      const lateMins = Math.max(1, mins - deadlineMins);
+      lateFineThb = Math.min(50, lateMins * 5);
+      latePenaltyPatch = { ...latePenaltyPatch, lateFineThb: latePenaltyPatch.lateFineThb + lateFineThb };
+    } else if (preset === 'no_phone_today_1830') {
+      latePenaltyPatch = { ...latePenaltyPatch, phoneConfiscatedUntil1830Date: todayKey };
+    } else if (preset === 'no_phone_tomorrow') {
+      latePenaltyPatch = { ...latePenaltyPatch, noEveningPhoneTomorrowDate: tomorrow };
+    }
+  }
+
+  const lateReasonText =
+    isSickToday || isAwayToday
+      ? 'ยกเว้นโทษป่วย/ลาพัก'
+      : caseKind === 'homework_registered'
+      ? `ขอทำการบ้านไว้ & คืนเกิน ${curfewEn} น. (${penaltySummary})`
+      : caseKind === 'no_homework_21_rule'
+      ? `ไม่ได้ขอทำการบ้าน & คืนเกิน ${curfewEn} น. (${penaltySummary})`
+      : `เกิน ${curfewEn} น. (${penaltySummary})`;
+
+  const updated = appendStarTx(
+    kid,
+    lateStarsDelta,
+    `${cfg.emoji} ${cfg.titleTh}: ${lateReasonText}`,
+    {
+      penalty: latePenaltyPatch,
+      daily: { ...kid.daily, phoneReturnedChecked: true },
+    }
+  );
+  const minsLateReturn = Math.max(1, mins - deadlineMins);
+  const latePenaltyAlert: KioskPenaltyAlert | undefined =
+    isSickToday || isAwayToday
+      ? undefined
+      : {
+          kidNickname: kid.nickname,
+          kidEmoji: kid.emoji,
+          headline:
+            lang === 'th'
+              ? 'เลยกำหนดเวลาคืนมือถือแล้ว!'
+              : 'Past Phone Return Deadline!',
+          reasonLine:
+            lang === 'th'
+              ? caseKind === 'homework_registered'
+                ? `ขออนุญาตทำการบ้านไว้ → กำหนดคืนไม่เกิน ${curfewEn} น. (เกินเวลามา ${minsLateReturn} นาที)`
+                : caseKind === 'no_homework_21_rule'
+                ? `ไม่ได้กดขออนุญาตทำการบ้านก่อนเวลา → เล่นได้ถึง ${curfewEn} น. (เกินเวลามา ${minsLateReturn} นาที)`
+                : `กำหนดคืนมือถือไม่เกิน ${curfewEn} น. (เกินเวลามา ${minsLateReturn} นาที)`
+              : caseKind === 'homework_registered'
+              ? `Homework extended until ${curfewEn} (${minsLateReturn} min overdue)`
+              : caseKind === 'no_homework_21_rule'
+              ? `No homework permission registered — limit ${curfewEn} (${minsLateReturn} min overdue)`
+              : `Return phone deadline ${curfewEn} (${minsLateReturn} min overdue)`,
+          penaltyText: penaltySummary,
+          clockNote:
+            lang === 'th'
+              ? `กดคืนมือถือเวลา ${minsToHHMM(mins)} น.`
+              : `Returned at ${minsToHHMM(mins)}`,
+        };
+
   return {
     success: true,
     emoji: isSickToday || isAwayToday ? '💚📱' : '⚖️📵',
-    starsDelta: 0,
+    starsDelta: lateStarsDelta,
+    fineThb: lateFineThb > 0 ? lateFineThb : undefined,
+    fineReason: isSickToday || isAwayToday ? undefined : lateReasonText,
+    penaltyAlert: latePenaltyAlert,
     bannerTitle:
       isSickToday || isAwayToday
         ? lang === 'th'
           ? `น้อง${kid.nickname} คืนมือถือแล้ว (ยกเว้นโทษป่วย/ลาพัก)`
           : `${kid.nickname} Phone Returned (Waived)`
-        : use21Curfew
+        : caseKind === 'no_homework_21_rule' || caseKind === 'homework_registered'
         ? lang === 'th'
-          ? `น้อง${kid.nickname} คืนมือถือเกิน ${curfewTh}`
-          : `${kid.nickname} Returned Past ${curfewEn}`
+          ? `น้อง${kid.nickname} คืนมือถือหลัง ${curfewTh} (ลงโทษทันที)`
+          : `${kid.nickname} Returned Past ${curfewEn} (Penalized)`
         : lang === 'th'
-        ? `น้อง${kid.nickname} คืนมือถือเกิน 22:45 น.`
-        : `${kid.nickname} Returned Past 22:45`,
+        ? `น้อง${kid.nickname} คืนมือถือเกิน ${curfewTh}`
+        : `${kid.nickname} Returned Past ${curfewEn}`,
     bannerSubtitle:
       isSickToday || isAwayToday
         ? lang === 'th'
           ? `บันทึกคืนมือถือเรียบร้อย (วันหยุด/ป่วยไม่หักสิทธิ์, พรุ่งนี้ ${tomorrow})`
           : 'Recorded without penalty.'
-        : use21Curfew
+        : caseKind === 'homework_registered'
         ? lang === 'th'
-          ? `เลยเวลา ${curfewTh} แล้ว — ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วันค่ะ`
-          : `Past ${curfewEn} — recorded as consent to forfeit 1 Free Day phone privilege.`
+          ? `ขออนุญาตทำการบ้านถึง ${curfewTh} → คืนเกินเวลา บันทึกคืนมือถือและลงโทษทันที (${penaltySummary})`
+          : `Homework extended to ${curfewEn} → returned late and penalized (${penaltySummary}).`
+        : caseKind === 'no_homework_21_rule'
+        ? lang === 'th'
+          ? `ไม่ได้กดขอทำการบ้านตามเวลา → เกิน ${curfewTh} บันทึกคืนมือถือและลงโทษทันที (${penaltySummary})`
+          : `No homework registered → past ${curfewEn}, returned and penalized (${penaltySummary}).`
         : lang === 'th'
-        ? 'เกิน 22:45 น. บันทึกงดใช้มือถือช่วงเย็นวันพรุ่งนี้ 1 วันค่ะ'
-        : 'Past 22:45 — restricted from evening phone use tomorrow.',
+        ? `บันทึกคืนมือถือแล้ว · เลย ${curfewTh} (${penaltySummary})`
+        : `Phone return recorded · Past ${curfewEn} (${penaltySummary})`,
     updatedKid: updated,
   };
 }
@@ -2200,6 +2575,20 @@ export function evaluateOneTapCustomCommand(
       starsDelta: penaltyStarsDelta,
       fineThb: fineThb > 0 ? fineThb : undefined,
       fineReason: noteLabel,
+      penaltyAlert: {
+        kidNickname: kid.nickname,
+        kidEmoji: kid.emoji,
+        headline:
+          lang === 'th' ? `บันทึกบทลงโทษ: ${cmd.titleTh}` : `Penalty Recorded: ${cmd.titleEn}`,
+        reasonLine:
+          noteText ||
+          (lang === 'th' ? 'บันทึกบทลงโทษทันทีตามคำสั่งที่กำหนดค่ะ' : 'Penalty recorded immediately.'),
+        penaltyText: noteLabel,
+        clockNote:
+          lang === 'th'
+            ? `บันทึกเวลา ${minsToHHMM(getMinutesOfDay(now))} น.`
+            : `Recorded at ${minsToHHMM(getMinutesOfDay(now))}`,
+      },
       bannerTitle:
         lang === 'th'
           ? `บันทึกบทลงโทษ "${cmd.titleTh}" · น้อง${kid.nickname}`
@@ -2288,10 +2677,35 @@ export function evaluateOneTapCustomCommand(
     ].slice(0, 60),
   };
 
+  const customPenaltySummary =
+    pastDeadline && cmd.penaltyPreset && cmd.penaltyPreset !== 'lock_after_deadline'
+      ? getPenaltySummaryText(cmd.penaltyPreset, cmd.penaltyNote, lang)
+      : '';
+
   return {
     success: true,
     emoji: cmd.emoji || '⚡',
     starsDelta: effectiveStars,
+    penaltyAlert:
+      pastDeadline && customPenaltySummary
+        ? {
+            kidNickname: kid.nickname,
+            kidEmoji: kid.emoji,
+            headline:
+              lang === 'th'
+                ? `เลยกำหนดเวลา "${cmd.titleTh}" แล้ว!`
+                : `Past "${cmd.titleEn}" Deadline!`,
+            reasonLine:
+              lang === 'th'
+                ? `กำหนดไม่เกิน ${minsToHHMM(cmd.deadlineMins!)} น. (เกินเวลามา ${Math.max(1, mins - cmd.deadlineMins!)} นาที)`
+                : `${Math.max(1, mins - cmd.deadlineMins!)} min past ${minsToHHMM(cmd.deadlineMins!)} deadline`,
+            penaltyText: customPenaltySummary,
+            clockNote:
+              lang === 'th'
+                ? `บันทึกเวลา ${minsToHHMM(mins)} น.`
+                : `Recorded at ${minsToHHMM(mins)}`,
+          }
+        : undefined,
     bannerTitle:
       lang === 'th'
         ? `น้อง${kid.nickname}: ${cmd.titleTh} เรียบร้อย!${effectiveStars > 0 ? ` +${effectiveStars} ⭐` : ''}`

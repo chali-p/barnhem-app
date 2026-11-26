@@ -76,17 +76,22 @@ import {
 import {
   canKidUseCommand,
   doesKidHavePhone,
+  evaluateKidReturnPhoneSchedule,
+  evaluateOneTapHomeAction,
   formatThaiCurfewClock,
-  getEffectiveHomeworkCurfewMins,
+  getAutoReturnPhoneRuleConfig,
   getEffectiveHomeworkPermissionWindow,
   getEffectiveMorningPhoneWindow,
+  getPenaltySummaryText,
   isHomeActionOpenAt,
+  KioskPenaltyAlert,
   minsToHHMM,
 } from '../utils/expressKiosk';
 import { evaluateKidStepReminders } from '../utils/stepReminders';
 import { PinPadModal } from './CenteredAlertModal';
 import { CustomOutfitStudio } from './CustomOutfitStudio';
 import { KidDutySchedulesPanel } from './KidDutySchedulesPanel';
+import { PenaltyNoticeModal } from './PenaltyNoticeModal';
 import { PetCanvasSvg } from './PetCanvasSvg';
 import { PetTamagotchiModal } from './PetTamagotchiModal';
 import { PiggyBankModals } from './PiggyBankModals';
@@ -286,6 +291,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   const [visitActivity, setVisitActivity] = useState<FriendVisitActivity>('study');
   const [visitNote, setVisitNote] = useState('');
   const [stepPopupOpen, setStepPopupOpen] = useState(false);
+  const [penaltyNoticePopup, setPenaltyNoticePopup] = useState<KioskPenaltyAlert | null>(null);
   const actionLockRef = useRef<{ key: string; at: number }>({ key: '', at: 0 });
   const staffPinGuard = usePinGuard('kid_staff_pin');
 
@@ -499,14 +505,75 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   const morningPhoneWin = getEffectiveMorningPhoneWindow(settings);
   const isMorningPhoneOpen = isHomeActionOpenAt('morning_phone_pickup', now, settings);
   const hwPermWin = getEffectiveHomeworkPermissionWindow(settings);
-  const hwCurfewMins = getEffectiveHomeworkCurfewMins(settings);
+  const autoReturnRule = getAutoReturnPhoneRuleConfig(settings);
+  const returnScheduleEval = evaluateKidReturnPhoneSchedule(kid, now, settings, lang);
+  const hwCurfewMins = autoReturnRule.homeworkExtendedDeadlineMins;
   const hwCurfewTh = formatThaiCurfewClock(hwCurfewMins);
   const hwCurfewEn = minsToHHMM(hwCurfewMins);
+
+  const shownOverdueKeyRef = useRef<string>('');
 
   // Reminder stays quietly on top header badge (no auto-popup modal); only opens when clicked
   useEffect(() => {
     setStepPopupOpen(false);
+    setPenaltyNoticePopup(null);
   }, [kid.id]);
+
+  useEffect(() => {
+    const isReturnWindowOpen = isHomeActionOpenAt('night_return_phone', now, settings);
+    if (
+      !isReturnWindowOpen ||
+      !allowReturnPhone ||
+      kid.daily.phoneReturnedChecked ||
+      isSickToday ||
+      isAwayToday ||
+      !returnScheduleEval.isPastDeadline
+    ) {
+      return;
+    }
+    const key = `${kid.id}|${todayKey}|${returnScheduleEval.caseKind}`;
+    if (shownOverdueKeyRef.current === key) return;
+    shownOverdueKeyRef.current = key;
+    const minsNow = getMinutesOfDay(now);
+    const minsLate = Math.max(1, minsNow - returnScheduleEval.deadlineMins);
+    const penaltyDesc = getPenaltySummaryText(
+      returnScheduleEval.penaltyPreset,
+      returnScheduleEval.penaltyNote,
+      lang
+    );
+    setPenaltyNoticePopup({
+      kidNickname: kid.nickname,
+      kidEmoji: kid.emoji,
+      headline:
+        lang === 'th'
+          ? 'เลยกำหนดเวลาคืนมือถือแล้ว!'
+          : 'Past Phone Return Deadline!',
+      reasonLine:
+        lang === 'th'
+          ? returnScheduleEval.caseKind === 'homework_registered'
+            ? `ขออนุญาตทำการบ้านไว้ถึง ${returnScheduleEval.deadlineEn} น. (เกินเวลามาแล้ว ${minsLate} นาที) — กรุณารีบนำมือถือมาคืนทันทีค่ะ`
+            : `ไม่ได้กดขอทำการบ้านก่อนเวลา → เล่นได้ถึง ${returnScheduleEval.deadlineEn} น. (เกินเวลามาแล้ว ${minsLate} นาที) — กรุณารีบนำมือถือมาคืนทันทีค่ะ`
+          : `Phone return deadline was ${returnScheduleEval.deadlineEn} (${minsLate} min overdue). Please return your phone immediately.`,
+      penaltyText: penaltyDesc,
+      clockNote:
+        lang === 'th'
+          ? `เวลาปัจจุบัน ${minsToHHMM(minsNow)} น.`
+          : `Current time ${minsToHHMM(minsNow)}`,
+    });
+  }, [
+    kid.id,
+    kid.nickname,
+    kid.emoji,
+    kid.daily.phoneReturnedChecked,
+    todayKey,
+    now,
+    settings,
+    allowReturnPhone,
+    isSickToday,
+    isAwayToday,
+    returnScheduleEval,
+    lang,
+  ]);
 
   const dismissStepPopup = () => {
     setStepPopupOpen(false);
@@ -1356,133 +1423,41 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
       });
       return;
     }
-    const mins = getMinutesOfDay(now);
-
-    if (kid.group === 1 || kid.group === 2 || Boolean(kid.daily.homeworkRegisteredSubject)) {
-      const deadlineMins = hwCurfewMins;
-      const onTime = mins <= deadlineMins;
-
-      if (onTime) {
-        const applied = addStars(
-          5,
-          `ส่งคืนมือถือตรงเวลาภายใน ${hwCurfewEn} น. (+5 ⭐)`,
-          (prev) => ({
-            daily: { ...prev.daily, phoneReturnedChecked: true },
-          }),
-          (prev) => !prev.daily.phoneReturnedChecked
+    let latestResult: ReturnType<typeof evaluateOneTapHomeAction> | null = null;
+    let applied = false;
+    onUpdateKid(
+      kid.id,
+      (prev) => {
+        if (prev.daily.phoneReturnedChecked) return prev;
+        const res = evaluateOneTapHomeAction(
+          'night_return_phone',
+          prev,
+          now,
+          lang,
+          settings,
+          isSickToday
         );
-        if (!applied) return;
-        onShowAlert({
-          icon: '📱💚',
-          title: lang === 'th' ? 'ส่งคืนมือถือตรงเวลา! (+5 ⭐)' : 'Phone Returned On Time! (+5 ⭐)',
-          message:
-            lang === 'th'
-              ? `ส่งคืนเข้าตู้พี่เลี้ยงไม่เกินเวลา ${hwCurfewTh} ยอดเยี่ยมมาก รับ +5 ดาว ฝันดีนะ!`
-              : `Returned phone before ${hwCurfewEn}. Great discipline! +5 stars added.`,
-          tone: 'mint',
-        });
-      } else {
-        let applied = false;
-        onUpdateKid(
-          kid.id,
-          (prev) => {
-            if (prev.daily.phoneReturnedChecked) return prev;
-            applied = true;
-            return {
-              ...prev,
-              penalty:
-                isSickToday || isAwayToday
-                  ? prev.penalty
-                  : { ...prev.penalty, fridayFreeDayDeductedCount: prev.penalty.fridayFreeDayDeductedCount + 1 },
-              daily: { ...prev.daily, phoneReturnedChecked: true },
-            };
-          },
-          `Late Phone Return >${hwCurfewEn} (Free Day Forfeit)`
-        );
-        if (!applied) return;
-        onShowAlert({
-          icon: isSickToday || isAwayToday ? '💚' : '⚖️📵',
-          title:
-            isSickToday || isAwayToday
-              ? lang === 'th'
-                ? 'บันทึกคืนมือถือ (ยกเว้นโทษป่วย/ลาพัก)'
-                : 'Phone Returned (Penalty Waived)'
-              : lang === 'th'
-              ? `เกินเวลา ${hwCurfewTh}!`
-              : `Past ${hwCurfewEn} Curfew!`,
-          message:
-            isSickToday || isAwayToday
-              ? lang === 'th'
-                ? 'บันทึกการคืนมือถือเรียบร้อย และยกเว้นโทษเนื่องจากป่วย/ลาพักค่ะ'
-                : 'Phone return recorded and penalty waived due to sick leave or away status.'
-              : lang === 'th'
-              ? `เลยเวลา ${hwCurfewTh} แล้วยังไม่นำมาเก็บมือถือ ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วัน (บันทึกเรียบร้อย)`
-              : `Past ${hwCurfewEn}! Automatically recorded as consent to forfeit 1 Free Day phone privilege.`,
-          tone: isSickToday || isAwayToday ? 'mint' : 'pink',
-        });
-      }
+        latestResult = res;
+        if (!res.updatedKid) return prev;
+        applied = true;
+        return res.updatedKid;
+      },
+      'Phone Return (Hub Auto Curfew)'
+    );
+    const preview =
+      latestResult ??
+      evaluateOneTapHomeAction('night_return_phone', kid, now, lang, settings, isSickToday);
+    if (!applied && !preview.success) return;
+    if (preview.penaltyAlert) {
+      setPenaltyNoticePopup(preview.penaltyAlert);
       return;
     }
-
-    // Group 3 (without 20:30-20:45 homework extension): 22:45 Curfew every day (late ceiling 23:00)
-    const onTime = mins <= 22 * 60 + 45;
-    if (onTime) {
-      const applied = addStars(
-        5,
-        'ส่งคืนมือถือเข้าตู้ไม่เกิน 22:45 น. (+5 ⭐)',
-        (prev) => ({
-          daily: { ...prev.daily, phoneReturnedChecked: true },
-        }),
-        (prev) => !prev.daily.phoneReturnedChecked
-      );
-      if (!applied) return;
-      onShowAlert({
-        icon: '📱✨',
-        title: lang === 'th' ? 'ส่งคืนมือถือทัน Curfew 22:45 น. (+5 ⭐)' : 'Returned Before 22:45 Curfew (+5 ⭐)',
-        message: lang === 'th' ? 'ยอดเยี่ยมมาก! รับ +5 ดาว พักผ่อนให้เต็มที่นะ' : 'Great job! +5 stars added.',
-        tone: 'mint',
-      });
-    } else {
-      const tomorrow = getTomorrowDateKey(now);
-      let applied = false;
-      onUpdateKid(
-        kid.id,
-        (prev) => {
-          if (prev.daily.phoneReturnedChecked) return prev;
-          applied = true;
-          return {
-            ...prev,
-            penalty:
-              isSickToday || isAwayToday
-                ? prev.penalty
-                : { ...prev.penalty, noEveningPhoneTomorrowDate: tomorrow },
-            daily: { ...prev.daily, phoneReturnedChecked: true },
-          };
-        },
-        'Group 3 Late Phone Return >22:45'
-      );
-      if (!applied) return;
-      onShowAlert({
-        icon: isSickToday || isAwayToday ? '💚' : '⚖️📵',
-        title:
-          isSickToday || isAwayToday
-            ? lang === 'th'
-              ? 'บันทึกคืนมือถือ (ยกเว้นโทษป่วย/ลาพัก)'
-              : 'Phone Returned (Penalty Waived)'
-            : lang === 'th'
-            ? 'คืนเกิน Curfew 22:45 น.!'
-            : 'Past 22:45 Curfew!',
-        message:
-          isSickToday || isAwayToday
-            ? lang === 'th'
-              ? 'บันทึกการคืนมือถือเรียบร้อย และยกเว้นโทษเนื่องจากป่วย/ลาพักค่ะ'
-              : 'Phone return recorded and penalty waived due to sick leave or away status.'
-            : lang === 'th'
-            ? 'คืนหลัง 22:45 น. (ตั้งเพดานคืนโทรศัพท์ถึง 23:00 น.) ระบบบันทึกโทษงดใช้มือถือช่วงเย็นหลังกลับจากฝึกงานวันพรุ่งนี้ 1 วันทันที'
-            : 'Past 22:45 (23:00 ceiling). Restricted from evening phone use tomorrow (1 day).',
-        tone: isSickToday || isAwayToday ? 'mint' : 'pink',
-      });
-    }
+    onShowAlert({
+      icon: preview.emoji,
+      title: preview.bannerTitle,
+      message: preview.bannerSubtitle,
+      tone: preview.fineReason ? 'pink' : 'mint',
+    });
   };
 
   // --- STAR TO COIN EXCHANGE ---
@@ -3757,12 +3732,28 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                     </div>
                   )}
 
-                  {isPastCurfew && !kid.daily.phoneReturnedChecked && (kid.group !== 3 || Boolean(kid.daily.homeworkRegisteredSubject)) && (
-                    <div className="rounded-xl border border-[#F3B7C0] bg-[#FFF0F3] px-3.5 py-2 text-xs font-bold text-[#8B1D36]">
-                      ⚖️{' '}
-                      {lang === 'th'
-                        ? `เลยเวลา ${hwCurfewTh} แล้ว — ยังไม่นำมือถือมาเก็บ ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วัน`
-                        : `Past ${hwCurfewEn}! Keeping phone past ${hwCurfewEn} counts as consenting to forfeit 1 Free Day phone privilege.`}
+                  {returnScheduleEval.isPastDeadline && !kid.daily.phoneReturnedChecked && allowReturnPhone && (
+                    <div className="rounded-2xl border-2 border-[#E11D48] bg-[#FFE4EA] px-4 py-3 text-xs sm:text-sm font-extrabold text-[#881337] space-y-1">
+                      <div className="text-sm sm:text-base">
+                        🚨{' '}
+                        {lang === 'th'
+                          ? `เลยกำหนดคืนมือถือ (${returnScheduleEval.deadlineTh}) แล้ว!`
+                          : `Past Phone Return Deadline (${returnScheduleEval.deadlineEn})!`}
+                      </div>
+                      <div>
+                        ⚖️{' '}
+                        {lang === 'th'
+                          ? `หากกดคืนตอนนี้จะถูกลงโทษทันที: ${getPenaltySummaryText(
+                              returnScheduleEval.penaltyPreset,
+                              returnScheduleEval.penaltyNote,
+                              lang
+                            )}`
+                          : `Returning now applies penalty: ${getPenaltySummaryText(
+                              returnScheduleEval.penaltyPreset,
+                              returnScheduleEval.penaltyNote,
+                              lang
+                            )}`}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -3946,11 +3937,11 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                           📱{' '}
                           {kid.daily.homeworkRegisteredSubject
                             ? lang === 'th'
-                              ? `ส่งคืนมือถือ (ขออนุญาตใช้เพิ่ม — ไม่เกิน ${hwCurfewTh})`
-                              : `Return Phone (Extension — By ${hwCurfewEn})`
+                              ? `ส่งคืนมือถือ (ขออนุญาตใช้เพิ่ม — ไม่เกิน ${returnScheduleEval.deadlineTh})`
+                              : `Return Phone (Extension — By ${returnScheduleEval.deadlineEn})`
                             : lang === 'th'
-                            ? `ส่งคืนมือถือเข้าตู้พี่เลี้ยง (ไม่เกิน ${hwCurfewTh})`
-                            : `Return Phone to Locker (By ${hwCurfewEn})`}
+                            ? `ส่งคืนมือถือเข้าตู้พี่เลี้ยง (ไม่เกิน ${returnScheduleEval.deadlineTh})`
+                            : `Return Phone to Locker (By ${returnScheduleEval.deadlineEn})`}
                         </button>
                       )}
                     </>
@@ -7155,6 +7146,12 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
         lang={lang}
         onClose={() => setPiggyModal(null)}
         onExchangeStarsToCoins={handleExchangeStarsToCoins}
+      />
+
+      <PenaltyNoticeModal
+        notice={penaltyNoticePopup}
+        lang={lang}
+        onClose={() => setPenaltyNoticePopup(null)}
       />
     </div>
   );

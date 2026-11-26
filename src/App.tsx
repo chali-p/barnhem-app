@@ -19,7 +19,9 @@ import { createEmptyDaily } from './data/initialData';
 import { auth, signOutCloud } from './firebase';
 import {
   DEFAULT_ORG_ID,
+  isMasterAdminEmail,
   MASTER_ADMIN_EMAIL,
+  pullFoundationCloudOnce,
   seedCloudIfEmpty,
   subscribeFoundationCloud,
   subscribeLinkedKidCloud,
@@ -163,6 +165,7 @@ export default function App() {
   const [alertPayload, setAlertPayload] = useState<ModalAlertPayload | null>(null);
   const [cloudUser, setCloudUser] = useState<User | null>(null);
   const [cloudSyncing, setCloudSyncing] = useState(false);
+  const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
   const [linkedKidSession, setLinkedKidSession] = useState<LinkedKidSession | null>(null);
 
   const stateRef = useRef<AppState>(state);
@@ -176,6 +179,9 @@ export default function App() {
   const manualLeftTenantRef = useRef(false);
   const langRef = useRef<Language>(lang);
   langRef.current = lang;
+  const pendingRetryBaseStateRef = useRef<AppState | null>(null);
+  const hasMergedInitialCloudMembersRef = useRef(false);
+  const lastCloudPullAtRef = useRef(0);
 
   const persistActiveStateLocal = useCallback((nextState: AppState, tenant: ActiveTenantContext | null) => {
     if (linkedKidSessionRef.current) {
@@ -195,7 +201,7 @@ export default function App() {
 
   // Auto-activate approved external foundation workspace when signed in
   useEffect(() => {
-    if (!cloudUser || cloudUser.email === MASTER_ADMIN_EMAIL) return;
+    if (!cloudUser || isMasterAdminEmail(cloudUser.email)) return;
     if (activeTenant || manualLeftTenantRef.current) return;
 
     const unsub = subscribeMyRegistration(cloudUser.uid, (reg) => {
@@ -238,16 +244,21 @@ export default function App() {
 
   // Firebase Auth & Tenant-Scoped Real-Time Firestore Sync
   useEffect(() => {
+    let cancelled = false;
     let unsubCloud: (() => void) | null = null;
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
+      if (cancelled) return;
       setCloudUser(user);
       cloudUserRef.current = user;
+      setCloudSyncError(null);
+      hasMergedInitialCloudMembersRef.current = false;
       if (unsubCloud) {
         unsubCloud();
         unsubCloud = null;
       }
       if (!user) {
         manualLeftTenantRef.current = false;
+        pendingRetryBaseStateRef.current = null;
         if (linkedKidSessionRef.current) {
           linkedKidSessionRef.current = null;
           setLinkedKidSession(null);
@@ -269,7 +280,7 @@ export default function App() {
       }
 
       const tenant = activeTenantRef.current;
-      const isMaster = user.email === MASTER_ADMIN_EMAIL;
+      const isMaster = isMasterAdminEmail(user.email);
       const canSyncTenant = Boolean(tenant && tenant.ownerUid === user.uid);
       const canSyncMain = !tenant && isMaster;
 
@@ -354,21 +365,70 @@ export default function App() {
       setCloudSyncing(true);
       try {
         await seedCloudIfEmpty(stateRef.current, user, orgId);
+        if (cancelled) return;
         unsubCloud = subscribeFoundationCloud(
           user,
-          (members) => {
+          (cloudMembers) => {
+            const isFirstMerge = !hasMergedInitialCloudMembersRef.current;
+            hasMergedInitialCloudMembersRef.current = true;
+            let resolvedMembers = cloudMembers;
+            let shouldPushMergedTrash = false;
+
+            if (isFirstMerge) {
+              const prevLocal = stateRef.current;
+              const localTodayKey = getDateKey(
+                getEffectiveNow(prevLocal.settings.simulatedTimeIso)
+              );
+              const localById = new Map(prevLocal.members.map((m) => [m.id, m]));
+              resolvedMembers = cloudMembers.map((cm) => {
+                const lm = localById.get(cm.id);
+                if (
+                  lm &&
+                  lm.daily?.dateKey === localTodayKey &&
+                  cm.daily?.dateKey === localTodayKey &&
+                  lm.daily.trashDutyDone &&
+                  !cm.daily.trashDutyDone &&
+                  lm.daily.trashDutyDoneAt
+                ) {
+                  shouldPushMergedTrash = true;
+                  return {
+                    ...cm,
+                    daily: {
+                      ...cm.daily,
+                      trashDutyDone: true,
+                      trashDutyDoneAt: lm.daily.trashDutyDoneAt,
+                      trashDutyConfirmedBy: lm.daily.trashDutyConfirmedBy ?? cm.nickname,
+                    },
+                  };
+                }
+                return cm;
+              });
+            }
+
+            setCloudSyncError(null);
+            const baseForPush = stateRef.current;
             setState((prev) => {
               const next: AppState = {
                 ...prev,
-                members,
+                members: resolvedMembers,
                 lastSyncedAt: new Date().toISOString(),
               };
               stateRef.current = next;
               persistActiveStateLocal(next, activeTenantRef.current);
               return next;
             });
+
+            if (shouldPushMergedTrash) {
+              const cloudOnlyPrev: AppState = { ...baseForPush, members: cloudMembers };
+              void syncStateDiffToCloud(cloudOnlyPrev, stateRef.current, user, orgId).catch((err) => {
+                console.error('Auto-merge local trash duty sync error:', err);
+                pendingRetryBaseStateRef.current = pendingRetryBaseStateRef.current ?? cloudOnlyPrev;
+                setCloudSyncError(err instanceof Error ? err.message : String(err));
+              });
+            }
           },
           (patch) => {
+            setCloudSyncError(null);
             setState((prev) => {
               const next: AppState = {
                 ...prev,
@@ -381,6 +441,7 @@ export default function App() {
             });
           },
           (settings) => {
+            setCloudSyncError(null);
             setState((prev) => {
               const next: AppState = {
                 ...prev,
@@ -392,16 +453,23 @@ export default function App() {
               return next;
             });
           },
-          orgId
+          orgId,
+          (err) => {
+            setCloudSyncError(err instanceof Error ? err.message : String(err));
+          }
         );
       } catch (err) {
         console.error('Cloud sync initialization error:', err);
+        setCloudSyncError(err instanceof Error ? err.message : String(err));
       } finally {
-        setCloudSyncing(false);
+        if (!cancelled) {
+          setCloudSyncing(false);
+        }
       }
     });
 
     return () => {
+      cancelled = true;
       unsubAuth();
       if (unsubCloud) unsubCloud();
     };
@@ -445,6 +513,25 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [state.settings.simulatedTimeIso, persistActiveStateLocal]);
 
+  const showAlert = useCallback((payload: ModalAlertPayload) => {
+    setAlertPayload(payload);
+  }, []);
+
+  const pushStateDiffSafely = useCallback(
+    async (prev: AppState, next: AppState, user: User, orgId: string) => {
+      try {
+        await syncStateDiffToCloud(prev, next, user, orgId);
+        pendingRetryBaseStateRef.current = null;
+        setCloudSyncError(null);
+      } catch (err) {
+        console.error('Cloud sync write error:', err);
+        pendingRetryBaseStateRef.current = pendingRetryBaseStateRef.current ?? prev;
+        setCloudSyncError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    []
+  );
+
   const commitStateChange = useCallback(
     (updater: (prev: AppState) => AppState, eventLabel: string) => {
       const prev = stateRef.current;
@@ -465,30 +552,127 @@ export default function App() {
         const prevKid = prev.members.find((m) => m.id === kidSession.memberId);
         const nextKid = withSyncMeta.members.find((m) => m.id === kidSession.memberId);
         if (prevKid && nextKid) {
-          void syncLinkedKidSelfToCloud(prevKid, nextKid, kidSession, user);
+          void syncLinkedKidSelfToCloud(prevKid, nextKid, kidSession, user).catch((err) => {
+            console.error('Linked kid sync error:', err);
+            setCloudSyncError(err instanceof Error ? err.message : String(err));
+          });
         }
         return;
       }
       void postSyncToDriveOrSheet(withSyncMeta, eventLabel);
       if (user) {
         const canSyncTenant = Boolean(tenant && tenant.ownerUid === user.uid);
-        const canSyncMain = !tenant && user.email === MASTER_ADMIN_EMAIL;
+        const canSyncMain = !tenant && isMasterAdminEmail(user.email);
         if (canSyncTenant && tenant && !withSyncMeta.settings.useOwnStorageOnly) {
-          void syncStateDiffToCloud(prev, withSyncMeta, user, tenant.orgId);
+          void pushStateDiffSafely(prev, withSyncMeta, user, tenant.orgId);
         } else if (canSyncMain) {
-          void syncStateDiffToCloud(prev, withSyncMeta, user, DEFAULT_ORG_ID);
+          void pushStateDiffSafely(prev, withSyncMeta, user, DEFAULT_ORG_ID);
         }
       }
     },
-    [persistActiveStateLocal]
+    [persistActiveStateLocal, pushStateDiffSafely]
   );
+
+  const handlePullFromCloud = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const user = cloudUserRef.current;
+      if (!user) return;
+      const tenant = activeTenantRef.current;
+      const canSyncTenant = Boolean(tenant && tenant.ownerUid === user.uid);
+      const canSyncMain = !tenant && isMasterAdminEmail(user.email);
+      if (!canSyncTenant && !canSyncMain) return;
+      if (canSyncTenant && stateRef.current.settings.useOwnStorageOnly) return;
+      const orgId = canSyncTenant && tenant ? tenant.orgId : DEFAULT_ORG_ID;
+
+      lastCloudPullAtRef.current = Date.now();
+      if (!options?.silent) setCloudSyncing(true);
+      try {
+        if (pendingRetryBaseStateRef.current) {
+          await pushStateDiffSafely(
+            pendingRetryBaseStateRef.current,
+            stateRef.current,
+            user,
+            orgId
+          );
+        }
+        const pulled = await pullFoundationCloudOnce(user, orgId);
+        setCloudSyncError(null);
+        setState((prev) => {
+          const next: AppState = {
+            ...prev,
+            ...(pulled.members ? { members: pulled.members } : {}),
+            ...(pulled.recordsPatch ?? {}),
+            ...(pulled.settings ? { settings: pulled.settings } : {}),
+            lastSyncedAt: new Date().toISOString(),
+          };
+          stateRef.current = next;
+          persistActiveStateLocal(next, activeTenantRef.current);
+          return next;
+        });
+        if (!options?.silent) {
+          showAlert({
+            icon: '☁️✅',
+            title:
+              langRef.current === 'th'
+                ? 'ดึงข้อมูลล่าสุดจากคลาวด์แล้ว!'
+                : 'Synced Latest Cloud Data!',
+            message:
+              langRef.current === 'th'
+                ? 'อัปเดตสถานะเวรทิ้งขยะ รายชื่อ และข้อมูลทั้งหมดให้ตรงกับคลาวด์ล่าสุดเรียบร้อยค่ะ'
+                : 'Trash duty, members, and records are now refreshed from the cloud.',
+            tone: 'mint',
+          });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setCloudSyncError(msg);
+        if (!options?.silent) {
+          showAlert({
+            icon: '⚠️',
+            title:
+              langRef.current === 'th'
+                ? 'ดึงข้อมูลจากคลาวด์ไม่สำเร็จ'
+                : 'Cloud Refresh Failed',
+            message: msg,
+            tone: 'pink',
+          });
+        }
+      } finally {
+        if (!options?.silent) setCloudSyncing(false);
+      }
+    },
+    [persistActiveStateLocal, pushStateDiffSafely, showAlert]
+  );
+
+  // Auto-refresh from Firestore when browser wakes/focuses tab or regains internet
+  useEffect(() => {
+    const triggerRefreshIfDue = () => {
+      if (Date.now() - lastCloudPullAtRef.current < 8000) return;
+      void handlePullFromCloud({ silent: true });
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        triggerRefreshIfDue();
+      }
+    };
+    const handleOnline = () => {
+      lastCloudPullAtRef.current = 0;
+      triggerRefreshIfDue();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('online', handleOnline);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [handlePullFromCloud]);
 
   const handleForceSeedCloud = useCallback(async () => {
     const user = cloudUserRef.current;
     if (!user) return;
     const tenant = activeTenantRef.current;
     const canSyncTenant = Boolean(tenant && tenant.ownerUid === user.uid);
-    const canSyncMain = !tenant && user.email === MASTER_ADMIN_EMAIL;
+    const canSyncMain = !tenant && isMasterAdminEmail(user.email);
     if (!canSyncTenant && !canSyncMain) return;
     if (canSyncTenant && stateRef.current.settings.useOwnStorageOnly) return;
     const orgId = canSyncTenant && tenant ? tenant.orgId : DEFAULT_ORG_ID;
@@ -513,16 +697,39 @@ export default function App() {
         friendVisits: [],
         goldenPoolLogs: [],
         staffLeaves: [],
+        weeklyActivityLogs: [],
       };
       await syncStateDiffToCloud(emptyPrev, stateRef.current, user, orgId);
+      pendingRetryBaseStateRef.current = null;
+      setCloudSyncError(null);
+      showAlert({
+        icon: '☁️⬆️',
+        title:
+          langRef.current === 'th'
+            ? 'อัปโหลดข้อมูลจากเครื่องนี้ขึ้นคลาวด์แล้ว!'
+            : 'Uploaded Local Data to Cloud!',
+        message:
+          langRef.current === 'th'
+            ? 'ข้อมูลทั้งหมดของเครื่องนี้ถูกบันทึกขึ้นคลาวด์แล้ว เครื่องอื่นสามารถกดรีเฟรชหรือรอรับข้อมูลอัตโนมัติได้เลยค่ะ'
+            : 'All data from this device has been pushed to the cloud.',
+        tone: 'mint',
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setCloudSyncError(msg);
+      showAlert({
+        icon: '⚠️',
+        title:
+          langRef.current === 'th'
+            ? 'อัปโหลดขึ้นคลาวด์ไม่สำเร็จ'
+            : 'Upload to Cloud Failed',
+        message: msg,
+        tone: 'pink',
+      });
     } finally {
       setCloudSyncing(false);
     }
-  }, []);
-
-  const showAlert = useCallback((payload: ModalAlertPayload) => {
-    setAlertPayload(payload);
-  }, []);
+  }, [showAlert]);
 
   const makeWeeklyLog = useCallback(
     (
@@ -1560,7 +1767,7 @@ export default function App() {
           const logEntry = makeWeeklyLog(
             updated,
             customTitle || actionMeta?.titleTh || actionId,
-            isPenaltyAction ? 'late' : 'on_time',
+            isPenaltyAction || Boolean(freshRes.fineReason) ? 'late' : 'on_time',
             'ปุ่มด่วนหน้าแรก',
             detailOverride || freshRes.fineReason
           );
@@ -2096,7 +2303,7 @@ export default function App() {
                     ? lang === 'th'
                       ? '🏛️ พื้นที่มูลนิธิของฉัน'
                       : '🏛️ My Foundation Portal'
-                    : cloudUser?.email === MASTER_ADMIN_EMAIL
+                    : isMasterAdminEmail(cloudUser?.email)
                     ? lang === 'th'
                       ? '🛡️ เปิดสิทธิ์มูลนิธิอื่น'
                       : '🛡️ Org Approvals'
@@ -2191,7 +2398,9 @@ export default function App() {
             appState={state}
             cloudUser={cloudUser}
             cloudSyncing={cloudSyncing}
+            cloudSyncError={cloudSyncError}
             onForceSeedCloud={handleForceSeedCloud}
+            onPullFromCloud={handlePullFromCloud}
             onSelectKid={(kidId) => {
               setReturnToManagerAfterKid(false);
               setSelectedKidId(kidId);

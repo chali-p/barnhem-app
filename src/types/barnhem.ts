@@ -536,6 +536,16 @@ export interface TimedScheduleSlot {
   commandType?: LoginCommandType;
   enabled?: boolean;
   hidden?: boolean;
+  // Auto phone-return rule settings (used on night_return_phone)
+  autoNoHomeworkRuleEnabled?: boolean;
+  noHomeworkTargetMode?: 'match_homework_permission' | 'all_eligible' | 'custom_kids';
+  noHomeworkTargetKidIds?: string[];
+  noHomeworkDeadlineMins?: number;
+  noHomeworkPenaltyPreset?: string;
+  noHomeworkPenaltyNote?: string;
+  homeworkExtendedDeadlineMins?: number;
+  homeworkExtendedPenaltyPreset?: string;
+  homeworkExtendedPenaltyNote?: string;
 }
 
 export type CommandAuthMode = 'staff_pin' | 'kid_pin' | 'self_tap';

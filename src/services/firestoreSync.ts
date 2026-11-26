@@ -2,9 +2,12 @@ import { User } from 'firebase/auth';
 import {
   collection,
   doc,
+  DocumentData,
   getDocs,
+  getDocsFromServer,
   onSnapshot,
   query,
+  QuerySnapshot,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -86,6 +89,10 @@ function normalizeEmail(email: string | undefined | null): string {
   return (email ?? '').trim().toLowerCase();
 }
 
+export function isMasterAdminEmail(email: string | undefined | null): boolean {
+  return normalizeEmail(email) === MASTER_ADMIN_EMAIL.toLowerCase();
+}
+
 function collectMemberLinkedEmails(members: Member[]): string[] {
   const set = new Set<string>();
   for (const m of members) {
@@ -164,28 +171,52 @@ function serializeMemberDoc(
 ) {
   const scopedId = toScopedId(orgId, member.id);
   const cleanEmail = normalizeEmail(member.linkedEmail).slice(0, 200);
+  const safePersonalDrive =
+    typeof member.personalDriveUrl === 'string'
+      ? member.personalDriveUrl.slice(0, 500)
+      : undefined;
+  const safeRestrictedDocs =
+    typeof member.restrictedDocsUrl === 'string'
+      ? member.restrictedDocsUrl.slice(0, 500)
+      : undefined;
+  const safeStage =
+    typeof member.activeCoverStage === 'number'
+      ? Math.min(7, Math.max(1, Math.round(member.activeCoverStage)))
+      : 1;
+  const safeGroup =
+    member.group === 1 || member.group === 2 || member.group === 3 ? member.group : null;
+
   const clean = stripUndefined({
     id: scopedId,
     role: member.role,
-    group: member.group ?? null,
-    nickname: member.nickname,
-    fullName: member.fullName,
-    gender: member.gender,
-    pin: member.pin,
-    emoji: member.emoji,
-    stars: member.stars,
-    personalDriveUrl: member.personalDriveUrl,
-    restrictedDocsUrl: member.restrictedDocsUrl,
-    activeCoverStage: member.activeCoverStage,
-    unlockedCoverStages: member.unlockedCoverStages,
-    collectedSceneItems: member.collectedSceneItems,
-    ownedShopItemIds: member.ownedShopItemIds,
+    group: safeGroup,
+    nickname: (member.nickname || member.id).slice(0, 64),
+    fullName: (member.fullName || member.nickname || member.id).slice(0, 140),
+    gender: member.gender === 'F' ? 'F' : 'M',
+    pin: String(member.pin || '0000').slice(0, 8),
+    emoji: (member.emoji || '🌟').slice(0, 16),
+    stars: Math.max(0, Number(member.stars) || 0),
+    personalDriveUrl: safePersonalDrive,
+    restrictedDocsUrl: safeRestrictedDocs,
+    activeCoverStage: safeStage,
+    unlockedCoverStages: Array.isArray(member.unlockedCoverStages)
+      ? member.unlockedCoverStages.slice(0, 7)
+      : [1],
+    collectedSceneItems: Array.isArray(member.collectedSceneItems)
+      ? member.collectedSceneItems.slice(0, 100)
+      : [],
+    ownedShopItemIds: Array.isArray(member.ownedShopItemIds)
+      ? member.ownedShopItemIds.slice(0, 200)
+      : [],
     avatar: member.avatar,
-    pet: member.pet,
+    pet: member.pet ?? null,
     mySpace: member.mySpace,
     healthProfile: member.healthProfile,
     streak: member.streak,
-    customHouseChore: member.customHouseChore ?? null,
+    customHouseChore:
+      typeof member.customHouseChore === 'string'
+        ? member.customHouseChore.slice(0, 160)
+        : null,
     allowance: member.allowance ?? null,
     penalty: member.penalty,
     kitchenDuty: member.kitchenDuty,
@@ -355,10 +386,11 @@ export async function seedCloudIfEmpty(
   user: User,
   orgId: string = DEFAULT_ORG_ID
 ): Promise<boolean> {
+  const email = normalizeEmail(user.email);
   const membersRef = collection(db, 'members');
   const membersQuery =
     orgId === DEFAULT_ORG_ID
-      ? query(membersRef, where('sharedEmails', 'array-contains', user.email || ''))
+      ? query(membersRef, where('sharedEmails', 'array-contains', email))
       : query(membersRef, where('ownerUid', '==', user.uid));
 
   let snap;
@@ -514,15 +546,324 @@ export async function syncStateDiffToCloud(
   }
 }
 
-export function subscribeFoundationCloud(
-  user: User,
-  onMembersUpdate: (members: Member[]) => void,
-  onRecordsUpdate: (patch: Partial<AppState>) => void,
-  onSettingsUpdate: (settings: AppSettings) => void,
-  orgId: string = DEFAULT_ORG_ID
-): () => void {
-  const email = user.email || '';
+function parseMembersSnapshot(
+  snapshot: QuerySnapshot<DocumentData>,
+  orgId: string,
+  patchedLegacyPinDocs?: Set<string>
+): Member[] | null {
+  if (snapshot.empty) return null;
+  const list: Member[] = [];
+  snapshot.forEach((docSnap) => {
+    if (!belongsToOrg(orgId, docSnap.id)) return;
+    const d = docSnap.data() as Record<string, unknown>;
+    const localId = fromScopedId(
+      orgId,
+      typeof d.id === 'string' ? d.id : docSnap.id
+    );
+    const rawNickname = typeof d.nickname === 'string' ? d.nickname : '';
+    const rawPin = typeof d.pin === 'string' ? d.pin : '';
+    const pinMig = orgId === DEFAULT_ORG_ID ? LEGACY_KID_PIN_MIGRATIONS[localId] : undefined;
+    const migratedPin = pinMig && rawPin === pinMig.oldPin ? pinMig.newPin : rawPin;
+    if (
+      patchedLegacyPinDocs &&
+      pinMig &&
+      rawPin === pinMig.oldPin &&
+      !patchedLegacyPinDocs.has(docSnap.id)
+    ) {
+      patchedLegacyPinDocs.add(docSnap.id);
+      void updateDoc(doc(db, 'members', docSnap.id), {
+        pin: migratedPin,
+        updatedAt: serverTimestamp(),
+      }).catch((err) => console.error('Legacy PIN patch failed:', err));
+    }
+    const migratedNickname =
+      localId === 's7' && (rawPin === '2965' || migratedPin === '2279') && rawNickname === 'ฟา'
+        ? 'ฟ้า'
+        : rawNickname;
+    list.push({
+      ...(d as unknown as Member),
+      id: localId,
+      nickname: migratedNickname,
+      pin: migratedPin,
+      group: d.group === null ? undefined : (d.group as Member['group']),
+      pet: d.pet === null ? undefined : (d.pet as Member['pet']),
+      allowance: d.allowance === null ? undefined : (d.allowance as Member['allowance']),
+      customHouseChore:
+        typeof d.customHouseChore === 'string' ? d.customHouseChore : undefined,
+      linkedEmail:
+        typeof d.linkedEmail === 'string' && d.linkedEmail.trim()
+          ? d.linkedEmail.trim().toLowerCase()
+          : undefined,
+      emailLoginBonusClaimed: Boolean(d.emailLoginBonusClaimed),
+    });
+  });
+  if (list.length === 0) return null;
+  if (orgId === DEFAULT_ORG_ID) {
+    const initialOrder = new Map(
+      INITIAL_APP_STATE.members.map((m, idx) => [m.id, idx])
+    );
+    list.sort(
+      (a, b) =>
+        (initialOrder.get(a.id) ?? 999) - (initialOrder.get(b.id) ?? 999)
+    );
+  }
+  return list;
+}
 
+function parseRecordsSnapshot(
+  snapshot: QuerySnapshot<DocumentData>,
+  orgId: string
+): Partial<AppState> | null {
+  if (snapshot.empty) return null;
+  const announcements: Announcement[] = [];
+  const polls: SecretPoll[] = [];
+  const trips: OutingTrip[] = [];
+  const privateMessages: PrivateCareMessage[] = [];
+  const sickReports: SickReport[] = [];
+  const snackBills: SnackBill[] = [];
+  const kitchenLogs: KitchenVerificationLog[] = [];
+  const lostFoundItems: LostFoundItem[] = [];
+  const supplyRequests: SupplyRequest[] = [];
+  const kindnessCards: KindnessCard[] = [];
+  const deedRedemptions: DeedRedemption[] = [];
+  const shopItems: ShopItem[] = [];
+  const friendVisits: FriendVisitRequest[] = [];
+  const goldenPoolLogs: GoldenPoolLog[] = [];
+  const staffLeaves: StaffLeaveRecord[] = [];
+  const weeklyActivityLogs: WeeklyActivityLog[] = [];
+
+  let matchedAny = false;
+  snapshot.forEach((docSnap) => {
+    if (!belongsToOrg(orgId, docSnap.id)) return;
+    matchedAny = true;
+    const d = docSnap.data() as {
+      recordType: RecordType;
+      payload: Record<string, unknown>;
+    };
+    if (!d?.payload) return;
+    switch (d.recordType) {
+      case 'announcement': {
+        const ann = d.payload as unknown as Announcement;
+        if (ann?.id !== 'ann_welcome' && !ann?.id?.startsWith('ann_welcome_')) {
+          announcements.push(ann);
+        }
+        break;
+      }
+      case 'poll': {
+        const poll = d.payload as unknown as SecretPoll;
+        if (poll?.id !== 'poll_weekend_activity') {
+          polls.push(poll);
+        }
+        break;
+      }
+      case 'trip': {
+        const trip = d.payload as unknown as OutingTrip;
+        if (trip?.id !== 'trip_weekend_park') {
+          trips.push(trip);
+        }
+        break;
+      }
+      case 'private_message':
+        privateMessages.push(d.payload as unknown as PrivateCareMessage);
+        break;
+      case 'sick_report':
+        sickReports.push(d.payload as unknown as SickReport);
+        break;
+      case 'snack_bill':
+        snackBills.push(d.payload as unknown as SnackBill);
+        break;
+      case 'kitchen_log':
+        kitchenLogs.push(d.payload as unknown as KitchenVerificationLog);
+        break;
+      case 'lost_found': {
+        const lf = d.payload as unknown as LostFoundItem;
+        if (lf?.id !== 'lf_bottle_demo') {
+          lostFoundItems.push(lf);
+        }
+        break;
+      }
+      case 'supply_request':
+        supplyRequests.push(d.payload as unknown as SupplyRequest);
+        break;
+      case 'kindness_card': {
+        const card = d.payload as unknown as KindnessCard;
+        if (card?.id !== 'kind_welcome_1') {
+          kindnessCards.push(card);
+        }
+        break;
+      }
+      case 'deed_redemption':
+        deedRedemptions.push(d.payload as unknown as DeedRedemption);
+        break;
+      case 'shop_item':
+        shopItems.push(d.payload as unknown as ShopItem);
+        break;
+      case 'friend_visit':
+        friendVisits.push(d.payload as unknown as FriendVisitRequest);
+        break;
+      case 'golden_pool_log':
+        goldenPoolLogs.push(d.payload as unknown as GoldenPoolLog);
+        break;
+      case 'staff_leave':
+        staffLeaves.push(d.payload as unknown as StaffLeaveRecord);
+        break;
+      case 'weekly_activity_log':
+        weeklyActivityLogs.push(d.payload as unknown as WeeklyActivityLog);
+        break;
+    }
+  });
+
+  if (!matchedAny) return null;
+  const byNewest = (a: { createdAt?: string }, b: { createdAt?: string }) =>
+    (b.createdAt || '').localeCompare(a.createdAt || '');
+
+  announcements.sort(byNewest);
+  polls.sort(byNewest);
+  trips.sort(byNewest);
+  privateMessages.sort(byNewest);
+  lostFoundItems.sort(byNewest);
+  supplyRequests.sort(byNewest);
+  kindnessCards.sort(byNewest);
+  deedRedemptions.sort(byNewest);
+  friendVisits.sort(byNewest);
+  goldenPoolLogs.sort(byNewest);
+  staffLeaves.sort(byNewest);
+  weeklyActivityLogs.sort(byNewest);
+  snackBills.sort(byNewest);
+  sickReports.sort((a, b) => b.reportedAt.localeCompare(a.reportedAt));
+  kitchenLogs.sort((a, b) => b.verifiedAt.localeCompare(a.verifiedAt));
+
+  const shopOrder = new Map(INITIAL_APP_STATE.shopItems.map((item, idx) => [item.id, idx]));
+  const hasAnyMinimart = shopItems.some((item) => item.id.startsWith('minimart_'));
+  const effectiveShopItems = hasAnyMinimart
+    ? shopItems
+    : [
+        ...INITIAL_APP_STATE.shopItems.filter((item) => item.id.startsWith('minimart_')),
+        ...shopItems,
+      ];
+  effectiveShopItems.sort(
+    (a, b) => (shopOrder.get(a.id) ?? -1) - (shopOrder.get(b.id) ?? -1)
+  );
+
+  return {
+    announcements,
+    polls,
+    trips,
+    privateMessages,
+    sickReports,
+    snackBills,
+    kitchenLogs,
+    lostFoundItems,
+    supplyRequests,
+    kindnessCards,
+    deedRedemptions,
+    friendVisits,
+    goldenPoolLogs,
+    staffLeaves,
+    weeklyActivityLogs: pruneWeeklyActivityLogs(weeklyActivityLogs, new Date()),
+    ...(effectiveShopItems.length > 0 ? { shopItems: effectiveShopItems } : {}),
+  };
+}
+
+function parseConfigSnapshot(
+  snapshot: QuerySnapshot<DocumentData>,
+  orgId: string
+): AppSettings | null {
+  const expectedConfigDocId = toScopedId(orgId, 'settings');
+  for (const docSnap of snapshot.docs) {
+    if (docSnap.id !== expectedConfigDocId) continue;
+    const d = docSnap.data() as Record<string, unknown>;
+    return {
+      syncWebhookUrl:
+        typeof d.syncWebhookUrl === 'string'
+          ? d.syncWebhookUrl
+          : INITIAL_APP_STATE.settings.syncWebhookUrl,
+      returnHomeDriveUrl:
+        typeof d.returnHomeDriveUrl === 'string'
+          ? d.returnHomeDriveUrl
+          : INITIAL_APP_STATE.settings.returnHomeDriveUrl,
+      creatorPins: Array.isArray(d.creatorPins)
+        ? (d.creatorPins as string[])
+        : INITIAL_APP_STATE.settings.creatorPins,
+      isPublicHolidayToday: Boolean(d.isPublicHolidayToday),
+      simulatedTimeIso:
+        typeof d.simulatedTimeIso === 'string' ? d.simulatedTimeIso : null,
+      tutorMaxStarsPerKidPerDay:
+        typeof d.tutorMaxStarsPerKidPerDay === 'number'
+          ? Math.min(10, Math.max(0, d.tutorMaxStarsPerKidPerDay))
+          : 10,
+      activeFestivalOverride:
+        typeof d.activeFestivalOverride === 'string'
+          ? (d.activeFestivalOverride as AppSettings['activeFestivalOverride'])
+          : 'auto',
+      dailyAllowanceThb:
+        typeof d.dailyAllowanceThb === 'number' ? d.dailyAllowanceThb : 70,
+      schoolDaysPerWeek:
+        typeof d.schoolDaysPerWeek === 'number' ? d.schoolDaysPerWeek : 5,
+      early15MinBonusStars:
+        typeof d.early15MinBonusStars === 'number' ? d.early15MinBonusStars : 1,
+      starToCoinStars:
+        typeof d.starToCoinStars === 'number' ? d.starToCoinStars : 30,
+      starToCoinThb:
+        typeof d.starToCoinThb === 'number' ? d.starToCoinThb : 5,
+      lastWeeklyClearedAt:
+        typeof d.lastWeeklyClearedAt === 'string' ? d.lastWeeklyClearedAt : null,
+      useOwnStorageOnly: Boolean(d.useOwnStorageOnly),
+      enableCoinsAndPiggyBank: Boolean(d.enableCoinsAndPiggyBank),
+      showHomeAnnouncementBox:
+        d.showHomeAnnouncementBox === undefined
+          ? true
+          : Boolean(d.showHomeAnnouncementBox),
+      organizationPreset:
+        typeof d.organizationPreset === 'string'
+          ? (d.organizationPreset as AppSettings['organizationPreset'])
+          : undefined,
+      automationAddons: Array.isArray(d.automationAddons)
+        ? (d.automationAddons.filter(
+            (x): x is NonNullable<AppSettings['automationAddons']>[number] =>
+              typeof x === 'string'
+          ) as AppSettings['automationAddons'])
+        : undefined,
+      customQuickCommands: Array.isArray(d.customQuickCommands)
+        ? (d.customQuickCommands.slice(0, 20) as CustomQuickCommand[])
+        : undefined,
+      timedCommandSchedule:
+        d.timedCommandSchedule &&
+        typeof d.timedCommandSchedule === 'object' &&
+        !Array.isArray(d.timedCommandSchedule)
+          ? (d.timedCommandSchedule as AppSettings['timedCommandSchedule'])
+          : undefined,
+      homeworkCurfewMins:
+        typeof d.homeworkCurfewMins === 'number'
+          ? Math.min(1439, Math.max(0, Math.round(d.homeworkCurfewMins)))
+          : undefined,
+      kidsWithoutPhoneIds: Array.isArray(d.kidsWithoutPhoneIds)
+        ? d.kidsWithoutPhoneIds.filter((x): x is string => typeof x === 'string').slice(0, 100)
+        : undefined,
+      commandPermissions:
+        d.commandPermissions &&
+        typeof d.commandPermissions === 'object' &&
+        !Array.isArray(d.commandPermissions)
+          ? (d.commandPermissions as AppSettings['commandPermissions'])
+          : undefined,
+      customPenaltyPresets: Array.isArray(d.customPenaltyPresets)
+        ? d.customPenaltyPresets.filter((x): x is string => typeof x === 'string').slice(0, 30)
+        : undefined,
+      kidAwaySecretCode:
+        typeof d.kidAwaySecretCode === 'string'
+          ? d.kidAwaySecretCode.slice(0, 8)
+          : undefined,
+      kidAwaySecretDateKey:
+        typeof d.kidAwaySecretDateKey === 'string'
+          ? d.kidAwaySecretDateKey.slice(0, 16)
+          : null,
+    };
+  }
+  return null;
+}
+
+function buildFoundationQueries(user: User, orgId: string) {
+  const email = normalizeEmail(user.email);
   const membersQ =
     orgId === DEFAULT_ORG_ID
       ? query(collection(db, 'members'), where('sharedEmails', 'array-contains', email))
@@ -535,324 +876,79 @@ export function subscribeFoundationCloud(
     orgId === DEFAULT_ORG_ID
       ? query(collection(db, 'config'), where('sharedEmails', 'array-contains', email))
       : query(collection(db, 'config'), where('ownerUid', '==', user.uid));
+  return { membersQ, recordsQ, configQ };
+}
 
+export async function pullFoundationCloudOnce(
+  user: User,
+  orgId: string = DEFAULT_ORG_ID
+): Promise<{
+  members: Member[] | null;
+  recordsPatch: Partial<AppState> | null;
+  settings: AppSettings | null;
+}> {
+  const { membersQ, recordsQ, configQ } = buildFoundationQueries(user, orgId);
+  try {
+    const [membersSnap, recordsSnap, configSnap] = await Promise.all([
+      getDocsFromServer(membersQ),
+      getDocsFromServer(recordsQ),
+      getDocsFromServer(configQ),
+    ]);
+    return {
+      members: parseMembersSnapshot(membersSnap, orgId),
+      recordsPatch: parseRecordsSnapshot(recordsSnap, orgId),
+      settings: parseConfigSnapshot(configSnap, orgId),
+    };
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, 'members/records/config');
+  }
+}
+
+export function subscribeFoundationCloud(
+  user: User,
+  onMembersUpdate: (members: Member[]) => void,
+  onRecordsUpdate: (patch: Partial<AppState>) => void,
+  onSettingsUpdate: (settings: AppSettings) => void,
+  orgId: string = DEFAULT_ORG_ID,
+  onSyncError?: (err: unknown) => void
+): () => void {
+  const { membersQ, recordsQ, configQ } = buildFoundationQueries(user, orgId);
   const patchedLegacyPinDocs = new Set<string>();
 
   const unsubMembers = onSnapshot(
     membersQ,
     (snapshot) => {
-      if (snapshot.empty) return;
-      const list: Member[] = [];
-      snapshot.forEach((docSnap) => {
-        if (!belongsToOrg(orgId, docSnap.id)) return;
-        const d = docSnap.data() as Record<string, unknown>;
-        const localId = fromScopedId(
-          orgId,
-          typeof d.id === 'string' ? d.id : docSnap.id
-        );
-        const rawNickname = typeof d.nickname === 'string' ? d.nickname : '';
-        const rawPin = typeof d.pin === 'string' ? d.pin : '';
-        const pinMig = orgId === DEFAULT_ORG_ID ? LEGACY_KID_PIN_MIGRATIONS[localId] : undefined;
-        const migratedPin = pinMig && rawPin === pinMig.oldPin ? pinMig.newPin : rawPin;
-        if (
-          pinMig &&
-          rawPin === pinMig.oldPin &&
-          !patchedLegacyPinDocs.has(docSnap.id)
-        ) {
-          patchedLegacyPinDocs.add(docSnap.id);
-          void updateDoc(doc(db, 'members', docSnap.id), {
-            pin: migratedPin,
-            updatedAt: serverTimestamp(),
-          }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `members/${docSnap.id}`));
-        }
-        const migratedNickname =
-          localId === 's7' && (rawPin === '2965' || migratedPin === '2279') && rawNickname === 'ฟา'
-            ? 'ฟ้า'
-            : rawNickname;
-        list.push({
-          ...(d as unknown as Member),
-          id: localId,
-          nickname: migratedNickname,
-          pin: migratedPin,
-          group: d.group === null ? undefined : (d.group as Member['group']),
-          pet: d.pet === null ? undefined : (d.pet as Member['pet']),
-          allowance: d.allowance === null ? undefined : (d.allowance as Member['allowance']),
-          customHouseChore:
-            typeof d.customHouseChore === 'string' ? d.customHouseChore : undefined,
-          linkedEmail:
-            typeof d.linkedEmail === 'string' && d.linkedEmail.trim()
-              ? d.linkedEmail.trim().toLowerCase()
-              : undefined,
-          emailLoginBonusClaimed: Boolean(d.emailLoginBonusClaimed),
-        });
-      });
-      if (list.length === 0) return;
-      if (orgId === DEFAULT_ORG_ID) {
-        const initialOrder = new Map(
-          INITIAL_APP_STATE.members.map((m, idx) => [m.id, idx])
-        );
-        list.sort(
-          (a, b) =>
-            (initialOrder.get(a.id) ?? 999) - (initialOrder.get(b.id) ?? 999)
-        );
-      }
-      onMembersUpdate(list);
+      const list = parseMembersSnapshot(snapshot, orgId, patchedLegacyPinDocs);
+      if (list) onMembersUpdate(list);
     },
-    (err) => handleFirestoreError(err, OperationType.LIST, 'members')
+    (err) => {
+      console.error('Firestore members listener error:', err);
+      onSyncError?.(err);
+    }
   );
 
   const unsubRecords = onSnapshot(
     recordsQ,
     (snapshot) => {
-      if (snapshot.empty) return;
-      const announcements: Announcement[] = [];
-      const polls: SecretPoll[] = [];
-      const trips: OutingTrip[] = [];
-      const privateMessages: PrivateCareMessage[] = [];
-      const sickReports: SickReport[] = [];
-      const snackBills: SnackBill[] = [];
-      const kitchenLogs: KitchenVerificationLog[] = [];
-      const lostFoundItems: LostFoundItem[] = [];
-      const supplyRequests: SupplyRequest[] = [];
-      const kindnessCards: KindnessCard[] = [];
-      const deedRedemptions: DeedRedemption[] = [];
-      const shopItems: ShopItem[] = [];
-      const friendVisits: FriendVisitRequest[] = [];
-      const goldenPoolLogs: GoldenPoolLog[] = [];
-      const staffLeaves: StaffLeaveRecord[] = [];
-      const weeklyActivityLogs: WeeklyActivityLog[] = [];
-
-      let matchedAny = false;
-      snapshot.forEach((docSnap) => {
-        if (!belongsToOrg(orgId, docSnap.id)) return;
-        matchedAny = true;
-        const d = docSnap.data() as {
-          recordType: RecordType;
-          payload: Record<string, unknown>;
-        };
-        if (!d?.payload) return;
-        switch (d.recordType) {
-          case 'announcement': {
-            const ann = d.payload as unknown as Announcement;
-            if (ann?.id !== 'ann_welcome' && !ann?.id?.startsWith('ann_welcome_')) {
-              announcements.push(ann);
-            }
-            break;
-          }
-          case 'poll': {
-            const poll = d.payload as unknown as SecretPoll;
-            if (poll?.id !== 'poll_weekend_activity') {
-              polls.push(poll);
-            }
-            break;
-          }
-          case 'trip': {
-            const trip = d.payload as unknown as OutingTrip;
-            if (trip?.id !== 'trip_weekend_park') {
-              trips.push(trip);
-            }
-            break;
-          }
-          case 'private_message':
-            privateMessages.push(d.payload as unknown as PrivateCareMessage);
-            break;
-          case 'sick_report':
-            sickReports.push(d.payload as unknown as SickReport);
-            break;
-          case 'snack_bill':
-            snackBills.push(d.payload as unknown as SnackBill);
-            break;
-          case 'kitchen_log':
-            kitchenLogs.push(d.payload as unknown as KitchenVerificationLog);
-            break;
-          case 'lost_found': {
-            const lf = d.payload as unknown as LostFoundItem;
-            if (lf?.id !== 'lf_bottle_demo') {
-              lostFoundItems.push(lf);
-            }
-            break;
-          }
-          case 'supply_request':
-            supplyRequests.push(d.payload as unknown as SupplyRequest);
-            break;
-          case 'kindness_card': {
-            const card = d.payload as unknown as KindnessCard;
-            if (card?.id !== 'kind_welcome_1') {
-              kindnessCards.push(card);
-            }
-            break;
-          }
-          case 'deed_redemption':
-            deedRedemptions.push(d.payload as unknown as DeedRedemption);
-            break;
-          case 'shop_item':
-            shopItems.push(d.payload as unknown as ShopItem);
-            break;
-          case 'friend_visit':
-            friendVisits.push(d.payload as unknown as FriendVisitRequest);
-            break;
-          case 'golden_pool_log':
-            goldenPoolLogs.push(d.payload as unknown as GoldenPoolLog);
-            break;
-          case 'staff_leave':
-            staffLeaves.push(d.payload as unknown as StaffLeaveRecord);
-            break;
-          case 'weekly_activity_log':
-            weeklyActivityLogs.push(d.payload as unknown as WeeklyActivityLog);
-            break;
-        }
-      });
-
-      if (!matchedAny) return;
-      const byNewest = (a: { createdAt?: string }, b: { createdAt?: string }) =>
-        (b.createdAt || '').localeCompare(a.createdAt || '');
-
-      announcements.sort(byNewest);
-      polls.sort(byNewest);
-      trips.sort(byNewest);
-      privateMessages.sort(byNewest);
-      lostFoundItems.sort(byNewest);
-      supplyRequests.sort(byNewest);
-      kindnessCards.sort(byNewest);
-      deedRedemptions.sort(byNewest);
-      friendVisits.sort(byNewest);
-      goldenPoolLogs.sort(byNewest);
-      staffLeaves.sort(byNewest);
-      weeklyActivityLogs.sort(byNewest);
-      snackBills.sort(byNewest);
-      sickReports.sort((a, b) => b.reportedAt.localeCompare(a.reportedAt));
-      kitchenLogs.sort((a, b) => b.verifiedAt.localeCompare(a.verifiedAt));
-
-      const shopOrder = new Map(INITIAL_APP_STATE.shopItems.map((item, idx) => [item.id, idx]));
-      const hasAnyMinimart = shopItems.some((item) => item.id.startsWith('minimart_'));
-      const effectiveShopItems = hasAnyMinimart
-        ? shopItems
-        : [
-            ...INITIAL_APP_STATE.shopItems.filter((item) => item.id.startsWith('minimart_')),
-            ...shopItems,
-          ];
-      effectiveShopItems.sort(
-        (a, b) => (shopOrder.get(a.id) ?? -1) - (shopOrder.get(b.id) ?? -1)
-      );
-
-      onRecordsUpdate({
-        announcements,
-        polls,
-        trips,
-        privateMessages,
-        sickReports,
-        snackBills,
-        kitchenLogs,
-        lostFoundItems,
-        supplyRequests,
-        kindnessCards,
-        deedRedemptions,
-        friendVisits,
-        goldenPoolLogs,
-        staffLeaves,
-        weeklyActivityLogs: pruneWeeklyActivityLogs(weeklyActivityLogs, new Date()),
-        ...(effectiveShopItems.length > 0 ? { shopItems: effectiveShopItems } : {}),
-      });
+      const patch = parseRecordsSnapshot(snapshot, orgId);
+      if (patch) onRecordsUpdate(patch);
     },
-    (err) => handleFirestoreError(err, OperationType.LIST, 'records')
+    (err) => {
+      console.error('Firestore records listener error:', err);
+      onSyncError?.(err);
+    }
   );
 
-  const expectedConfigDocId = toScopedId(orgId, 'settings');
   const unsubConfig = onSnapshot(
     configQ,
     (snapshot) => {
-      snapshot.forEach((docSnap) => {
-        if (docSnap.id === expectedConfigDocId) {
-          const d = docSnap.data() as Record<string, unknown>;
-          onSettingsUpdate({
-            syncWebhookUrl:
-              typeof d.syncWebhookUrl === 'string'
-                ? d.syncWebhookUrl
-                : INITIAL_APP_STATE.settings.syncWebhookUrl,
-            returnHomeDriveUrl:
-              typeof d.returnHomeDriveUrl === 'string'
-                ? d.returnHomeDriveUrl
-                : INITIAL_APP_STATE.settings.returnHomeDriveUrl,
-            creatorPins: Array.isArray(d.creatorPins)
-              ? (d.creatorPins as string[])
-              : INITIAL_APP_STATE.settings.creatorPins,
-            isPublicHolidayToday: Boolean(d.isPublicHolidayToday),
-            simulatedTimeIso:
-              typeof d.simulatedTimeIso === 'string' ? d.simulatedTimeIso : null,
-            tutorMaxStarsPerKidPerDay:
-              typeof d.tutorMaxStarsPerKidPerDay === 'number'
-                ? Math.min(10, Math.max(0, d.tutorMaxStarsPerKidPerDay))
-                : 10,
-            activeFestivalOverride:
-              typeof d.activeFestivalOverride === 'string'
-                ? (d.activeFestivalOverride as AppSettings['activeFestivalOverride'])
-                : 'auto',
-            dailyAllowanceThb:
-              typeof d.dailyAllowanceThb === 'number' ? d.dailyAllowanceThb : 70,
-            schoolDaysPerWeek:
-              typeof d.schoolDaysPerWeek === 'number' ? d.schoolDaysPerWeek : 5,
-            early15MinBonusStars:
-              typeof d.early15MinBonusStars === 'number' ? d.early15MinBonusStars : 1,
-            starToCoinStars:
-              typeof d.starToCoinStars === 'number' ? d.starToCoinStars : 30,
-            starToCoinThb:
-              typeof d.starToCoinThb === 'number' ? d.starToCoinThb : 5,
-            lastWeeklyClearedAt:
-              typeof d.lastWeeklyClearedAt === 'string' ? d.lastWeeklyClearedAt : null,
-            useOwnStorageOnly: Boolean(d.useOwnStorageOnly),
-            enableCoinsAndPiggyBank: Boolean(d.enableCoinsAndPiggyBank),
-            showHomeAnnouncementBox:
-              d.showHomeAnnouncementBox === undefined
-                ? true
-                : Boolean(d.showHomeAnnouncementBox),
-            organizationPreset:
-              typeof d.organizationPreset === 'string'
-                ? (d.organizationPreset as AppSettings['organizationPreset'])
-                : undefined,
-            automationAddons: Array.isArray(d.automationAddons)
-              ? (d.automationAddons.filter(
-                  (x): x is NonNullable<AppSettings['automationAddons']>[number] =>
-                    typeof x === 'string'
-                ) as AppSettings['automationAddons'])
-              : undefined,
-            customQuickCommands: Array.isArray(d.customQuickCommands)
-              ? (d.customQuickCommands.slice(0, 20) as CustomQuickCommand[])
-              : undefined,
-            timedCommandSchedule:
-              d.timedCommandSchedule &&
-              typeof d.timedCommandSchedule === 'object' &&
-              !Array.isArray(d.timedCommandSchedule)
-                ? (d.timedCommandSchedule as AppSettings['timedCommandSchedule'])
-                : undefined,
-            homeworkCurfewMins:
-              typeof d.homeworkCurfewMins === 'number'
-                ? Math.min(1439, Math.max(0, Math.round(d.homeworkCurfewMins)))
-                : undefined,
-            kidsWithoutPhoneIds: Array.isArray(d.kidsWithoutPhoneIds)
-              ? d.kidsWithoutPhoneIds.filter((x): x is string => typeof x === 'string').slice(0, 100)
-              : undefined,
-            commandPermissions:
-              d.commandPermissions &&
-              typeof d.commandPermissions === 'object' &&
-              !Array.isArray(d.commandPermissions)
-                ? (d.commandPermissions as AppSettings['commandPermissions'])
-                : undefined,
-            customPenaltyPresets: Array.isArray(d.customPenaltyPresets)
-              ? d.customPenaltyPresets.filter((x): x is string => typeof x === 'string').slice(0, 30)
-              : undefined,
-            kidAwaySecretCode:
-              typeof d.kidAwaySecretCode === 'string'
-                ? d.kidAwaySecretCode.slice(0, 8)
-                : undefined,
-            kidAwaySecretDateKey:
-              typeof d.kidAwaySecretDateKey === 'string'
-                ? d.kidAwaySecretDateKey.slice(0, 16)
-                : null,
-          });
-        }
-      });
+      const settings = parseConfigSnapshot(snapshot, orgId);
+      if (settings) onSettingsUpdate(settings);
     },
-    (err) => handleFirestoreError(err, OperationType.LIST, 'config')
+    (err) => {
+      console.error('Firestore config listener error:', err);
+      onSyncError?.(err);
+    }
   );
 
   return () => {
