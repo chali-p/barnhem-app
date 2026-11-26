@@ -58,6 +58,8 @@ import {
   KIDS_STAR_SUMMARY_PIN,
   LOST_FOUND_PIN,
   SECRET_VOTE_PIN,
+  SHORTCUT_MANUAL_PIN,
+  STAFF_SYSTEM_GUIDE_PIN,
   SUPPLY_REQUEST_PIN,
   formatPinAttemptsHint,
   formatPinLockoutMessage,
@@ -120,6 +122,8 @@ interface MagicDoorViewProps {
       | 'supply_request'
       | 'lost_found'
       | 'house_rules_guide'
+      | 'staff_system_guide'
+      | 'shortcut_manual'
   ) => void;
   onExpressKioskScan: (code: string) => KioskResult | null;
   onQuickGoToSchool: (kidId: string) => KioskResult | null;
@@ -561,6 +565,16 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
       onAutoLoginRole('house_rules_guide');
       return 'logged_in';
     }
+    if (pin === SHORTCUT_MANUAL_PIN) {
+      pinGuard.recordSuccess();
+      onAutoLoginRole('shortcut_manual');
+      return 'logged_in';
+    }
+    if (pin === STAFF_SYSTEM_GUIDE_PIN) {
+      pinGuard.recordSuccess();
+      onAutoLoginRole('staff_system_guide');
+      return 'logged_in';
+    }
     if (creatorPins.includes(pin)) {
       pinGuard.recordSuccess();
       onAutoLoginRole('creator');
@@ -777,8 +791,8 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                 <div className="text-[11px] text-[#7B695F] px-1">
                   👩‍🏫{' '}
                   {lang === 'th'
-                    ? 'สงวนสิทธิ์เข้าสู่ระบบสำหรับพนักงาน · น้องๆ กดใช้ปุ่มคำสั่งหรือรหัสลัดได้เลยค่ะ'
-                    : 'Staff login only · Kids can use Quick Commands or shortcut PINs'}
+                    ? 'สงวนสิทธิ์เข้าสู่ระบบสำหรับพนักงาน · พิมพ์ 0000 เพื่อเปิดคู่มือรวมรหัสลัด (0001–0009) ค่ะ'
+                    : 'Staff login only · Enter 0000 to open the Shortcut Manual (0001–0009)'}
                 </div>
               </div>
               {pinGuard.isLocked && (

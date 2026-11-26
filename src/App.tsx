@@ -14,6 +14,8 @@ import { KidSupplyRequestView } from './components/KidSupplyRequestView';
 import { MagicDoorView } from './components/MagicDoorView';
 import { ManagerView } from './components/ManagerView';
 import { PlatformPortalView } from './components/PlatformPortalView';
+import { ShortcutManualView } from './components/ShortcutManualView';
+import { StaffSystemGuideView } from './components/StaffSystemGuideView';
 import { StaffView } from './components/StaffView';
 import { TutorView } from './components/TutorView';
 import { createEmptyDaily } from './data/initialData';
@@ -2236,9 +2238,15 @@ export default function App() {
       | 'supply_request'
       | 'lost_found'
       | 'house_rules_guide'
+      | 'staff_system_guide'
+      | 'shortcut_manual'
   ) => {
     setSelectedKidId(null);
     setReturnToManagerAfterKid(false);
+    if (target === 'shortcut_manual') {
+      setMode('shortcut_manual');
+      return;
+    }
     if (target === 'activity_log') {
       setMode('activity_log');
       return;
@@ -2265,6 +2273,10 @@ export default function App() {
     }
     if (target === 'house_rules_guide') {
       setMode('house_rules_guide');
+      return;
+    }
+    if (target === 'staff_system_guide') {
+      setMode('staff_system_guide');
       return;
     }
     if (target === 'creator') {
@@ -2404,6 +2416,14 @@ export default function App() {
                 (lang === 'th'
                   ? '📜 ข้อตกลงและขั้นตอนการกดระบบ (PIN 0007)'
                   : '📜 House Rules & Check-In Guide (PIN 0007)')}
+              {mode === 'staff_system_guide' &&
+                (lang === 'th'
+                  ? '📋 ตารางสรุปการทำงานของพี่เลี้ยงและระบบ (PIN 0009)'
+                  : '📋 Staff & System Summary Table (PIN 0009)')}
+              {mode === 'shortcut_manual' &&
+                (lang === 'th'
+                  ? '📖 คู่มือการใช้งาน & รวมรหัสลัด 0001–0009 (PIN 0000)'
+                  : '📖 User Manual & Shortcut PINs 0001–0009 (PIN 0000)')}
             </span>
 
             <button
@@ -2978,6 +2998,36 @@ export default function App() {
             now={now}
             lang={lang}
             settings={state.settings}
+            onBackHome={() => {
+              setMode('magic_door');
+              setSelectedKidId(null);
+            }}
+          />
+        )}
+
+        {mode === 'staff_system_guide' && (
+          <StaffSystemGuideView
+            orgName={activeTenant?.orgName ?? 'Barnhem Care & Kids'}
+            now={now}
+            lang={lang}
+            staffLeaves={state.staffLeaves}
+            isPublicHolidayToday={Boolean(state.settings.isPublicHolidayToday)}
+            onBackHome={() => {
+              setMode('magic_door');
+              setSelectedKidId(null);
+            }}
+          />
+        )}
+
+        {mode === 'shortcut_manual' && (
+          <ShortcutManualView
+            orgName={activeTenant?.orgName ?? 'Barnhem Care & Kids'}
+            now={now}
+            lang={lang}
+            onNavigateMode={(targetMode) => {
+              setSelectedKidId(null);
+              setMode(targetMode);
+            }}
             onBackHome={() => {
               setMode('magic_door');
               setSelectedKidId(null);

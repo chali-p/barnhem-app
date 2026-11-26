@@ -14,7 +14,9 @@ export type AppMode =
   | 'secret_vote'
   | 'supply_request'
   | 'lost_found'
-  | 'house_rules_guide';
+  | 'house_rules_guide'
+  | 'staff_system_guide'
+  | 'shortcut_manual';
 
 export type MemberRole = 'manager' | 'staff' | 'chef' | 'tutor' | 'kid';
 

@@ -124,6 +124,7 @@ export interface PinConflictResult {
   conflictOwnerLabel?: string;
 }
 
+export const SHORTCUT_MANUAL_PIN = '0000';
 export const ACTIVITY_LOG_VIEWER_PIN = '0001';
 export const KIDS_STAR_SUMMARY_PIN = '0002';
 export const KIDS_DUTY_ROSTER_PIN = '0003';
@@ -131,6 +132,7 @@ export const SECRET_VOTE_PIN = '0004';
 export const SUPPLY_REQUEST_PIN = '0005';
 export const LOST_FOUND_PIN = '0006';
 export const HOUSE_RULES_GUIDE_PIN = '0007';
+export const STAFF_SYSTEM_GUIDE_PIN = '0009';
 
 /**
  * Ensures 4-digit PINs never collide between kids, staff, chefs, tutors, managers, creator master PINs, or reserved viewer PINs.
@@ -143,6 +145,13 @@ export function findPinConflict(
 ): PinConflictResult {
   const clean = pin.trim();
   if (!/^\d{4}$/.test(clean)) return { conflict: false };
+
+  if (clean === SHORTCUT_MANUAL_PIN) {
+    return {
+      conflict: true,
+      conflictOwnerLabel: 'รหัส 0000 (คู่มือการใช้งาน & รวมรหัสลัด 0001–0009)',
+    };
+  }
 
   if (clean === ACTIVITY_LOG_VIEWER_PIN) {
     return {
@@ -190,6 +199,13 @@ export function findPinConflict(
     return {
       conflict: true,
       conflictOwnerLabel: 'รหัส 0007 (ข้อตกลงและขั้นตอนการกดระบบประจำวัน)',
+    };
+  }
+
+  if (clean === STAFF_SYSTEM_GUIDE_PIN) {
+    return {
+      conflict: true,
+      conflictOwnerLabel: 'รหัส 0009 (ตารางสรุปการทำงานของพี่เลี้ยงและระบบ)',
     };
   }
 
