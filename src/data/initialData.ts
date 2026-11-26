@@ -2,6 +2,7 @@ import {
   Announcement,
   AppState,
   CoverSceneInfo,
+  DailyProgress,
   DeedRedemption,
   KindnessCard,
   LostFoundItem,
@@ -10,6 +11,7 @@ import {
   SecretPoll,
   ShopItem,
   SupplyRequest,
+  TrashDutyDayEntry,
 } from '../types/barnhem';
 import { createInitialAllowanceState } from '../utils/piggyBank';
 
@@ -786,7 +788,50 @@ export const INITIAL_SHOP_ITEMS: ShopItem[] = [
   { id: 's7_i7', nameTh: 'เพชรแห่งหัวใจบาร์นเฮม', nameEn: 'Heart of Barnhem Gem', priceStars: 300, category: 'cover_item', subType: 'scene_item', sceneStage: 7, emoji: '💎', descriptionTh: 'ของตกแต่งฉากที่ 7 (7/7)', descriptionEn: 'Stage 7 item (7/7)' },
 ];
 
-export function createEmptyDaily(dateKey: string) {
+function pruneTrashDutyByDate(
+  dateKey: string,
+  prevDaily?: Partial<DailyProgress> | null
+): Record<string, TrashDutyDayEntry> {
+  const result: Record<string, TrashDutyDayEntry> = {};
+  const source = prevDaily?.trashDutyByDate ?? {};
+  const cutoffDate = new Date(`${dateKey}T00:00:00`);
+  if (!Number.isNaN(cutoffDate.getTime())) {
+    cutoffDate.setDate(cutoffDate.getDate() - 21);
+  }
+  const cutoffMs = Number.isNaN(cutoffDate.getTime()) ? 0 : cutoffDate.getTime();
+
+  for (const [k, entry] of Object.entries(source)) {
+    if (!entry || !entry.done) continue;
+    const t = new Date(`${k}T00:00:00`).getTime();
+    if (!cutoffMs || Number.isNaN(t) || t >= cutoffMs) {
+      result[k] = {
+        done: true,
+        doneAt: entry.doneAt ?? null,
+        confirmedBy: entry.confirmedBy ?? null,
+      };
+    }
+  }
+
+  if (prevDaily?.dateKey && prevDaily.trashDutyDone && !result[prevDaily.dateKey]) {
+    const t = new Date(`${prevDaily.dateKey}T00:00:00`).getTime();
+    if (!cutoffMs || Number.isNaN(t) || t >= cutoffMs) {
+      result[prevDaily.dateKey] = {
+        done: true,
+        doneAt: prevDaily.trashDutyDoneAt ?? null,
+        confirmedBy: prevDaily.trashDutyConfirmedBy ?? null,
+      };
+    }
+  }
+
+  return result;
+}
+
+export function createEmptyDaily(
+  dateKey: string,
+  prevDaily?: Partial<DailyProgress> | null
+): DailyProgress {
+  const carriedTrash = pruneTrashDutyByDate(dateKey, prevDaily);
+  const todayEntry = carriedTrash[dateKey];
   return {
     dateKey,
     morningPhonePickupChecked: false,
@@ -806,9 +851,12 @@ export function createEmptyDaily(dateKey: string) {
     kitchenSatDone: false,
     kitchenSunDone: false,
     houseChoreDone: false,
-    trashDutyDone: false,
-    trashDutyDoneAt: null,
-    trashDutyConfirmedBy: null,
+    trashDutyDone: Boolean(todayEntry?.done),
+    trashDutyDoneAt: todayEntry?.doneAt ?? null,
+    trashDutyConfirmedBy: todayEntry?.confirmedBy ?? null,
+    trashDutyByDate: carriedTrash,
+    computerHomeworkChecked: false,
+    computerHomeworkAt: null,
   };
 }
 

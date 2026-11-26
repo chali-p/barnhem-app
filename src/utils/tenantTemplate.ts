@@ -254,10 +254,20 @@ export function loadTenantAppState(
     );
     const todayKey = getDateKey(new Date());
     const members = Array.isArray(parsed.members) && parsed.members.length > 0
-      ? parsed.members.map((m) => ({
-          ...m,
-          daily: m.daily && m.daily.dateKey === todayKey ? m.daily : createEmptyDaily(todayKey),
-        }))
+      ? parsed.members.map((m) => {
+          const baseDaily = createEmptyDaily(todayKey, m.daily);
+          return {
+            ...m,
+            daily:
+              m.daily && m.daily.dateKey === todayKey
+                ? {
+                    ...baseDaily,
+                    ...m.daily,
+                    trashDutyByDate: m.daily.trashDutyByDate ?? baseDaily.trashDutyByDate,
+                  }
+                : baseDaily,
+          };
+        })
       : starter.members;
 
     return {

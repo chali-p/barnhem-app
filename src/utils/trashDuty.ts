@@ -1,4 +1,4 @@
-import { Member } from '../types/barnhem';
+import { Member, TrashDutyDayEntry } from '../types/barnhem';
 
 export interface TrashDutyAssignee {
   kidId: string;
@@ -28,6 +28,24 @@ export interface TrashDutyTodayInfo extends TrashDutyWeekRow {
   isWednesday: boolean;
   nextTrashDayLabelTh: string;
   nextTrashDayLabelEn: string;
+}
+
+export interface TrashDutyDaySlot {
+  dayType: 'wednesday' | 'sunday';
+  date: Date;
+  dateKey: string;
+  shortDateTh: string;
+  shortDateEn: string;
+  dayNameTh: string;
+  dayNameEn: string;
+  dayWithDateTh: string;
+  dayWithDateEn: string;
+  weekNumber: number;
+  boyAssignee: TrashDutyAssignee;
+  girlAssignee: TrashDutyAssignee;
+  isToday: boolean;
+  isPast: boolean;
+  isUpcoming: boolean;
 }
 
 // Anchor: Week 1 starts Sunday 15 Nov 2026 (matches foundation spreadsheet schedules)
@@ -265,4 +283,84 @@ export function getKitchenSlotsLabelsForKid(kid: Member, lang: 'th' | 'en'): str
     slots.push(lang === 'th' ? 'เช้าอาทิตย์ 09:15 น.' : 'Sun 09:15');
   }
   return slots;
+}
+
+export function toTrashDateKey(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+export function getMemberTrashDutyStatusForDate(
+  member: Member | undefined | null,
+  dateKey: string
+): TrashDutyDayEntry {
+  if (!member?.daily) {
+    return { done: false, doneAt: null, confirmedBy: null };
+  }
+  const mapped = member.daily.trashDutyByDate?.[dateKey];
+  if (mapped) {
+    return {
+      done: Boolean(mapped.done),
+      doneAt: mapped.doneAt ?? null,
+      confirmedBy: mapped.confirmedBy ?? null,
+    };
+  }
+  if (member.daily.dateKey === dateKey && member.daily.trashDutyDone) {
+    return {
+      done: true,
+      doneAt: member.daily.trashDutyDoneAt ?? null,
+      confirmedBy: member.daily.trashDutyConfirmedBy ?? null,
+    };
+  }
+  return { done: false, doneAt: null, confirmedBy: null };
+}
+
+export function getTrashDutyDaySlots(now: Date): [TrashDutyDaySlot, TrashDutyDaySlot] {
+  const todayKey = toTrashDateKey(now);
+  const weekNumber = getTrashDutyWeekNumberForDate(now);
+  const currentRow = getTrashDutyWeekByNumber(weekNumber);
+  const nextRow = getTrashDutyWeekByNumber(weekNumber + 1);
+  const dow = now.getDay();
+
+  const buildSlot = (
+    dayType: 'wednesday' | 'sunday',
+    row: TrashDutyWeekRow
+  ): TrashDutyDaySlot => {
+    const date = dayType === 'sunday' ? row.sundayDate : row.wednesdayDate;
+    const dateKey = toTrashDateKey(date);
+    const shortDateTh = formatThaiTrashDate(date, false);
+    const shortDateEn = formatEnTrashDate(date, false);
+    const dayNameTh = dayType === 'sunday' ? 'วันอาทิตย์' : 'วันพุธ';
+    const dayNameEn = dayType === 'sunday' ? 'Sunday' : 'Wednesday';
+    return {
+      dayType,
+      date,
+      dateKey,
+      shortDateTh,
+      shortDateEn,
+      dayNameTh,
+      dayNameEn,
+      dayWithDateTh: `${dayNameTh} (${shortDateTh})`,
+      dayWithDateEn: `${dayType === 'sunday' ? 'Sun' : 'Wed'} (${shortDateEn})`,
+      weekNumber: row.weekNumber,
+      boyAssignee: row.boyAssignee,
+      girlAssignee: row.girlAssignee,
+      isToday: dateKey === todayKey,
+      isPast: dateKey < todayKey,
+      isUpcoming: dateKey > todayKey,
+    };
+  };
+
+  if (dow <= 3) {
+    return [
+      buildSlot('sunday', currentRow),
+      buildSlot('wednesday', currentRow),
+    ];
+  }
+  return [
+    buildSlot('wednesday', currentRow),
+    buildSlot('sunday', nextRow),
+  ];
 }

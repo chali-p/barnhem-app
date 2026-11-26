@@ -627,6 +627,7 @@ export type HomeQuickActionId =
   | 'morning_school'
   | 'afternoon_home'
   | 'evening_uniform_phone'
+  | 'evening_computer_homework'
   | 'evening_unlock_cartoon'
   | 'night_homework_permission'
   | 'night_return_phone'
@@ -885,6 +886,31 @@ export const HOME_QUICK_ACTIONS: HomeQuickActionConfig[] = [
     tapLabelEn: '👕 Uniform & Phone',
     doneLabelTh: '✅ รับมือถือแล้ว',
     doneLabelEn: '✅ Phone Collected',
+  },
+  {
+    id: 'evening_computer_homework',
+    emoji: '💻',
+    startMins: 18 * 60 + 30,
+    endMins: 20 * 60,
+    earlyGraceMins: 0,
+    deadlineMins: 20 * 60,
+    rewardStars: 10,
+    penaltyPreset: 'lock_after_deadline',
+    penaltyNote: 'ล็อกปุ่มทันทีเมื่อเลยเวลา 20:00 น.',
+    commandType: 'routine',
+    defaultAuthMode: 'kid_pin',
+    enabled: true,
+    hidden: false,
+    windowLabelTh: '18:30–20:00 น.',
+    windowLabelEn: '18:30–20:00',
+    titleTh: 'ขออนุญาตใช้คอมทำการบ้าน',
+    titleEn: 'Computer for Homework',
+    descriptionTh: 'เฉพาะรุ่นเด็กโต (มัธยม) · ต้องซักผ้า ตากผ้า รีดผ้า อาบน้ำ และตรวจชุดครบ 5 ข้อ (รับ +10 ⭐ · ใส่ PIN เอง)',
+    descriptionEn: 'Older kids only (Group 2) · Requires washing, hang dry, ironing, shower & uniform check (+10 ⭐, Kid PIN).',
+    tapLabelTh: '💻 ขออนุญาตใช้คอมทำการบ้าน',
+    tapLabelEn: '💻 Computer Homework',
+    doneLabelTh: '✅ อนุญาตใช้คอมแล้ว',
+    doneLabelEn: '✅ Computer Approved',
   },
   {
     id: 'evening_unlock_cartoon',
@@ -1318,6 +1344,63 @@ export function isHomeActionExpiredAt(
   );
 }
 
+export interface ComputerHomeworkPrereqItem {
+  key: 'wash' | 'dry' | 'iron' | 'shower' | 'uniform';
+  labelTh: string;
+  labelEn: string;
+  done: boolean;
+}
+
+export interface ComputerHomeworkPrereqStatus {
+  ready: boolean;
+  items: ComputerHomeworkPrereqItem[];
+  missingLabelsTh: string[];
+  missingLabelsEn: string[];
+}
+
+export function getComputerHomeworkPrereqStatus(kid: Member): ComputerHomeworkPrereqStatus {
+  const allDoneByPhone = Boolean(kid.daily.eveningPhoneUnlocked);
+  const items: ComputerHomeworkPrereqItem[] = [
+    {
+      key: 'wash',
+      labelTh: 'ซักผ้า',
+      labelEn: 'Wash clothes',
+      done: Boolean(kid.daily.eveningChecklist?.[0] || allDoneByPhone),
+    },
+    {
+      key: 'dry',
+      labelTh: 'ตากผ้า',
+      labelEn: 'Hang laundry',
+      done: Boolean(kid.daily.choresChecked || allDoneByPhone),
+    },
+    {
+      key: 'iron',
+      labelTh: 'รีดผ้า',
+      labelEn: 'Iron clothes',
+      done: Boolean(kid.daily.eveningChecklist?.[1] || allDoneByPhone),
+    },
+    {
+      key: 'shower',
+      labelTh: 'อาบน้ำ',
+      labelEn: 'Take a shower',
+      done: Boolean(kid.daily.eveningChecklist?.[3] || allDoneByPhone),
+    },
+    {
+      key: 'uniform',
+      labelTh: 'ตรวจชุด',
+      labelEn: 'Check uniform',
+      done: Boolean(kid.daily.eveningChecklist?.[2] || allDoneByPhone),
+    },
+  ];
+  const missing = items.filter((i) => !i.done);
+  return {
+    ready: missing.length === 0,
+    items,
+    missingLabelsTh: missing.map((m) => m.labelTh),
+    missingLabelsEn: missing.map((m) => m.labelEn),
+  };
+}
+
 export function isHomeActionDoneForKid(actionId: HomeQuickActionId, kid: Member): boolean {
   switch (actionId) {
     case 'morning_phone_pickup':
@@ -1330,6 +1413,8 @@ export function isHomeActionDoneForKid(actionId: HomeQuickActionId, kid: Member)
       return Boolean(kid.daily.returnedHomeChecked);
     case 'evening_uniform_phone':
       return Boolean(kid.daily.eveningPhoneUnlocked);
+    case 'evening_computer_homework':
+      return Boolean(kid.daily.computerHomeworkChecked);
     case 'evening_unlock_cartoon':
       return Boolean(kid.daily.bossStageUnlocked);
     case 'night_homework_permission':
@@ -1355,6 +1440,9 @@ export function canKidUseCommand(
   kid: Member,
   settings?: Partial<AppSettings>
 ): boolean {
+  if (commandId === 'evening_computer_homework' && kid.group !== 2) {
+    return false;
+  }
   const rule = settings?.commandPermissions?.[commandId];
   if (!rule) return true;
   const hasPhone = doesKidHavePhone(kid.id, settings);
@@ -1577,6 +1665,20 @@ export function getCommandDenialReason(
   lang: Language,
   settings?: Partial<AppSettings>
 ): { title: string; subtitle: string; badgeTh: string; badgeEn: string } {
+  if (commandId === 'evening_computer_homework' && kid.group !== 2) {
+    return {
+      badgeTh: '🌟 เฉพาะเด็กโต',
+      badgeEn: '🌟 Older Kids Only',
+      title:
+        lang === 'th'
+          ? `ปุ่มขอใช้คอมทำการบ้านเปิดเฉพาะรุ่นเด็กโตค่ะ`
+          : `Computer Homework is for Older Kids Only`,
+      subtitle:
+        lang === 'th'
+          ? `น้อง${kid.nickname} อยู่ใน${kid.group === 1 ? 'รุ่นเด็กเล็ก' : 'รุ่นพี่ใหญ่'} จึงไม่สามารถใช้ปุ่มนี้ได้ค่ะ (เฉพาะเด็กโตกลุ่ม 2)`
+          : `${kid.nickname} is not in the Older Kids group (Group 2 only).`,
+    };
+  }
   const rule = settings?.commandPermissions?.[commandId];
   const hasPhone = doesKidHavePhone(kid.id, settings);
   if (rule?.phoneFilter === 'has_phone' && !hasPhone) {
@@ -1678,6 +1780,17 @@ export function getCommandPermissionSummary(
   const authMode = getCommandAuthMode(commandId, settings);
   const eligibleCount = kids.filter((k) => canKidUseCommand(commandId, k, settings)).length;
   if (!rule || ((rule.phoneFilter ?? 'all') === 'all' && !rule.restrictToKidIds)) {
+    if (commandId === 'evening_computer_homework') {
+      return {
+        restricted: true,
+        eligibleCount,
+        badge:
+          lang === 'th'
+            ? `🌟 เฉพาะเด็กโต (${eligibleCount}/${kids.length})`
+            : `🌟 Older Kids Only (${eligibleCount}/${kids.length})`,
+        authMode,
+      };
+    }
     return {
       restricted: false,
       eligibleCount: kids.length,
@@ -2126,6 +2239,84 @@ export function evaluateOneTapHomeAction(
         lang === 'th'
           ? 'ตรวจชุดนักเรียนเรียบร้อย และบันทึกขอรับโทรศัพท์มือถือรอบค่ำแล้วค่ะ'
           : 'Uniform checked and evening phone released!',
+      updatedKid: updated,
+    };
+  }
+
+  if (actionId === 'evening_computer_homework') {
+    if (kid.group !== 2) {
+      return {
+        success: false,
+        emoji: '🌟',
+        starsDelta: 0,
+        bannerTitle:
+          lang === 'th'
+            ? `ปุ่มขอใช้คอมทำการบ้านเปิดเฉพาะรุ่นเด็กโตค่ะ`
+            : `Computer Homework is for Older Kids Only`,
+        bannerSubtitle:
+          lang === 'th'
+            ? `น้อง${kid.nickname} ไม่ได้อยู่ในรุ่นเด็กโต (กลุ่ม 2) จึงไม่สามารถกดคำสั่งนี้ได้ค่ะ`
+            : `${kid.nickname} is not in Group 2 (Older Kids).`,
+      };
+    }
+
+    if (kid.daily.computerHomeworkChecked) {
+      return {
+        success: true,
+        emoji: '✅',
+        starsDelta: 0,
+        bannerTitle:
+          lang === 'th'
+            ? `น้อง${kid.nickname} ขออนุญาตใช้คอมทำการบ้านวันนี้แล้ว`
+            : `${kid.nickname} Computer Homework Already Approved`,
+        bannerSubtitle:
+          lang === 'th' ? 'บันทึกสิทธิ์ใช้คอมทำการบ้านเรียบร้อยแล้วค่ะ' : 'Already approved today.',
+      };
+    }
+
+    const prereq = getComputerHomeworkPrereqStatus(kid);
+    if (!prereq.ready) {
+      return {
+        success: false,
+        emoji: '🧺⏳',
+        starsDelta: 0,
+        bannerTitle:
+          lang === 'th'
+            ? `น้อง${kid.nickname} ยังทำเงื่อนไขก่อนใช้คอมไม่ครบค่ะ`
+            : `${kid.nickname}: Checklist Incomplete`,
+        bannerSubtitle:
+          lang === 'th'
+            ? `ยังขาด: ${prereq.missingLabelsTh.join(' · ')} (ต้องซักผ้า/ตากผ้า/รีดผ้า/อาบน้ำ/ตรวจชุด ให้เรียบร้อยก่อนนะคะ)`
+            : `Missing: ${prereq.missingLabelsEn.join(', ')} (wash, hang dry, iron, shower & uniform check required).`,
+      };
+    }
+
+    const onTimeComputer = mins <= (cfg.deadlineMins ?? 20 * 60);
+    const stars = onTimeComputer ? Math.max(0, Math.round(cfg.rewardStars ?? 10)) : 0;
+    const updated = appendStarTx(
+      kid,
+      stars,
+      `💻 ปุ่มด่วน "${cfg.titleTh}" (ซัก/ตาก/รีด/อาบน้ำ/ตรวจชุดครบ${stars > 0 ? ` +${stars} ⭐` : ''})`,
+      {
+        daily: {
+          ...kid.daily,
+          computerHomeworkChecked: true,
+          computerHomeworkAt: now.toISOString(),
+        },
+      }
+    );
+    return {
+      success: true,
+      emoji: '💻✨',
+      starsDelta: stars,
+      bannerTitle:
+        lang === 'th'
+          ? `น้อง${kid.nickname} ขออนุญาตใช้คอมทำการบ้านสำเร็จ!${stars > 0 ? ` +${stars} ⭐` : ''}`
+          : `${kid.nickname} Computer for Homework Approved!${stars > 0 ? ` +${stars} ⭐` : ''}`,
+      bannerSubtitle:
+        lang === 'th'
+          ? 'ซักผ้า ตากผ้า รีดผ้า อาบน้ำ และตรวจชุดเรียบร้อย อนุญาตใช้คอมทำการบ้านได้ค่ะ'
+          : 'All 5 requirements completed — approved to use computer for homework!',
       updatedKid: updated,
     };
   }

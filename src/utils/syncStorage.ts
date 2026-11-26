@@ -28,7 +28,15 @@ export function loadAppState(): AppState {
     const existingIds = new Set(existingMembers.map((m) => m.id));
     const mergedMembers = [
       ...existingMembers.map((m) => {
-        const daily = m.daily && m.daily.dateKey === todayKey ? m.daily : createEmptyDaily(todayKey);
+        const baseDaily = createEmptyDaily(todayKey, m.daily);
+        const daily =
+          m.daily && m.daily.dateKey === todayKey
+            ? {
+                ...baseDaily,
+                ...m.daily,
+                trashDutyByDate: m.daily.trashDutyByDate ?? baseDaily.trashDutyByDate,
+              }
+            : baseDaily;
         const migratedNickname =
           m.id === 's7' && (m.pin === '2965' || m.pin === '2279') && m.nickname === 'ฟา'
             ? 'ฟ้า'
@@ -59,7 +67,7 @@ export function loadAppState(): AppState {
             streakMilestonesClaimed: 0,
           },
           kitchenDuty: m.kitchenDuty ?? { evening1530: false, sat0930: false, sun0915: false },
-          daily: { ...createEmptyDaily(todayKey), ...daily },
+          daily,
           starHistory: Array.isArray(m.starHistory) ? m.starHistory : [],
           collectedSceneItems: Array.isArray(m.collectedSceneItems) ? m.collectedSceneItems : [],
           ownedShopItemIds: Array.isArray(m.ownedShopItemIds) ? m.ownedShopItemIds : [],

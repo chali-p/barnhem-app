@@ -15,8 +15,11 @@ import { KitchenDutyAssignment, Language, Member } from '../types/barnhem';
 import {
   generateTrashDutySchedule,
   getKitchenSlotsLabelsForKid,
+  getMemberTrashDutyStatusForDate,
+  getTrashDutyDaySlots,
   getTrashDutyInfoForDate,
   isKidAssignedTrashWeek,
+  toTrashDateKey,
   TRASH_DUTY_RULE_EN,
   TRASH_DUTY_RULE_TH,
 } from '../utils/trashDuty';
@@ -599,14 +602,7 @@ export const KidDutySchedulesPanel: React.FC<KidDutySchedulesPanelProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
               {(() => {
-                const boyMember = kids.find((k) => k.id === trashToday.boyAssignee.kidId);
-                const girlMember = kids.find((k) => k.id === trashToday.girlAssignee.kidId);
-                const boyDone = Boolean(
-                  boyMember && boyMember.daily.dateKey === todayKey && boyMember.daily.trashDutyDone
-                );
-                const girlDone = Boolean(
-                  girlMember && girlMember.daily.dateKey === todayKey && girlMember.daily.trashDutyDone
-                );
+                const slots = getTrashDutyDaySlots(now);
                 const formatDoneTime = (iso?: string | null) =>
                   iso
                     ? new Date(iso).toLocaleTimeString(lang === 'th' ? 'th-TH' : 'en-US', {
@@ -617,51 +613,91 @@ export const KidDutySchedulesPanel: React.FC<KidDutySchedulesPanelProps> = ({
 
                 return (
                   <>
-                    <div className="rounded-xl bg-[#E8F4FA] border border-[#BBDDF0] px-3.5 py-2.5 flex items-center justify-between gap-2">
-                      <div>
-                        <div className="text-[11px] font-semibold text-[#2B5878]">
-                          👨 {lang === 'th' ? 'เขตเด็กผู้ชาย (อาทิตย์ & พุธเย็น)' : 'Boys Zone (Sun & Wed Evening)'}
+                    {[
+                      {
+                        zone: 'boys' as const,
+                        icon: '👨',
+                        titleTh: 'เขตเด็กผู้ชาย (อาทิตย์ & พุธเย็น)',
+                        titleEn: 'Boys Zone (Sun & Wed Evening)',
+                        cardCls: 'bg-[#E8F4FA] border-[#BBDDF0]',
+                        titleCls: 'text-[#2B5878]',
+                      },
+                      {
+                        zone: 'girls' as const,
+                        icon: '👩',
+                        titleTh: 'เขตเด็กผู้หญิง (อาทิตย์ & พุธเย็น)',
+                        titleEn: 'Girls Zone (Sun & Wed Evening)',
+                        cardCls: 'bg-[#FCEEF3] border-[#F3C6D6]',
+                        titleCls: 'text-[#87324F]',
+                      },
+                    ].map((zoneCfg) => (
+                      <div
+                        key={zoneCfg.zone}
+                        className={`rounded-xl border px-3.5 py-2.5 space-y-2 ${zoneCfg.cardCls}`}
+                      >
+                        <div className={`text-[11px] font-bold ${zoneCfg.titleCls}`}>
+                          {zoneCfg.icon} {lang === 'th' ? zoneCfg.titleTh : zoneCfg.titleEn}
                         </div>
-                        <div className="text-base font-extrabold text-[#163B59]">
-                          {lang === 'th'
-                            ? trashToday.boyAssignee.displayNameTh
-                            : trashToday.boyAssignee.displayNameEn}
-                        </div>
-                        <div className={`text-[11px] font-bold mt-0.5 tabular-nums ${boyDone ? 'text-[#156950]' : 'text-[#8B5312]'}`}>
-                          {boyDone
-                            ? `✅ ${lang === 'th' ? 'ทิ้งขยะแล้ว' : 'Cleared'}${boyMember?.daily.trashDutyDoneAt ? ` · ${formatDoneTime(boyMember.daily.trashDutyDoneAt)}` : ''}`
-                            : trashToday.isTrashDayToday
-                            ? `⏳ ${lang === 'th' ? 'รอทิ้งขยะวันนี้' : 'Pending today'}`
-                            : `🕒 ${lang === 'th' ? 'รอรอบถัดไป' : 'Upcoming'}`}
+                        <div className="space-y-1.5">
+                          {slots.map((slot) => {
+                            const assignee =
+                              zoneCfg.zone === 'boys' ? slot.boyAssignee : slot.girlAssignee;
+                            const member = kids.find((k) => k.id === assignee.kidId);
+                            const status = getMemberTrashDutyStatusForDate(member, slot.dateKey);
+                            const assigneeName =
+                              lang === 'th' ? assignee.displayNameTh : assignee.displayNameEn;
+                            return (
+                              <div
+                                key={`${zoneCfg.zone}-${slot.dateKey}`}
+                                className="rounded-lg bg-white/85 border border-white px-2.5 py-1.5 flex items-center justify-between gap-2"
+                              >
+                                <div className="min-w-0">
+                                  <div className="text-xs font-extrabold text-[#1F2D3D] truncate">
+                                    {lang === 'th' ? slot.dayWithDateTh : slot.dayWithDateEn} ·{' '}
+                                    {assigneeName}
+                                  </div>
+                                  <div
+                                    className={`text-[11px] font-bold tabular-nums ${
+                                      status.done
+                                        ? 'text-[#156950]'
+                                        : slot.isToday || slot.isPast
+                                        ? 'text-[#9E3818]'
+                                        : 'text-[#4B6175]'
+                                    }`}
+                                  >
+                                    {status.done
+                                      ? `✅ ${
+                                          lang === 'th'
+                                            ? `${slot.dayNameTh}ทิ้งแล้ว`
+                                            : `${slot.dayNameEn} cleared`
+                                        }${
+                                          status.doneAt ? ` · ${formatDoneTime(status.doneAt)}` : ''
+                                        }`
+                                      : slot.isToday
+                                      ? `⏳ ${
+                                          lang === 'th'
+                                            ? `${slot.dayNameTh}รอทิ้งวันนี้`
+                                            : `${slot.dayNameEn} pending today`
+                                        }`
+                                      : slot.isUpcoming
+                                      ? `🕒 ${
+                                          lang === 'th'
+                                            ? `${slot.dayNameTh}รอดำเนินการ`
+                                            : `${slot.dayNameEn} upcoming`
+                                        }`
+                                      : `⏳ ${
+                                          lang === 'th'
+                                            ? `${slot.dayNameTh}ยังไม่ยืนยัน`
+                                            : `${slot.dayNameEn} not confirmed`
+                                        }`}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
-                      <span className="text-xs font-bold text-[#3D5B7A] text-right">
-                        {trashToday.sundayLabelTh} · {trashToday.wednesdayLabelTh}
-                      </span>
-                    </div>
-
-                    <div className="rounded-xl bg-[#FCEEF3] border border-[#F3C6D6] px-3.5 py-2.5 flex items-center justify-between gap-2">
-                      <div>
-                        <div className="text-[11px] font-semibold text-[#87324F]">
-                          👩 {lang === 'th' ? 'เขตเด็กผู้หญิง (อาทิตย์ & พุธเย็น)' : 'Girls Zone (Sun & Wed Evening)'}
-                        </div>
-                        <div className="text-base font-extrabold text-[#6E1F3A]">
-                          {lang === 'th'
-                            ? trashToday.girlAssignee.displayNameTh
-                            : trashToday.girlAssignee.displayNameEn}
-                        </div>
-                        <div className={`text-[11px] font-bold mt-0.5 tabular-nums ${girlDone ? 'text-[#156950]' : 'text-[#8B5312]'}`}>
-                          {girlDone
-                            ? `✅ ${lang === 'th' ? 'ทิ้งขยะแล้ว' : 'Cleared'}${girlMember?.daily.trashDutyDoneAt ? ` · ${formatDoneTime(girlMember.daily.trashDutyDoneAt)}` : ''}`
-                            : trashToday.isTrashDayToday
-                            ? `⏳ ${lang === 'th' ? 'รอทิ้งขยะวันนี้' : 'Pending today'}`
-                            : `🕒 ${lang === 'th' ? 'รอรอบถัดไป' : 'Upcoming'}`}
-                        </div>
-                      </div>
-                      <span className="text-xs font-bold text-[#87324F] text-right">
-                        {trashToday.sundayLabelTh} · {trashToday.wednesdayLabelTh}
-                      </span>
-                    </div>
+                    ))}
                   </>
                 );
               })()}
@@ -769,6 +805,15 @@ export const KidDutySchedulesPanel: React.FC<KidDutySchedulesPanelProps> = ({
                       const isCurrentWeek = row.weekNumber === trashToday.weekNumber;
                       const isCycleBoundary = row.weekNumber % 7 === 0 && index < scheduleRows.length - 1;
                       const isMine = currentKid?.id === row.boyAssignee.kidId;
+                      const boyMember = kids.find((k) => k.id === row.boyAssignee.kidId);
+                      const sunDone = getMemberTrashDutyStatusForDate(
+                        boyMember,
+                        toTrashDateKey(row.sundayDate)
+                      ).done;
+                      const wedDone = getMemberTrashDutyStatusForDate(
+                        boyMember,
+                        toTrashDateKey(row.wednesdayDate)
+                      ).done;
                       return (
                         <tr
                           key={`boy-wk-${row.weekNumber}`}
@@ -787,8 +832,12 @@ export const KidDutySchedulesPanel: React.FC<KidDutySchedulesPanelProps> = ({
                             {row.weekNumber}
                           </td>
                           <td className="py-1.5 px-3 whitespace-nowrap">{row.rangeLabelTh}</td>
-                          <td className="py-1.5 px-3 whitespace-nowrap">{row.sundayLabelTh}</td>
-                          <td className="py-1.5 px-3 whitespace-nowrap">{row.wednesdayLabelTh}</td>
+                          <td className="py-1.5 px-3 whitespace-nowrap">
+                            {row.sundayLabelTh} {sunDone ? '✅' : ''}
+                          </td>
+                          <td className="py-1.5 px-3 whitespace-nowrap">
+                            {row.wednesdayLabelTh} {wedDone ? '✅' : ''}
+                          </td>
                           <td
                             className={`py-1.5 px-3 font-bold whitespace-nowrap ${
                               isCurrentWeek
@@ -842,6 +891,15 @@ export const KidDutySchedulesPanel: React.FC<KidDutySchedulesPanelProps> = ({
                       const isCurrentWeek = row.weekNumber === trashToday.weekNumber;
                       const isCycleBoundary = row.weekNumber % 8 === 0 && index < scheduleRows.length - 1;
                       const isMine = currentKid?.id === row.girlAssignee.kidId;
+                      const girlMember = kids.find((k) => k.id === row.girlAssignee.kidId);
+                      const sunDone = getMemberTrashDutyStatusForDate(
+                        girlMember,
+                        toTrashDateKey(row.sundayDate)
+                      ).done;
+                      const wedDone = getMemberTrashDutyStatusForDate(
+                        girlMember,
+                        toTrashDateKey(row.wednesdayDate)
+                      ).done;
                       return (
                         <tr
                           key={`girl-wk-${row.weekNumber}`}
@@ -860,8 +918,12 @@ export const KidDutySchedulesPanel: React.FC<KidDutySchedulesPanelProps> = ({
                             {row.weekNumber}
                           </td>
                           <td className="py-1.5 px-3 whitespace-nowrap">{row.rangeLabelTh}</td>
-                          <td className="py-1.5 px-3 whitespace-nowrap">{row.sundayLabelTh}</td>
-                          <td className="py-1.5 px-3 whitespace-nowrap">{row.wednesdayLabelTh}</td>
+                          <td className="py-1.5 px-3 whitespace-nowrap">
+                            {row.sundayLabelTh} {sunDone ? '✅' : ''}
+                          </td>
+                          <td className="py-1.5 px-3 whitespace-nowrap">
+                            {row.wednesdayLabelTh} {wedDone ? '✅' : ''}
+                          </td>
                           <td
                             className={`py-1.5 px-3 font-bold whitespace-nowrap ${
                               isCurrentWeek

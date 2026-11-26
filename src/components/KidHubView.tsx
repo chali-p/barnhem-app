@@ -80,6 +80,8 @@ import {
   evaluateOneTapHomeAction,
   formatThaiCurfewClock,
   getAutoReturnPhoneRuleConfig,
+  getComputerHomeworkPrereqStatus,
+  getEffectiveHomeQuickActions,
   getEffectiveHomeworkPermissionWindow,
   getEffectiveMorningPhoneWindow,
   getPenaltySummaryText,
@@ -90,6 +92,7 @@ import {
 import { evaluateKidStepReminders } from '../utils/stepReminders';
 import { PinPadModal } from './CenteredAlertModal';
 import { CustomOutfitStudio } from './CustomOutfitStudio';
+import { HouseRulesGuideView } from './HouseRulesGuideView';
 import { KidDutySchedulesPanel } from './KidDutySchedulesPanel';
 import { PenaltyNoticeModal } from './PenaltyNoticeModal';
 import { PetCanvasSvg } from './PetCanvasSvg';
@@ -241,7 +244,9 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   const [linkedEmailForm, setLinkedEmailForm] = useState(kid.linkedEmail ?? '');
   const [emailLoginBusy, setEmailLoginBusy] = useState(false);
   const [petHeroToast, setPetHeroToast] = useState<string | null>(null);
-  const [pinRequestAction, setPinRequestAction] = useState<null | { type: 'boss_stage' | 'g2_evening_phone' }>(null);
+  const [pinRequestAction, setPinRequestAction] = useState<
+    null | { type: 'boss_stage' | 'g2_evening_phone' | 'computer_homework' }
+  >(null);
 
   const isKidSignedInWithEmail =
     Boolean(linkedKidSession && linkedKidSession.memberId === kid.id) ||
@@ -500,8 +505,13 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   const kidHasPhone = doesKidHavePhone(kid.id, settings);
   const allowMorningPhonePickup = kidHasPhone && canKidUseCommand('morning_phone_pickup', kid, settings);
   const allowEveningPhone = kidHasPhone && canKidUseCommand('evening_uniform_phone', kid, settings);
+  const allowComputerHomework = canKidUseCommand('evening_computer_homework', kid, settings);
   const allowHwPerm = kidHasPhone && canKidUseCommand('night_homework_permission', kid, settings);
   const allowReturnPhone = kidHasPhone && canKidUseCommand('night_return_phone', kid, settings);
+  const computerHwConfig =
+    getEffectiveHomeQuickActions(settings, true).find((a) => a.id === 'evening_computer_homework')!;
+  const isComputerHwOpen = isHomeActionOpenAt('evening_computer_homework', now, settings);
+  const computerHwPrereq = getComputerHomeworkPrereqStatus(kid);
   const morningPhoneWin = getEffectiveMorningPhoneWindow(settings);
   const isMorningPhoneOpen = isHomeActionOpenAt('morning_phone_pickup', now, settings);
   const hwPermWin = getEffectiveHomeworkPermissionWindow(settings);
@@ -3977,6 +3987,134 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                       )}
                     </>
                   )}
+
+                  {allowComputerHomework && (
+                    <div className="rounded-2xl border-2 border-[#9FE2D6] bg-[#EEFBF8] p-4 space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-extrabold text-sm text-[#0F4C42]">
+                          💻{' '}
+                          {lang === 'th'
+                            ? `${computerHwConfig.titleTh} (+${computerHwConfig.rewardStars} ⭐)`
+                            : `${computerHwConfig.titleEn} (+${computerHwConfig.rewardStars} ⭐)`}
+                        </div>
+                        <span className="rounded-lg bg-white border border-[#9CD9CD] px-2 py-0.5 text-[11px] font-bold text-[#114A42] tabular-nums">
+                          {lang === 'th'
+                            ? computerHwConfig.windowLabelTh
+                            : computerHwConfig.windowLabelEn}
+                        </span>
+                      </div>
+                      <p className="text-xs text-[#2B5951]">
+                        {lang === 'th'
+                          ? `เงื่อนไข: ซักผ้า / ตากผ้า / รีดผ้า / อาบน้ำ / ตรวจชุด เรียบร้อยครบทั้ง 5 ข้อ · น้องใส่รหัส PIN ด้วยตนเองในช่วง ${computerHwConfig.windowLabelTh}`
+                          : `Requires all 5 chores (Wash, Hang dry, Iron, Shower & Inspect uniform) + your own 4-digit PIN during ${computerHwConfig.windowLabelEn}.`}
+                      </p>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+                        {computerHwPrereq.items.map((item) => (
+                          <label
+                            key={item.key}
+                            className={`rounded-xl border px-2.5 py-2 flex items-center gap-1.5 text-xs font-bold cursor-pointer transition-colors ${
+                              item.done
+                                ? 'border-[#8AD9CA] bg-white text-[#114A42]'
+                                : 'border-[#E6DED5] bg-white/75 text-[#6E5C52]'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={item.done}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                onUpdateKid(
+                                  kid.id,
+                                  (prev) => {
+                                    const nextChecklist = [...prev.daily.eveningChecklist] as [
+                                      boolean,
+                                      boolean,
+                                      boolean,
+                                      boolean
+                                    ];
+                                    let nextChores = prev.daily.choresChecked;
+                                    if (item.key === 'wash') nextChecklist[0] = checked;
+                                    if (item.key === 'iron') nextChecklist[1] = checked;
+                                    if (item.key === 'uniform') nextChecklist[2] = checked;
+                                    if (item.key === 'shower') nextChecklist[3] = checked;
+                                    if (item.key === 'dry') nextChores = checked;
+                                    return {
+                                      ...prev,
+                                      daily: {
+                                        ...prev.daily,
+                                        eveningChecklist: nextChecklist,
+                                        choresChecked: nextChores,
+                                      },
+                                    };
+                                  },
+                                  `Computer Homework Prereq (${item.labelTh}: ${checked ? 'Done' : 'Unchecked'})`
+                                );
+                              }}
+                              className="h-4 w-4 accent-[#0F4C42]"
+                            />
+                            <span className="truncate">
+                              {lang === 'th' ? item.labelTh : item.labelEn}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+
+                      {kid.daily.computerHomeworkChecked ? (
+                        <div className="rounded-xl border border-[#8AD9CA] bg-white px-3.5 py-2.5 text-xs font-extrabold text-[#114A42]">
+                          ✅{' '}
+                          {lang === 'th'
+                            ? `ขออนุญาตใช้คอมทำการบ้านแล้ววันนี้ (+${computerHwConfig.rewardStars} ⭐)`
+                            : `Computer for homework approved today (+${computerHwConfig.rewardStars} ⭐)`}
+                        </div>
+                      ) : !isComputerHwOpen ? (
+                        <div className="rounded-xl border border-dashed border-[#A7D9CF] bg-white/80 px-3.5 py-2.5 text-xs font-semibold text-[#4B7069]">
+                          ⏰{' '}
+                          {lang === 'th'
+                            ? `ขณะนี้อยู่นอกเวลา ${computerHwConfig.windowLabelTh} ปุ่มยืนยันจะเปิดอัตโนมัติในช่วง ${computerHwConfig.windowLabelTh}`
+                            : `Outside ${computerHwConfig.windowLabelEn} window. Opens automatically during ${computerHwConfig.windowLabelEn}.`}
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!computerHwPrereq.ready) {
+                              onShowAlert({
+                                icon: '🧺⏳',
+                                title:
+                                  lang === 'th'
+                                    ? 'ยังทำเงื่อนไขก่อนใช้คอมไม่ครบ 5 ข้อค่ะ'
+                                    : 'Please Complete All 5 Requirements First',
+                                message:
+                                  lang === 'th'
+                                    ? `ยังขาด: ${computerHwPrereq.missingLabelsTh.join(' · ')}\nกรุณาซักผ้า ตากผ้า รีดผ้า อาบน้ำ และตรวจชุดให้เรียบร้อยครบก่อนนะคะ`
+                                    : `Missing: ${computerHwPrereq.missingLabelsEn.join(', ')}`,
+                                tone: 'yellow',
+                              });
+                              return;
+                            }
+                            setPinRequestAction({ type: 'computer_homework' });
+                          }}
+                          className={`w-full min-h-[50px] rounded-2xl px-4 py-3 font-extrabold text-sm flex items-center justify-center gap-2 cursor-pointer transition-colors ${
+                            computerHwPrereq.ready
+                              ? 'bg-[#0F4C42] hover:bg-[#0B3A32] text-white shadow-sm'
+                              : 'bg-[#FFF5CC] hover:bg-[#FCEBA6] border border-[#E6C87A] text-[#6E5311]'
+                          }`}
+                        >
+                          <span>🔑</span>
+                          <span>
+                            {computerHwPrereq.ready
+                              ? lang === 'th'
+                                ? `ใส่รหัส PIN ของฉันเพื่อใช้คอมทำการบ้าน (+${computerHwConfig.rewardStars} ⭐)`
+                                : `Enter My PIN for Computer Homework (+${computerHwConfig.rewardStars} ⭐)`
+                              : lang === 'th'
+                              ? `ยังขาด ${computerHwPrereq.missingLabelsTh.join(', ')} (ต้องครบก่อน)`
+                              : `Need ${computerHwPrereq.missingLabelsEn.join(', ')} first`}
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })()}
@@ -4259,37 +4397,16 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
 
             {/* 9. RULES & SCHEDULE */}
             {subModal === 'rules_schedule' && (
-              <div className="space-y-3 text-sm text-[#3D322C] leading-relaxed">
-                {kid.group === 1 && (
-                  <div className="rounded-2xl bg-[#FFF5BA]/60 p-4 space-y-2">
-                    <h4 className="font-bold text-base">🐣 {lang === 'th' ? 'กติกาทีมน้องเล็ก (ประถม)' : 'Group 1 Rules'}</h4>
-                    <p>• กินข้าวเช้าก่อน 06:40 น. (+5 ⭐)</p>
-                    <p>• ขึ้นรถตู้ไม่เกิน 07:01 น. (+10 ⭐)</p>
-                    <p>• กลับบ้าน 16:30 น. จับเวลา Speedy Ninja 20 นาที ถอดชุด-ซักชุด-เปลี่ยนชุด</p>
-                    <p>• เรียนเสริมไม่เกิน 16:50 น. (+10 ⭐)</p>
-                    <p>• งานบ้าน & ตากชุดนักเรียน ก่อน 18:15 น. (+10 ⭐) / ก่อน 18:50 น. (+3 ⭐)</p>
-                    <p>• ด่านบอส 20:00 น. (จ.ญี่ปุ่น / อ.อังกฤษ / พ.จีน / พฤ.อังกฤษ) พี่เลี้ยงใส่ PIN ปลดล็อกดูการ์ตูน (+10 ⭐) หยุดดูและดื่มน้ำ 20:40 น. เข้านอน 21:00 น.</p>
-                  </div>
-                )}
-                {kid.group === 2 && (
-                  <div className="rounded-2xl bg-[#DCEEF8]/60 p-4 space-y-2">
-                    <h4 className="font-bold text-base">🌟 {lang === 'th' ? 'กติกาทีมพี่โต (มัธยม)' : 'Group 2 Rules'}</h4>
-                    <p>• เช้า จ-ศ: ไปโรงเรียนไม่เกิน 07:21 น. (+10 ⭐) | 07:22+ ปรับนาทีละ 5 บ. สูงสุด 50 บ. (ยกเว้นวันแจ้งป่วย)</p>
-                    <p>• เช้าเสาร์ (วันศุกร์ Free Day น้องขอนอนเพิ่ม): 08:00-08:30 น. (+10 ⭐) | เกิน 08:45 น. ยึดมือถือถึง 18:30 น.</p>
-                    <p>• เช้าอาทิตย์: 08:00-08:15 น. (+15 ⭐) | 08:16-08:20 น. เตือนสาย | เกิน 08:20 น. ลด -5 ⭐ แทนยึดมือถือ (หากมีเหตุสุดวิสัย/พี่เลี้ยงปลุกช้า ยกเว้นคืนดาวได้)</p>
-                    <p>• กลับบ้านเก็บมือถือเข้ากล่อง (+5 ⭐) เสาร์-อาทิตย์เก็บไม่เกิน 14:00 น. ห้ามนอนกลางวัน</p>
-                    <p>• รอบเย็น 18:30 น. เช็คลิสต์ครบ 4 ข้อ (ซักชุด รีดชุด ตรวจชุด อาบน้ำ) + PIN พี่เลี้ยงรับมือถือ (+10 ⭐)</p>
-                    <p>• ขออนุญาตทำการบ้าน / หาข้อมูล / เรียนพิเศษ (ปุ่มแสดง {hwPermWin.labelTh}) ใช้เพิ่มได้ถึง {hwCurfewTh} หากเกิน {hwCurfewTh} ยังไม่นำมือถือมาเก็บ ถือว่ายินยอมงดใช้โทรศัพท์วัน Free Day 1 วัน</p>
-                  </div>
-                )}
-                {kid.group === 3 && (
-                  <div className="rounded-2xl bg-[#EAE4F2]/70 p-4 space-y-2">
-                    <h4 className="font-bold text-base">🎓 {lang === 'th' ? 'กติกาทีมพี่ใหญ่ (วิทยาลัย / ฝึกงาน)' : 'Group 3 Rules'}</h4>
-                    <p>• กะเช้า: เช็คอินไปฝึกงาน/เรียน (+10 ⭐ ไม่มีหักสายตอนเช้า)</p>
-                    <p>• กะเย็น: กลับบ้านและเก็บมือถือเข้าตู้ทันที (+20 ⭐)</p>
-                    <p>• กะค่ำ: ใช้งานอิสระ แต่ต้องคืนมือถือเข้าตู้พี่เลี้ยงไม่เกิน Curfew 22:45 น. ทุกวัน (หากคืนเกิน 22:45 น. งดใช้มือถือช่วงเย็นวันพรุ่งนี้ 1 วัน)</p>
-                  </div>
-                )}
+              <div className="space-y-4 text-sm text-[#3D322C] leading-relaxed">
+                <HouseRulesGuideView
+                  now={now}
+                  lang={lang}
+                  settings={settings}
+                  defaultGroupFilter={
+                    kid.group === 1 ? 'younger' : kid.group === 2 ? 'older' : 'senior'
+                  }
+                  compactEmbedded
+                />
 
                 <div className="rounded-2xl border border-[#C4DCF0] bg-[#F5FAFF] p-4 flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -6751,26 +6868,38 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
       )}
       </div>
 
-      {/* Staff PIN Unlock Modal (Group 1 Boss Stage & Group 2 Evening Phone) — Renders unblurred on top of heavily blurred profile */}
+      {/* Staff / Self-Kid PIN Unlock Modal (Boss Stage, Evening Phone & Computer Homework) */}
       <PinPadModal
         open={Boolean(pinRequestAction)}
         heavyPrivacyBlur={true}
         lockedRemainingSec={staffPinGuard.remainingSec}
         lang={lang}
-        title={lang === 'th' ? 'ให้พี่เลี้ยงใส่รหัส PIN 4 หลัก' : 'Staff 4-Digit PIN Verification'}
-        subtitle={
-          (pinRequestAction?.type === 'boss_stage'
+        title={
+          pinRequestAction?.type === 'computer_homework'
             ? lang === 'th'
-              ? 'ปลดล็อกสิทธิ์ดูการ์ตูนด่านบอส 20:00 น. (+10 ⭐)'
-              : 'Unlock 20:00 Boss Stage cartoon privilege (+10 ⭐)'
+              ? `🔑 น้อง${kid.nickname} · ใส่รหัส PIN 4 หลักด้วยตนเอง`
+              : `🔑 ${kid.nickname} · Enter Your Own 4-Digit PIN`
             : lang === 'th'
-            ? 'ตรวจมือถือและเช็คลิสต์ครบ 4 ข้อ เพื่อรับมือถือรอบ 18:30 น. (+10 ⭐)'
-            : 'Confirm 4-item checklist & phone check to release 18:30 phone (+10 ⭐)') +
-          (activeAwaySecretCode
+            ? 'ให้พี่เลี้ยงใส่รหัส PIN 4 หลัก'
+            : 'Staff 4-Digit PIN Verification'
+        }
+        subtitle={
+          pinRequestAction?.type === 'computer_homework'
             ? lang === 'th'
-              ? ' · (วันที่พี่เลี้ยงไม่อยู่: ใส่รหัสลับจากผู้สร้างได้)'
-              : ' · (Staff away today: Creator daily code accepted)'
-            : '')
+              ? `ยืนยันขออนุญาตใช้คอมทำการบ้าน (ซัก/ตาก/รีด/อาบน้ำ/ตรวจชุดครบ · +${computerHwConfig.rewardStars} ⭐)`
+              : `Confirm Computer for Homework (+${computerHwConfig.rewardStars} ⭐)`
+            : (pinRequestAction?.type === 'boss_stage'
+                ? lang === 'th'
+                  ? 'ปลดล็อกสิทธิ์ดูการ์ตูนด่านบอส 20:00 น. (+10 ⭐)'
+                  : 'Unlock 20:00 Boss Stage cartoon privilege (+10 ⭐)'
+                : lang === 'th'
+                ? 'ตรวจมือถือและเช็คลิสต์ครบ 4 ข้อ เพื่อรับมือถือรอบ 18:30 น. (+10 ⭐)'
+                : 'Confirm 4-item checklist & phone check to release 18:30 phone (+10 ⭐)') +
+              (activeAwaySecretCode
+                ? lang === 'th'
+                  ? ' · (วันที่พี่เลี้ยงไม่อยู่: ใส่รหัสลับจากผู้สร้างได้)'
+                  : ' · (Staff away today: Creator daily code accepted)'
+                : '')
         }
         onCancel={() => setPinRequestAction(null)}
         onSubmitPin={(pin) => {
@@ -6783,6 +6912,62 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
             });
             return;
           }
+          if (pinRequestAction?.type === 'computer_homework') {
+            if (pin !== kid.pin) {
+              const res = staffPinGuard.recordFailure();
+              onShowAlert({
+                icon: res.lockedNow ? '🔒' : '🔑',
+                title: res.lockedNow
+                  ? lang === 'th'
+                    ? 'ล็อกชั่วคราว 30 วินาที'
+                    : 'Locked for 30 Seconds'
+                  : lang === 'th'
+                  ? 'รหัส PIN ไม่ถูกต้อง'
+                  : 'Incorrect PIN',
+                message: res.lockedNow
+                  ? formatPinLockoutMessage(res.lockSec, lang)
+                  : `${
+                      lang === 'th'
+                        ? `กรุณาใส่รหัส PIN 4 หลักของน้อง${kid.nickname} ด้วยตนเองค่ะ`
+                        : `Please enter ${kid.nickname}'s own 4-digit PIN.`
+                    }\n${formatPinAttemptsHint(res.attemptsRemaining, lang)}`,
+                tone: 'pink',
+              });
+              return;
+            }
+            staffPinGuard.recordSuccess();
+            setPinRequestAction(null);
+            const reward = Math.max(0, Math.round(computerHwConfig.rewardStars ?? 10));
+            const applied = addStars(
+              reward,
+              `💻 ขออนุญาตใช้คอมทำการบ้าน (ซัก/ตาก/รีด/อาบน้ำ/ตรวจชุดครบ +${reward} ⭐)`,
+              (prev) => ({
+                daily: {
+                  ...prev.daily,
+                  computerHomeworkChecked: true,
+                  computerHomeworkAt: now.toISOString(),
+                },
+              }),
+              (prev) =>
+                !prev.daily.computerHomeworkChecked &&
+                getComputerHomeworkPrereqStatus(prev).ready
+            );
+            if (!applied) return;
+            onShowAlert({
+              icon: '💻✨',
+              title:
+                lang === 'th'
+                  ? `ขออนุญาตใช้คอมทำการบ้านสำเร็จ! (+${reward} ⭐)`
+                  : `Computer Homework Approved! (+${reward} ⭐)`,
+              message:
+                lang === 'th'
+                  ? 'ซักผ้า ตากผ้า รีดผ้า อาบน้ำ และตรวจชุดเรียบร้อย รับ +10 ดาว ใช้คอมทำการบ้านได้ค่ะ'
+                  : 'All 5 requirements completed! You are approved to use the computer for homework.',
+              tone: 'mint',
+            });
+            return;
+          }
+
           const isValidAwayCode = activeAwaySecretCode !== null && pin === activeAwaySecretCode;
           if (!staffPins.includes(pin) && !isValidAwayCode) {
             const res = staffPinGuard.recordFailure();

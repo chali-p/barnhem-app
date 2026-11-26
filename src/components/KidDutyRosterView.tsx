@@ -1,7 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { KidGroup, Language, Member, ModalAlertPayload } from '../types/barnhem';
 import { getDailyHouseChoreForKid } from '../utils/houseChores';
-import { getKitchenSlotsLabelsForKid, getTrashDutyInfoForDate } from '../utils/trashDuty';
+import {
+  getKitchenSlotsLabelsForKid,
+  getMemberTrashDutyStatusForDate,
+  getTrashDutyDaySlots,
+  getTrashDutyInfoForDate,
+} from '../utils/trashDuty';
 import { getDateKey } from '../utils/timeRules';
 import { KidDutySchedulesPanel } from './KidDutySchedulesPanel';
 
@@ -31,15 +36,7 @@ export const KidDutyRosterView: React.FC<KidDutyRosterViewProps> = ({
 
   const todayKey = getDateKey(now);
   const trashToday = useMemo(() => getTrashDutyInfoForDate(now), [now]);
-
-  const boyTrashMember = kids.find((k) => k.id === trashToday.boyAssignee.kidId);
-  const girlTrashMember = kids.find((k) => k.id === trashToday.girlAssignee.kidId);
-  const boyTrashDone = Boolean(
-    boyTrashMember?.daily.dateKey === todayKey && boyTrashMember.daily.trashDutyDone
-  );
-  const girlTrashDone = Boolean(
-    girlTrashMember?.daily.dateKey === todayKey && girlTrashMember.daily.trashDutyDone
-  );
+  const trashDaySlots = useMemo(() => getTrashDutyDaySlots(now), [now]);
 
   const dailyRosterRows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -82,12 +79,26 @@ export const KidDutyRosterView: React.FC<KidDutyRosterViewProps> = ({
       month: 'short',
       year: 'numeric',
     });
+    const formatZoneLine = (zone: 'boys' | 'girls', label: string) => {
+      const parts = trashDaySlots.map((slot) => {
+        const assignee = zone === 'boys' ? slot.boyAssignee : slot.girlAssignee;
+        const member = kids.find((k) => k.id === assignee.kidId);
+        const done = getMemberTrashDutyStatusForDate(member, slot.dateKey).done;
+        const statusStr = done
+          ? 'ทิ้งแล้ว ✅'
+          : slot.isUpcoming
+          ? 'รอดำเนินการ ⏳'
+          : 'ยังไม่ยืนยัน ⏳';
+        return `${slot.dayWithDateTh} ${assignee.displayNameTh} (${statusStr})`;
+      });
+      return `- ${label}: ${parts.join(' · ')}`;
+    };
     const lines = [
       `📅 สรุปตารางเวรเด็กทั้งหมด (${orgName})`,
       `🗓️ ${dateLabel}`,
       `🗑️ เวรทิ้งขยะสัปดาห์ที่ ${trashToday.weekNumber}:`,
-      `- เขตผู้ชาย: ${trashToday.boyAssignee.displayNameTh} (${boyTrashDone ? 'ทิ้งแล้ว ✅' : 'ยังไม่ทิ้ง ⏳'})`,
-      `- เขตผู้หญิง: ${trashToday.girlAssignee.displayNameTh} (${girlTrashDone ? 'ทิ้งแล้ว ✅' : 'ยังไม่ทิ้ง ⏳'})`,
+      formatZoneLine('boys', 'เขตผู้ชาย'),
+      formatZoneLine('girls', 'เขตผู้หญิง'),
       `🧹 เวรเขตพื้นที่วันนี้: ทำแล้ว ${choresDoneCount}/${kids.length} คน`,
       '',
     ];
@@ -100,13 +111,12 @@ export const KidDutyRosterView: React.FC<KidDutyRosterViewProps> = ({
     }
     return lines.join('\n').slice(0, 1800);
   }, [
-    boyTrashDone,
     choresDoneCount,
     dailyRosterRows,
-    girlTrashDone,
-    kids.length,
+    kids,
     now,
     orgName,
+    trashDaySlots,
     trashToday,
   ]);
 
@@ -205,41 +215,70 @@ export const KidDutyRosterView: React.FC<KidDutyRosterViewProps> = ({
             </div>
           </div>
 
-          <div className="rounded-2xl border border-[#C4DCF0] bg-[#F5FAFF] px-4 py-3">
-            <div className="font-semibold text-[#163B59]">
-              👨 {lang === 'th' ? `เวรขยะชาย (สัปดาห์ที่ ${trashToday.weekNumber})` : `Boys Trash (Wk ${trashToday.weekNumber})`}
+          {[
+            {
+              zone: 'boys' as const,
+              icon: '👨',
+              headerTh: `เวรขยะชาย (สัปดาห์ที่ ${trashToday.weekNumber})`,
+              headerEn: `Boys Trash (Wk ${trashToday.weekNumber})`,
+              cardCls: 'border-[#C4DCF0] bg-[#F5FAFF]',
+              textCls: 'text-[#163B59]',
+            },
+            {
+              zone: 'girls' as const,
+              icon: '👩',
+              headerTh: `เวรขยะหญิง (สัปดาห์ที่ ${trashToday.weekNumber})`,
+              headerEn: `Girls Trash (Wk ${trashToday.weekNumber})`,
+              cardCls: 'border-[#F3C6D6] bg-[#FFF7FA]',
+              textCls: 'text-[#6E1F3A]',
+            },
+          ].map((cfg) => (
+            <div key={cfg.zone} className={`rounded-2xl border px-4 py-3 ${cfg.cardCls}`}>
+              <div className={`font-semibold ${cfg.textCls}`}>
+                {cfg.icon} {lang === 'th' ? cfg.headerTh : cfg.headerEn}
+              </div>
+              <div className="mt-1.5 space-y-1">
+                {trashDaySlots.map((slot) => {
+                  const assignee = cfg.zone === 'boys' ? slot.boyAssignee : slot.girlAssignee;
+                  const member = kids.find((k) => k.id === assignee.kidId);
+                  const status = getMemberTrashDutyStatusForDate(member, slot.dateKey);
+                  const assigneeName =
+                    lang === 'th' ? assignee.displayNameTh : assignee.displayNameEn;
+                  return (
+                    <div
+                      key={`${cfg.zone}-snap-${slot.dateKey}`}
+                      className={`text-xs font-extrabold flex items-center justify-between gap-2 ${cfg.textCls}`}
+                    >
+                      <span className="truncate">
+                        {lang === 'th' ? slot.dayWithDateTh : slot.dayWithDateEn} · {assigneeName}
+                      </span>
+                      <span
+                        className={`shrink-0 ${
+                          status.done
+                            ? 'text-[#146850]'
+                            : slot.isUpcoming
+                            ? 'text-[#4B6175]'
+                            : 'text-[#9E3818]'
+                        }`}
+                      >
+                        {status.done
+                          ? lang === 'th'
+                            ? '✅ ทิ้งแล้ว'
+                            : '✅ Cleared'
+                          : slot.isUpcoming
+                          ? lang === 'th'
+                            ? '🕒 รอดำเนินการ'
+                            : '🕒 Pending'
+                          : lang === 'th'
+                          ? '⏳ ยังไม่ยืนยัน'
+                          : '⏳ Unconfirmed'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div className="text-sm font-extrabold text-[#163B59] mt-1">
-              {trashToday.boyAssignee.displayNameTh} ·{' '}
-              <span className={boyTrashDone ? 'text-[#146850]' : 'text-[#9E3818]'}>
-                {boyTrashDone
-                  ? lang === 'th'
-                    ? '✅ ทิ้งแล้ว'
-                    : '✅ Cleared'
-                  : lang === 'th'
-                  ? '⏳ ยังไม่ทิ้ง'
-                  : '⏳ Pending'}
-              </span>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-[#F3C6D6] bg-[#FFF7FA] px-4 py-3">
-            <div className="font-semibold text-[#6E1F3A]">
-              👩 {lang === 'th' ? `เวรขยะหญิง (สัปดาห์ที่ ${trashToday.weekNumber})` : `Girls Trash (Wk ${trashToday.weekNumber})`}
-            </div>
-            <div className="text-sm font-extrabold text-[#6E1F3A] mt-1">
-              {trashToday.girlAssignee.displayNameTh} ·{' '}
-              <span className={girlTrashDone ? 'text-[#146850]' : 'text-[#9E3818]'}>
-                {girlTrashDone
-                  ? lang === 'th'
-                    ? '✅ ทิ้งแล้ว'
-                    : '✅ Cleared'
-                  : lang === 'th'
-                  ? '⏳ ยังไม่ทิ้ง'
-                  : '⏳ Pending'}
-              </span>
-            </div>
-          </div>
+          ))}
         </div>
       </section>
 

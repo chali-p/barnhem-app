@@ -130,6 +130,7 @@ export const KIDS_DUTY_ROSTER_PIN = '0003';
 export const SECRET_VOTE_PIN = '0004';
 export const SUPPLY_REQUEST_PIN = '0005';
 export const LOST_FOUND_PIN = '0006';
+export const HOUSE_RULES_GUIDE_PIN = '0007';
 
 /**
  * Ensures 4-digit PINs never collide between kids, staff, chefs, tutors, managers, creator master PINs, or reserved viewer PINs.
@@ -182,6 +183,13 @@ export function findPinConflict(
     return {
       conflict: true,
       conflictOwnerLabel: 'รหัส 0006 (แจ้งของหาย/แจ้งพบเจอของเก็บได้)',
+    };
+  }
+
+  if (clean === HOUSE_RULES_GUIDE_PIN) {
+    return {
+      conflict: true,
+      conflictOwnerLabel: 'รหัส 0007 (ข้อตกลงและขั้นตอนการกดระบบประจำวัน)',
     };
   }
 

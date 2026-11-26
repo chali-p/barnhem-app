@@ -20,6 +20,7 @@ import {
   SickReport,
   StaffLeaveRecord,
   TimedScheduleSlot,
+  TrashDutyDayEntry,
 } from '../types/barnhem';
 import {
   canKidUseCommand,
@@ -33,6 +34,7 @@ import {
   getCommandAuthModeMeta,
   getCommandDenialReason,
   getCommandPermissionSummary,
+  getComputerHomeworkPrereqStatus,
   getEffectiveCustomQuickCommands,
   getEffectiveHomeQuickActions,
   getEffectiveHomeworkCurfewMins,
@@ -51,6 +53,7 @@ import {
 import { isKidAwayOnDate } from '../utils/piggyBank';
 import {
   ACTIVITY_LOG_VIEWER_PIN,
+  HOUSE_RULES_GUIDE_PIN,
   KIDS_DUTY_ROSTER_PIN,
   KIDS_STAR_SUMMARY_PIN,
   LOST_FOUND_PIN,
@@ -68,6 +71,8 @@ import {
   getLaundryQueueInfo,
 } from '../utils/timeRules';
 import {
+  getMemberTrashDutyStatusForDate,
+  getTrashDutyDaySlots,
   getTrashDutyInfoForDate,
   TRASH_DUTY_RULE_EN,
   TRASH_DUTY_RULE_TH,
@@ -75,6 +80,7 @@ import {
 import { PinPadModal, QrScannerModal } from './CenteredAlertModal';
 import { CloudSyncBanner } from './CloudSyncBanner';
 import { HomeAnnouncementBox } from './HomeAnnouncementBox';
+import { HouseRulesGuideView } from './HouseRulesGuideView';
 import { KidDutySchedulesPanel } from './KidDutySchedulesPanel';
 import { LoginCommandsSettingsCard } from './LoginCommandsSettingsCard';
 import { PenaltyNoticeModal } from './PenaltyNoticeModal';
@@ -113,6 +119,7 @@ interface MagicDoorViewProps {
       | 'secret_vote'
       | 'supply_request'
       | 'lost_found'
+      | 'house_rules_guide'
   ) => void;
   onExpressKioskScan: (code: string) => KioskResult | null;
   onQuickGoToSchool: (kidId: string) => KioskResult | null;
@@ -231,6 +238,9 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     zone: 'boys' | 'girls';
     kidId: string;
     displayName: string;
+    dateKey: string;
+    dayLabelTh: string;
+    dayLabelEn: string;
     nextDone: boolean;
   } | null>(null);
   const [trashPinInput, setTrashPinInput] = useState('');
@@ -404,20 +414,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     return Array.from(set);
   }, [members]);
   const trashToday = useMemo(() => getTrashDutyInfoForDate(now), [now]);
-  const boyTrashMember = useMemo(
-    () => kids.find((k) => k.id === trashToday.boyAssignee.kidId) ?? null,
-    [kids, trashToday.boyAssignee.kidId]
-  );
-  const girlTrashMember = useMemo(
-    () => kids.find((k) => k.id === trashToday.girlAssignee.kidId) ?? null,
-    [kids, trashToday.girlAssignee.kidId]
-  );
-  const boyTrashDone = Boolean(
-    boyTrashMember?.daily.dateKey === todayKey && boyTrashMember.daily.trashDutyDone
-  );
-  const girlTrashDone = Boolean(
-    girlTrashMember?.daily.dateKey === todayKey && girlTrashMember.daily.trashDutyDone
-  );
+  const trashDaySlots = useMemo(() => getTrashDutyDaySlots(now), [now]);
   const todayMorningCarerLabel =
     todayStaffRow.shiftATh !== '—'
       ? lang === 'th'
@@ -446,6 +443,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     setBoardKidPinInput('');
     setSchoolBoardResult(null);
     setSchoolBoardSearch('');
+    setSchoolBoardGroup(0);
     setActiveCustomCmdId(null);
     setCustomSubjectInput('');
   };
@@ -460,9 +458,11 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
       setActiveCustomCmdId(target.cmdId);
       const foundCmd = customQuickCommands.find((c) => c.id === target.cmdId);
       setCustomSubjectInput(foundCmd?.defaultNote ?? '');
+      setSchoolBoardGroup(0);
     } else {
       setActiveCustomCmdId(null);
       setActiveBoardAction(target.actionId);
+      setSchoolBoardGroup(target.actionId === 'evening_computer_homework' ? 2 : 0);
     }
     setSchoolBoardResult(null);
     setSchoolBoardSearch('');
@@ -554,6 +554,11 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     if (pin === LOST_FOUND_PIN) {
       pinGuard.recordSuccess();
       onAutoLoginRole('lost_found');
+      return 'logged_in';
+    }
+    if (pin === HOUSE_RULES_GUIDE_PIN) {
+      pinGuard.recordSuccess();
+      onAutoLoginRole('house_rules_guide');
       return 'logged_in';
     }
     if (creatorPins.includes(pin)) {
@@ -1154,12 +1159,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
               icon: '👨',
               zoneLabelTh: 'เขตผู้ชาย',
               zoneLabelEn: 'Boys Zone',
-              assignee: trashToday.boyAssignee,
-              member: boyTrashMember,
-              done: boyTrashDone,
-              boxCls: boyTrashDone
-                ? 'border-[#8AD9CA] bg-[#F1FBF8]'
-                : 'border-[#C4DCF0] bg-[#F6FAFF]',
+              boxCls: 'border-[#C4DCF0] bg-[#F6FAFF]',
               titleCls: 'text-[#163B59]',
             },
             {
@@ -1167,89 +1167,137 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
               icon: '👩',
               zoneLabelTh: 'เขตผู้หญิง',
               zoneLabelEn: 'Girls Zone',
-              assignee: trashToday.girlAssignee,
-              member: girlTrashMember,
-              done: girlTrashDone,
-              boxCls: girlTrashDone
-                ? 'border-[#8AD9CA] bg-[#F1FBF8]'
-                : 'border-[#F3C6D6] bg-[#FFF7FA]',
+              boxCls: 'border-[#F3C6D6] bg-[#FFF7FA]',
               titleCls: 'text-[#6E1F3A]',
             },
           ].map((z) => {
-            const doneTime = z.member?.daily.trashDutyDoneAt
-              ? new Date(z.member.daily.trashDutyDoneAt).toLocaleTimeString(
-                  lang === 'th' ? 'th-TH' : 'en-US',
-                  { hour: '2-digit', minute: '2-digit' }
-                )
-              : null;
+            const allSlotsDone = trashDaySlots.every((slot) => {
+              const assignee = z.zone === 'boys' ? slot.boyAssignee : slot.girlAssignee;
+              const member = kids.find((k) => k.id === assignee.kidId);
+              return getMemberTrashDutyStatusForDate(member, slot.dateKey).done;
+            });
             return (
               <div
                 key={z.zone}
-                className={`rounded-2xl border px-3.5 py-2.5 flex items-center justify-between gap-2.5 ${z.boxCls}`}
+                className={`rounded-2xl border px-3.5 py-2.5 space-y-2 ${
+                  allSlotsDone ? 'border-[#8AD9CA] bg-[#F1FBF8]' : z.boxCls
+                }`}
               >
-                <div className="min-w-0">
-                  <div className={`text-xs font-extrabold truncate ${z.titleCls}`}>
-                    {z.icon} {lang === 'th' ? z.zoneLabelTh : z.zoneLabelEn}:{' '}
-                    {lang === 'th' ? z.assignee.displayNameTh : z.assignee.displayNameEn}
-                  </div>
-                  <div
-                    className={`text-[11px] font-bold mt-0.5 tabular-nums truncate ${
-                      z.done
-                        ? 'text-[#146850]'
-                        : trashToday.isTrashDayToday
-                        ? 'text-[#9E3818]'
-                        : 'text-[#6E5C52]'
-                    }`}
-                  >
-                    {z.done
-                      ? `✅ ${lang === 'th' ? 'ทิ้งแล้ว' : 'Cleared'}${doneTime ? ` · ${doneTime}` : ''}${
-                          z.member?.daily.trashDutyConfirmedBy
-                            ? ` (${z.member.daily.trashDutyConfirmedBy})`
-                            : ''
-                        }`
-                      : trashToday.isTrashDayToday
-                      ? `⏳ ${lang === 'th' ? 'ยังไม่ทิ้ง · เวรวันนี้ (เย็น)' : 'Not cleared yet · Today (evening)'}`
-                      : `⏳ ${lang === 'th' ? 'ยังไม่ทิ้ง · รอรอบวันพุธ / อาทิตย์' : 'Not cleared yet · Wed / Sun'}`}
-                  </div>
+                <div className={`text-xs font-extrabold flex items-center justify-between gap-2 ${z.titleCls}`}>
+                  <span>
+                    {z.icon} {lang === 'th' ? z.zoneLabelTh : z.zoneLabelEn}
+                  </span>
                 </div>
-                {onUpdateKid && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const nextDone = !z.done;
-                      setTrashPinInput('');
-                      setTrashConfirmTarget({
-                        zone: z.zone,
-                        kidId: z.assignee.kidId,
-                        displayName:
-                          lang === 'th' ? z.assignee.displayNameTh : z.assignee.displayNameEn,
-                        nextDone,
-                      });
-                    }}
-                    title={
-                      z.done
-                        ? lang === 'th'
-                          ? 'ทิ้งแล้ว · กดเพื่อแก้ไขสถานะ (ยืนยันด้วยรหัส PIN)'
-                          : 'Cleared · Click to reset with PIN'
-                        : lang === 'th'
-                        ? 'กดเพื่อกรอกรหัส PIN ของตัวเองยืนยันหลังทิ้งขยะเสร็จ'
-                        : 'Click to verify with your 4-digit PIN after clearing trash'
-                    }
-                    className={`min-h-[38px] rounded-xl border px-3 py-1.5 text-[11px] font-extrabold cursor-pointer whitespace-nowrap shrink-0 transition-colors ${
-                      z.done
-                        ? 'border-[#8AD9CA] bg-[#E2F7F1] hover:bg-[#D0F1E8] text-[#114A42]'
-                        : 'border-[#E6C87A] bg-white hover:bg-[#FFF8E1] text-[#7A5411]'
-                    }`}
-                  >
-                    {z.done
+                <div className="space-y-1.5">
+                  {trashDaySlots.map((slot) => {
+                    const assignee = z.zone === 'boys' ? slot.boyAssignee : slot.girlAssignee;
+                    const member = kids.find((k) => k.id === assignee.kidId) ?? null;
+                    const status = getMemberTrashDutyStatusForDate(member, slot.dateKey);
+                    const doneTime = status.doneAt
+                      ? new Date(status.doneAt).toLocaleTimeString(
+                          lang === 'th' ? 'th-TH' : 'en-US',
+                          { hour: '2-digit', minute: '2-digit' }
+                        )
+                      : null;
+                    const assigneeName =
+                      lang === 'th' ? assignee.displayNameTh : assignee.displayNameEn;
+                    const statusLabel = status.done
                       ? lang === 'th'
-                        ? '✅ ทิ้งแล้ว'
-                        : '✅ Cleared'
+                        ? `✅ ${slot.dayNameTh}ทิ้งแล้ว${doneTime ? ` · ${doneTime}` : ''}${
+                            status.confirmedBy ? ` (${status.confirmedBy})` : ''
+                          }`
+                        : `✅ ${slot.dayNameEn} cleared${doneTime ? ` · ${doneTime}` : ''}${
+                            status.confirmedBy ? ` (${status.confirmedBy})` : ''
+                          }`
+                      : slot.isToday
+                      ? lang === 'th'
+                        ? `⏳ ${slot.dayNameTh}ยังไม่ทิ้ง · เวรวันนี้ (เย็น)`
+                        : `⏳ ${slot.dayNameEn} pending · Today (evening)`
+                      : slot.isUpcoming
+                      ? lang === 'th'
+                        ? `🕒 ${slot.dayNameTh}รอดำเนินการ`
+                        : `🕒 ${slot.dayNameEn} pending (upcoming)`
                       : lang === 'th'
-                      ? '🔑 ยืนยันรหัส'
-                      : '🔑 Verify PIN'}
-                  </button>
-                )}
+                      ? `⏳ ${slot.dayNameTh}ยังไม่ยืนยัน`
+                      : `⏳ ${slot.dayNameEn} not confirmed`;
+
+                    return (
+                      <div
+                        key={`${z.zone}-${slot.dateKey}`}
+                        className={`rounded-xl border px-2.5 py-2 flex items-center justify-between gap-2 ${
+                          status.done
+                            ? 'border-[#8AD9CA] bg-white/90'
+                            : slot.isToday
+                            ? 'border-[#F2C38B] bg-white'
+                            : 'border-[#E6DED5] bg-white/80'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-extrabold text-[#3D322C] truncate">
+                            {lang === 'th' ? slot.dayWithDateTh : slot.dayWithDateEn} · {assigneeName}
+                          </div>
+                          <div
+                            className={`text-[11px] font-bold mt-0.5 tabular-nums truncate ${
+                              status.done
+                                ? 'text-[#146850]'
+                                : slot.isToday || slot.isPast
+                                ? 'text-[#9E3818]'
+                                : 'text-[#4B6175]'
+                            }`}
+                          >
+                            {statusLabel}
+                          </div>
+                        </div>
+                        {onUpdateKid && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const nextDone = !status.done;
+                              setTrashPinInput('');
+                              setTrashConfirmTarget({
+                                zone: z.zone,
+                                kidId: assignee.kidId,
+                                displayName: assigneeName,
+                                dateKey: slot.dateKey,
+                                dayLabelTh: slot.dayWithDateTh,
+                                dayLabelEn: slot.dayWithDateEn,
+                                nextDone,
+                              });
+                            }}
+                            title={
+                              status.done
+                                ? lang === 'th'
+                                  ? 'ทิ้งแล้ว · กดเพื่อแก้ไขสถานะ (ยืนยันด้วยรหัส PIN)'
+                                  : 'Cleared · Click to reset with PIN'
+                                : lang === 'th'
+                                ? 'กดเพื่อกรอกรหัส PIN ยืนยันการทิ้งขยะรอบนี้'
+                                : 'Click to verify with 4-digit PIN for this day'
+                            }
+                            className={`min-h-[34px] rounded-xl border px-2.5 py-1 text-[11px] font-extrabold cursor-pointer whitespace-nowrap shrink-0 transition-colors ${
+                              status.done
+                                ? 'border-[#8AD9CA] bg-[#E2F7F1] hover:bg-[#D0F1E8] text-[#114A42]'
+                                : slot.isUpcoming
+                                ? 'border-[#CBD5E1] bg-[#F8FAFC] hover:bg-[#EFF6FF] text-[#334155]'
+                                : 'border-[#E6C87A] bg-[#FFFDF5] hover:bg-[#FFF8E1] text-[#7A5411]'
+                            }`}
+                          >
+                            {status.done
+                              ? lang === 'th'
+                                ? '✅ ทิ้งแล้ว'
+                                : '✅ Cleared'
+                              : slot.isUpcoming
+                              ? lang === 'th'
+                                ? '⏳ รอดำเนินการ'
+                                : '⏳ Pending'
+                              : lang === 'th'
+                              ? '🔑 ยืนยันรหัส'
+                              : '🔑 Verify PIN'}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             );
           })}
@@ -1853,7 +1901,11 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
         }
         subtitle={
           pendingKidPinAction
-            ? lang === 'th'
+            ? !activeCustomCmd && modalActionConfig?.id === 'evening_computer_homework'
+              ? lang === 'th'
+                ? `น้อง${pendingKidPinAction.kid.nickname} ต้องใส่รหัส PIN 4 หลักของตนเองเพื่อยืนยัน "${modalActionConfig.titleTh}" (+10 ⭐)`
+                : `${pendingKidPinAction.kid.nickname} must enter your own 4-digit PIN for "${modalActionConfig.titleEn}" (+10 ⭐)`
+              : lang === 'th'
               ? `เพื่อยืนยัน "${activeCustomCmd ? activeCustomCmd.titleTh : modalActionConfig?.titleTh ?? ''}" ด้วยตัวเอง (หรือใช้รหัสพี่เลี้ยงค่ะ)`
               : `Confirm "${activeCustomCmd ? activeCustomCmd.titleEn : modalActionConfig?.titleEn ?? ''}"`
             : undefined
@@ -1871,12 +1923,17 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
             return;
           }
           const targetKid = pendingKidPinAction.kid;
+          const isSelfPinOnly =
+            !activeCustomCmd && modalActionConfig?.id === 'evening_computer_homework';
           const isValidKidPin = pin === targetKid.pin;
           const isValidStaffOrAway =
             staffPins.includes(pin) ||
             (activeAwaySecretCode !== null && pin === activeAwaySecretCode);
+          const pinAccepted = isSelfPinOnly
+            ? isValidKidPin
+            : isValidKidPin || isValidStaffOrAway;
 
-          if (isValidKidPin || isValidStaffOrAway) {
+          if (pinAccepted) {
             kidCmdPinGuard.recordSuccess();
             setPendingKidPinAction(null);
             if (activeCustomCmd) {
@@ -1895,6 +1952,14 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
               const res = runHomeAction(modalActionConfig.id, targetKid.id);
               if (res) {
                 setSchoolBoardResult(res);
+                if (!res.success) {
+                  onShowAlert({
+                    icon: res.emoji,
+                    title: res.bannerTitle,
+                    message: res.bannerSubtitle,
+                    tone: 'yellow',
+                  });
+                }
                 if (res.penaltyAlert) setPenaltyNoticePopup(res.penaltyAlert);
               }
             }
@@ -1913,7 +1978,9 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                 ? formatPinLockoutMessage(res.lockSec, lang)
                 : `${
                     lang === 'th'
-                      ? `กรุณาใส่รหัส PIN 4 หลักของน้อง${targetKid.nickname} ค่ะ`
+                      ? isSelfPinOnly
+                        ? `คำสั่งนี้ให้น้อง${targetKid.nickname} ใส่รหัส PIN 4 หลักของตัวเองด้วยตนเองเท่านั้นค่ะ`
+                        : `กรุณาใส่รหัส PIN 4 หลักของน้อง${targetKid.nickname} ค่ะ`
                       : `Please enter ${targetKid.nickname}'s 4-digit PIN.`
                   }\n${formatPinAttemptsHint(res.attemptsRemaining, lang)}`,
               tone: 'pink',
@@ -1927,7 +1994,10 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
         const activePermCmdId = activeCustomCmd ? activeCustomCmd.id : modalActionConfig!.id;
         const activeAuthMode = getCommandAuthMode(activePermCmdId, appState.settings);
         const activeAuthMeta = getCommandAuthModeMeta(activeAuthMode, lang);
-        const requiresKidPin = activeAuthMode === 'kid_pin' && !boardUnlockedByStaff;
+        const isComputerHwBoard =
+          !activeCustomCmd && modalActionConfig?.id === 'evening_computer_homework';
+        const requiresKidPin =
+          isComputerHwBoard || (activeAuthMode === 'kid_pin' && !boardUnlockedByStaff);
         const isReturnPhoneBoard = !activeCustomCmd && modalActionConfig?.id === 'night_return_phone';
         const eligibleAllCount = kids.filter((k) =>
           canKidUseCommand(activePermCmdId, k, appState.settings)
@@ -1955,6 +2025,14 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
             const res = runHomeAction(modalActionConfig.id, targetKid.id);
             if (res) {
               setSchoolBoardResult(res);
+              if (!res.success) {
+                onShowAlert({
+                  icon: res.emoji,
+                  title: res.bannerTitle,
+                  message: res.bannerSubtitle,
+                  tone: 'yellow',
+                });
+              }
               if (res.penaltyAlert) setPenaltyNoticePopup(res.penaltyAlert);
             }
           }
@@ -1984,8 +2062,9 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
             return;
           }
           if (
-            staffPins.includes(clean) ||
-            (activeAwaySecretCode !== null && clean === activeAwaySecretCode)
+            !isComputerHwBoard &&
+            (staffPins.includes(clean) ||
+              (activeAwaySecretCode !== null && clean === activeAwaySecretCode))
           ) {
             kidCmdPinGuard.recordSuccess();
             setBoardKidPinInput('');
@@ -2222,6 +2301,16 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
               </div>
             )}
 
+            {/* Computer Homework Prerequisite Banner */}
+            {isComputerHwBoard && (
+              <div className="mt-3 rounded-2xl border border-[#38BDF8] bg-[#EEF8FF] px-3.5 py-2.5 text-xs font-bold text-[#0C4A6E]">
+                💻🌟{' '}
+                {lang === 'th'
+                  ? `เฉพาะรุ่นเด็กโต (+${modalActionConfig?.rewardStars ?? 10} ⭐ · เปิด ${modalActionConfig?.windowLabelTh}): ต้องซักผ้า / ตากผ้า / รีดผ้า / อาบน้ำ / ตรวจชุด เรียบร้อยครบทั้ง 5 ข้อก่อน และน้องต้องใส่รหัส PIN 4 หลักด้วยตนเองค่ะ`
+                  : `Older Kids Only (+${modalActionConfig?.rewardStars ?? 10} ⭐ · ${modalActionConfig?.windowLabelEn}): Must complete Washing, Hanging Dry, Ironing, Shower & Uniform Check, then verify with your own 4-digit PIN.`}
+              </div>
+            )}
+
             {/* Quick Note Input for Custom Check-In Shortcut */}
             {activeCustomCmd && activeCustomCmd.kind !== 'homework_permission' && (
               <div className="mt-3 rounded-2xl border border-[#B9E8DF] bg-[#F3FCFA] p-3">
@@ -2341,6 +2430,10 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                     isReturnPhoneBoard && isEligible && !done
                       ? evaluateKidReturnPhoneSchedule(kid, now, appState.settings, lang)
                       : null;
+                  const compPrereq =
+                    isComputerHwBoard && isEligible && !done
+                      ? getComputerHomeworkPrereqStatus(kid)
+                      : null;
                   return (
                     <button
                       key={kid.id}
@@ -2348,6 +2441,21 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                       disabled={!canTap}
                       onClick={() => {
                         if (!canTap) return;
+                        if (compPrereq && !compPrereq.ready) {
+                          onShowAlert({
+                            icon: '🧺⏳',
+                            title:
+                              lang === 'th'
+                                ? `น้อง${kid.nickname} ยังทำเงื่อนไขก่อนใช้คอมไม่ครบค่ะ`
+                                : `${kid.nickname}: Checklist Incomplete`,
+                            message:
+                              lang === 'th'
+                                ? `ยังขาด: ${compPrereq.missingLabelsTh.join(' · ')}\n(ต้องซักผ้า / ตากผ้า / รีดผ้า / อาบน้ำ / ตรวจชุด ให้เรียบร้อยก่อน จึงจะใส่รหัสขอใช้คอมได้ค่ะ)`
+                                : `Missing: ${compPrereq.missingLabelsEn.join(', ')}`,
+                            tone: 'yellow',
+                          });
+                          return;
+                        }
                         if (requiresKidPin) {
                           setPendingKidPinAction({ kid });
                           return;
@@ -2363,6 +2471,8 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                           ? 'border-[#D9CCE8] bg-[#F7F3FC] hover:bg-[#EFE8FC] cursor-pointer active:scale-[0.98]'
                           : returnEval?.isPastDeadline
                           ? 'border-[#EEB4C0] bg-[#FFF8FA] hover:bg-[#FFEFF3] hover:border-[#DE8096] cursor-pointer active:scale-[0.98] shadow-2xs'
+                          : compPrereq && !compPrereq.ready
+                          ? 'border-[#F2DA84] bg-[#FFFDF2] hover:bg-[#FFF8DF] cursor-pointer active:scale-[0.98]'
                           : 'border-[#B9E8DF] bg-white hover:bg-[#E8FAF6] hover:border-[#64CBB9] cursor-pointer active:scale-[0.98] shadow-2xs'
                       }`}
                     >
@@ -2387,6 +2497,23 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                           }`}
                         >
                           {lang === 'th' ? returnEval.statusBadgeTh : returnEval.statusBadgeEn}
+                        </div>
+                      )}
+                      {compPrereq && (
+                        <div
+                          className={`rounded-lg px-2 py-0.5 text-[10px] font-bold truncate ${
+                            compPrereq.ready
+                              ? 'bg-[#E3F8F3] text-[#0F4C42]'
+                              : 'bg-[#FFF3D6] text-[#8B5312]'
+                          }`}
+                        >
+                          {compPrereq.ready
+                            ? lang === 'th'
+                              ? '✅ ครบ 5 เงื่อนไข · ใส่ PIN ได้'
+                              : '✅ All 5 Done · Ready'
+                            : lang === 'th'
+                            ? `⏳ ขาด: ${compPrereq.missingLabelsTh.join(', ')}`
+                            : `⏳ Need: ${compPrereq.missingLabelsEn.join(', ')}`}
                         </div>
                       )}
                       <div
@@ -2574,12 +2701,12 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                         <span className="text-2xl shrink-0">📜</span>
                         <div className="min-w-0">
                           <div className="text-sm font-extrabold text-[#3E2B63] truncate">
-                            {lang === 'th' ? 'กฎบ้าน & ตารางเวลาคำสั่ง' : 'Rules & Command Hours'}
+                            {lang === 'th' ? 'กฎบ้าน & ขั้นตอนกดระบบ (PIN 0007)' : 'Rules & Check-In Guide (PIN 0007)'}
                           </div>
                           <div className="text-[11px] text-[#5B4782] truncate">
                             {lang === 'th'
-                              ? `ไม่ขอทำการบ้านคืน ${minsToHHMM(autoReturnRule.noHomeworkDeadlineMins)} น. · ขอทำการบ้านคืน ${minsToHHMM(autoReturnRule.homeworkExtendedDeadlineMins)} น.`
-                              : `No HW ${minsToHHMM(autoReturnRule.noHomeworkDeadlineMins)} · HW ${minsToHHMM(autoReturnRule.homeworkExtendedDeadlineMins)}`}
+                              ? 'สรุปแยกช่วงเช้า · เย็น · ค่ำ + กดรหัส 0007 ดูได้ทันที'
+                              : 'Morning · Evening · Night shifts · Dial 0007 anytime'}
                           </div>
                         </div>
                       </div>
@@ -2669,6 +2796,14 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
               {/* SUB-VIEW 4: HOUSE RULES & LIVE COMMAND SCHEDULE */}
               {usefulInfoTab === 'rules_schedule' && (
                 <div className="space-y-4 text-sm text-[#3D322C] leading-relaxed">
+                  <HouseRulesGuideView
+                    orgName={organizationName || 'Barnhem Care & Kids'}
+                    now={now}
+                    lang={lang}
+                    settings={appState.settings}
+                    compactEmbedded
+                  />
+
                   <div className="rounded-2xl border-2 border-[#B9E8DF] bg-[#F2FCF9] p-4 space-y-2.5">
                     <div className="font-extrabold text-[#114A42]">
                       ⏰ {lang === 'th' ? 'ตารางเวลาเปิด–ปิดคำสั่งหน้าแรก (ตั้งค่าปัจจุบัน)' : 'Live Command Hours'}
@@ -2695,35 +2830,6 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                         );
                       })}
                     </div>
-                  </div>
-
-                  <div className="rounded-2xl bg-[#FFF5BA]/60 p-4 space-y-1.5 text-xs sm:text-sm">
-                    <h4 className="font-extrabold text-sm sm:text-base">
-                      🐣 {lang === 'th' ? 'กติกาทีมน้องเล็ก (กลุ่ม 1 ประถม)' : 'Group 1 Rules'}
-                    </h4>
-                    <p>• กินข้าวเช้าก่อน 06:40 น. (+5 ⭐) และขึ้นรถตู้ไม่เกิน 07:01 น. (+10 ⭐)</p>
-                    <p>• กลับบ้าน 16:30 น. จับเวลา Speedy Ninja 20 นาที เรียนเสริมไม่เกิน 16:50 น.</p>
-                    <p>• งานบ้าน & ตากชุดนักเรียนก่อน 18:15 น. (+10 ⭐) / ด่านบอส 20:00 น. / เข้านอน 21:00 น.</p>
-                  </div>
-
-                  <div className="rounded-2xl bg-[#DCEEF8]/60 p-4 space-y-1.5 text-xs sm:text-sm">
-                    <h4 className="font-extrabold text-sm sm:text-base">
-                      🌟 {lang === 'th' ? 'กติกาทีมพี่โต (กลุ่ม 2 มัธยม)' : 'Group 2 Rules'}
-                    </h4>
-                    <p>• จ–ศ: ขอรับมือถือตามรอบเวลา และเช็คชื่อไปโรงเรียนไม่เกิน 07:21 น. (+10 ⭐)</p>
-                    <p>• เช้าเสาร์: 08:00–08:30 น. | เช้าอาทิตย์: 08:00–08:15 น. (+15 ⭐)</p>
-                    <p>• กลับบ้านเก็บมือถือเข้ากล่อง (+5 ⭐) และเช็คลิสต์ครบ 4 ข้อรับมือถือรอบเย็น 18:30 น.</p>
-                    <p>
-                      • ขออนุญาตทำการบ้าน (กดก่อน {minsToHHMM(hwPermWin.endMins)} น.) ใช้เพิ่มได้ถึง {minsToHHMM(autoReturnRule.homeworkExtendedDeadlineMins)} น. · ถ้าไม่ขอเล่นได้ถึง {minsToHHMM(autoReturnRule.noHomeworkDeadlineMins)} น. (คืนเกินกำหนดทั้งคู่ลงโทษทันที)
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl bg-[#EAE4F2]/70 p-4 space-y-1.5 text-xs sm:text-sm">
-                    <h4 className="font-extrabold text-sm sm:text-base">
-                      🎓 {lang === 'th' ? 'กติกาทีมพี่ใหญ่ (กลุ่ม 3 วิทยาลัย / ฝึกงาน)' : 'Group 3 Rules'}
-                    </h4>
-                    <p>• กะเช้า: เช็คอินไปฝึกงาน/เรียน (+10 ⭐) · กะเย็น: เก็บมือถือเข้าตู้ (+20 ⭐)</p>
-                    <p>• กะค่ำ: คืนมือถือเข้าตู้พี่เลี้ยงไม่เกิน Curfew 22:45 น. ทุกวัน</p>
                   </div>
                 </div>
               )}
@@ -2844,20 +2950,20 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                   🗑️{' '}
                   {trashConfirmTarget.nextDone
                     ? lang === 'th'
-                      ? `ยืนยันรหัสหลังทิ้งขยะ (${trashConfirmTarget.displayName})`
-                      : `Verify Trash Cleared (${trashConfirmTarget.displayName})`
+                      ? `ยืนยันรหัสหลังทิ้งขยะ · ${trashConfirmTarget.dayLabelTh} (${trashConfirmTarget.displayName})`
+                      : `Verify Trash Cleared · ${trashConfirmTarget.dayLabelEn} (${trashConfirmTarget.displayName})`
                     : lang === 'th'
-                    ? `แก้ไขสถานะเป็นยังไม่ทิ้ง (${trashConfirmTarget.displayName})`
-                    : `Reset Trash Status (${trashConfirmTarget.displayName})`}
+                    ? `แก้ไขสถานะ · ${trashConfirmTarget.dayLabelTh} (${trashConfirmTarget.displayName})`
+                    : `Reset Trash Status · ${trashConfirmTarget.dayLabelEn} (${trashConfirmTarget.displayName})`}
                 </h3>
                 <p className="text-xs text-[#6E5C52] mt-0.5">
                   {trashConfirmTarget.nextDone
                     ? lang === 'th'
-                      ? 'กรอกรหัส PIN 4 หลักของตัวเองหลังทิ้งขยะเสร็จ เพื่อเปลี่ยนสถานะเป็น "ทิ้งแล้ว" ค่ะ (หรือรหัสพี่เลี้ยง)'
-                      : 'Enter your 4-digit PIN after clearing the trash to mark it as Cleared (or a staff PIN).'
+                      ? `กรอกรหัส PIN 4 หลักของ ${trashConfirmTarget.displayName} หรือรหัสพี่เลี้ยง เพื่อยืนยันว่าทิ้งขยะรอบ${trashConfirmTarget.dayLabelTh}เรียบร้อยแล้วค่ะ`
+                      : `Enter ${trashConfirmTarget.displayName}'s 4-digit PIN or a staff PIN to mark ${trashConfirmTarget.dayLabelEn} as Cleared.`
                     : lang === 'th'
-                    ? 'กรอกรหัส PIN 4 หลักของเจ้าของเวรหรือพี่เลี้ยง เพื่อเปลี่ยนสถานะกลับเป็น "ยังไม่ทิ้ง" ค่ะ'
-                    : 'Enter the assigned kid 4-digit PIN or a staff PIN to reset status.'}
+                    ? `กรอกรหัส PIN 4 หลักของเจ้าของเวรหรือพี่เลี้ยง เพื่อเปลี่ยนสถานะรอบ${trashConfirmTarget.dayLabelTh}กลับเป็น "รอดำเนินการ" ค่ะ`
+                    : `Enter the assigned kid 4-digit PIN or a staff PIN to reset ${trashConfirmTarget.dayLabelEn} status.`}
                 </p>
               </div>
               <button
@@ -2927,20 +3033,42 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                   : staffMatch
                   ? staffMatch.nickname
                   : assignedKid?.nickname ?? trashConfirmTarget.displayName;
-                const { kidId, displayName, nextDone } = trashConfirmTarget;
+                const {
+                  kidId,
+                  displayName,
+                  dateKey: targetDateKey,
+                  dayLabelTh,
+                  dayLabelEn,
+                  nextDone,
+                } = trashConfirmTarget;
+                const doneIso = nextDone ? now.toISOString() : null;
                 onUpdateKid(
                   kidId,
-                  (prev) => ({
-                    ...prev,
-                    daily: {
-                      ...prev.daily,
-                      dateKey: todayKey,
-                      trashDutyDone: nextDone,
-                      trashDutyDoneAt: nextDone ? now.toISOString() : null,
-                      trashDutyConfirmedBy: nextDone ? confirmer : null,
-                    },
-                  }),
-                  `Home Trash Duty (${displayName}: ${nextDone ? 'Done' : 'Reset'} by ${confirmer})`
+                  (prev) => {
+                    const nextByDate: Record<string, TrashDutyDayEntry> = {
+                      ...(prev.daily.trashDutyByDate ?? {}),
+                      [targetDateKey]: nextDone
+                        ? { done: true, doneAt: doneIso, confirmedBy: confirmer }
+                        : { done: false, doneAt: null, confirmedBy: null },
+                    };
+                    const isTargetToday = targetDateKey === todayKey;
+                    return {
+                      ...prev,
+                      daily: {
+                        ...prev.daily,
+                        dateKey: todayKey,
+                        trashDutyByDate: nextByDate,
+                        ...(isTargetToday
+                          ? {
+                              trashDutyDone: nextDone,
+                              trashDutyDoneAt: doneIso,
+                              trashDutyConfirmedBy: nextDone ? confirmer : null,
+                            }
+                          : {}),
+                      },
+                    };
+                  },
+                  `Home Trash Duty [${targetDateKey}] (${displayName}: ${nextDone ? 'Done' : 'Reset'} by ${confirmer})`
                 );
                 setTrashConfirmTarget(null);
                 setTrashPinInput('');
@@ -2958,12 +3086,12 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                   icon: nextDone ? '🗑️✅' : '↩️',
                   title: nextDone
                     ? lang === 'th'
-                      ? 'บันทึกสถานะทิ้งขยะแล้ว!'
-                      : 'Trash Duty Confirmed!'
+                      ? `บันทึกสถานะ${dayLabelTh}แล้ว!`
+                      : `${dayLabelEn} Trash Duty Confirmed!`
                     : lang === 'th'
-                    ? 'อัปเดตสถานะเป็นรอทิ้งขยะแล้ว'
-                    : 'Reset to Pending',
-                  message: `${displayName} · ${lang === 'th' ? 'โดย' : 'By'} ${confirmer}${syncNote}`,
+                    ? `อัปเดตสถานะ${dayLabelTh}เป็นรอดำเนินการแล้ว`
+                    : `${dayLabelEn} Reset to Pending`,
+                  message: `${displayName} · ${lang === 'th' ? dayLabelTh : dayLabelEn} · ${lang === 'th' ? 'โดย' : 'By'} ${confirmer}${syncNote}`,
                   tone: nextDone ? 'mint' : 'yellow',
                 });
               }}

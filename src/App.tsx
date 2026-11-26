@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { CenteredAlertModal, QrScannerModal } from './components/CenteredAlertModal';
 import { ChefView } from './components/ChefView';
 import { CreatorView } from './components/CreatorView';
+import { HouseRulesGuideView } from './components/HouseRulesGuideView';
 import { KidActivityHistoryView } from './components/KidActivityHistoryView';
 import { KidDutyRosterView } from './components/KidDutyRosterView';
 import { KidHubView } from './components/KidHubView';
@@ -382,22 +383,45 @@ export default function App() {
               const localById = new Map(prevLocal.members.map((m) => [m.id, m]));
               resolvedMembers = cloudMembers.map((cm) => {
                 const lm = localById.get(cm.id);
+                if (!lm) return cm;
+                const mergedByDate = {
+                  ...(lm.daily?.trashDutyByDate ?? {}),
+                  ...(cm.daily?.trashDutyByDate ?? {}),
+                };
                 if (
-                  lm &&
+                  lm.daily?.dateKey &&
+                  lm.daily.trashDutyDone &&
+                  !mergedByDate[lm.daily.dateKey]?.done
+                ) {
+                  mergedByDate[lm.daily.dateKey] = {
+                    done: true,
+                    doneAt: lm.daily.trashDutyDoneAt ?? null,
+                    confirmedBy: lm.daily.trashDutyConfirmedBy ?? cm.nickname,
+                  };
+                }
+                const hasNewLocalDateEntries =
+                  Object.keys(mergedByDate).length >
+                  Object.keys(cm.daily?.trashDutyByDate ?? {}).length;
+                const needsSameDayTrashMerge =
                   lm.daily?.dateKey === localTodayKey &&
                   cm.daily?.dateKey === localTodayKey &&
                   lm.daily.trashDutyDone &&
                   !cm.daily.trashDutyDone &&
-                  lm.daily.trashDutyDoneAt
-                ) {
+                  lm.daily.trashDutyDoneAt;
+                if (needsSameDayTrashMerge || hasNewLocalDateEntries) {
                   shouldPushMergedTrash = true;
                   return {
                     ...cm,
                     daily: {
                       ...cm.daily,
-                      trashDutyDone: true,
-                      trashDutyDoneAt: lm.daily.trashDutyDoneAt,
-                      trashDutyConfirmedBy: lm.daily.trashDutyConfirmedBy ?? cm.nickname,
+                      ...(needsSameDayTrashMerge
+                        ? {
+                            trashDutyDone: true,
+                            trashDutyDoneAt: lm.daily.trashDutyDoneAt,
+                            trashDutyConfirmedBy: lm.daily.trashDutyConfirmedBy ?? cm.nickname,
+                          }
+                        : {}),
+                      trashDutyByDate: mergedByDate,
                     },
                   };
                 }
@@ -494,7 +518,7 @@ export default function App() {
           ...prev,
           members: prev.members.map((m) => {
             let nextMember =
-              m.daily.dateKey === todayKey ? m : { ...m, daily: createEmptyDaily(todayKey) };
+              m.daily.dateKey === todayKey ? m : { ...m, daily: createEmptyDaily(todayKey, m.daily) };
             if (nextMember.role === 'kid' && nextMember.allowance?.weekKey !== currentWeekKey) {
               const { allowance } = ensureCurrentWeekAllowance(nextMember, current, prev.settings);
               nextMember = { ...nextMember, allowance };
@@ -2211,6 +2235,7 @@ export default function App() {
       | 'secret_vote'
       | 'supply_request'
       | 'lost_found'
+      | 'house_rules_guide'
   ) => {
     setSelectedKidId(null);
     setReturnToManagerAfterKid(false);
@@ -2236,6 +2261,10 @@ export default function App() {
     }
     if (target === 'lost_found') {
       setMode('lost_found');
+      return;
+    }
+    if (target === 'house_rules_guide') {
+      setMode('house_rules_guide');
       return;
     }
     if (target === 'creator') {
@@ -2371,6 +2400,10 @@ export default function App() {
                 (lang === 'th'
                   ? '🔎 แจ้งของหาย / เก็บของได้ (PIN 0006)'
                   : '🔎 Lost & Found (PIN 0006)')}
+              {mode === 'house_rules_guide' &&
+                (lang === 'th'
+                  ? '📜 ข้อตกลงและขั้นตอนการกดระบบ (PIN 0007)'
+                  : '📜 House Rules & Check-In Guide (PIN 0007)')}
             </span>
 
             <button
@@ -2932,6 +2965,19 @@ export default function App() {
             onClaimLostFound={handleClaimLostFound}
             onResolveLostFound={handleResolveLostFound}
             onShowAlert={showAlert}
+            onBackHome={() => {
+              setMode('magic_door');
+              setSelectedKidId(null);
+            }}
+          />
+        )}
+
+        {mode === 'house_rules_guide' && (
+          <HouseRulesGuideView
+            orgName={activeTenant?.orgName ?? 'Barnhem Care & Kids'}
+            now={now}
+            lang={lang}
+            settings={state.settings}
             onBackHome={() => {
               setMode('magic_door');
               setSelectedKidId(null);

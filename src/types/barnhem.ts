@@ -13,7 +13,8 @@ export type AppMode =
   | 'duty_roster'
   | 'secret_vote'
   | 'supply_request'
-  | 'lost_found';
+  | 'lost_found'
+  | 'house_rules_guide';
 
 export type MemberRole = 'manager' | 'staff' | 'chef' | 'tutor' | 'kid';
 
@@ -89,6 +90,12 @@ export interface MySpaceProfile {
   activeGift?: ProfileGift | null;
 }
 
+export interface TrashDutyDayEntry {
+  done: boolean;
+  doneAt?: string | null;
+  confirmedBy?: string | null;
+}
+
 export interface DailyProgress {
   dateKey: string; // YYYY-MM-DD
   morningPhonePickupChecked?: boolean;
@@ -111,6 +118,9 @@ export interface DailyProgress {
   trashDutyDone?: boolean;
   trashDutyDoneAt?: string | null;
   trashDutyConfirmedBy?: string | null;
+  trashDutyByDate?: Record<string, TrashDutyDayEntry>;
+  computerHomeworkChecked?: boolean;
+  computerHomeworkAt?: string | null;
 }
 
 export interface StarTransaction {
