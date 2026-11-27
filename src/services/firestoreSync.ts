@@ -41,6 +41,7 @@ import {
   WeeklyActivityLog,
 } from '../types/barnhem';
 import { pruneWeeklyActivityLogs } from '../utils/activityLogRetention';
+import { sanitizeSaturdayLatePenaltyPoll } from '../utils/expressKiosk';
 
 export const MASTER_ADMIN_EMAIL = 'chali6939p@gmail.com';
 export const DEFAULT_ORG_ID = 'barnhem_main';
@@ -315,6 +316,11 @@ function serializeConfigDoc(
           kidAwaySecretDateKey: settings.kidAwaySecretDateKey
             ? String(settings.kidAwaySecretDateKey).slice(0, 16)
             : null,
+        }
+      : {}),
+    ...(settings.weekendLatePenaltyPreset
+      ? {
+          weekendLatePenaltyPreset: settings.weekendLatePenaltyPreset,
         }
       : {}),
     ...makeSharedMeta(user, orgId, extraEmails),
@@ -619,7 +625,8 @@ function parseMembersSnapshot(
 
 function parseRecordsSnapshot(
   snapshot: QuerySnapshot<DocumentData>,
-  orgId: string
+  orgId: string,
+  patchedLegacyPollDocs?: Set<string>
 ): Partial<AppState> | null {
   if (snapshot.empty) return null;
   const announcements: Announcement[] = [];
@@ -658,9 +665,21 @@ function parseRecordsSnapshot(
         break;
       }
       case 'poll': {
-        const poll = d.payload as unknown as SecretPoll;
-        if (poll?.id !== 'poll_weekend_activity') {
-          polls.push(poll);
+        const rawPoll = d.payload as unknown as SecretPoll;
+        if (rawPoll?.id !== 'poll_weekend_activity') {
+          const { poll: cleanPoll, changed } = sanitizeSaturdayLatePenaltyPoll(rawPoll);
+          if (
+            changed &&
+            patchedLegacyPollDocs &&
+            !patchedLegacyPollDocs.has(docSnap.id)
+          ) {
+            patchedLegacyPollDocs.add(docSnap.id);
+            void updateDoc(doc(db, 'records', docSnap.id), {
+              payload: stripUndefined(cleanPoll as unknown as Record<string, unknown>),
+              updatedAt: serverTimestamp(),
+            }).catch((err) => console.error('Saturday poll 2-option patch failed:', err));
+          }
+          polls.push(cleanPoll);
         }
         break;
       }
@@ -862,6 +881,12 @@ function parseConfigSnapshot(
       customPenaltyPresets: Array.isArray(d.customPenaltyPresets)
         ? d.customPenaltyPresets.filter((x): x is string => typeof x === 'string').slice(0, 30)
         : undefined,
+      weekendLatePenaltyPreset:
+        d.weekendLatePenaltyPreset === 'weekend_late_no_freeday_no_711'
+          ? 'weekend_late_no_freeday_no_711'
+          : d.weekendLatePenaltyPreset === 'weekend_late_no_phone_no_711'
+          ? 'weekend_late_no_phone_no_711'
+          : undefined,
       kidAwaySecretCode:
         typeof d.kidAwaySecretCode === 'string'
           ? d.kidAwaySecretCode.slice(0, 8)
@@ -927,6 +952,7 @@ export function subscribeFoundationCloud(
 ): () => void {
   const { membersQ, recordsQ, configQ } = buildFoundationQueries(user, orgId);
   const patchedLegacyPinDocs = new Set<string>();
+  const patchedLegacyPollDocs = new Set<string>();
 
   const unsubMembers = onSnapshot(
     membersQ,
@@ -943,7 +969,7 @@ export function subscribeFoundationCloud(
   const unsubRecords = onSnapshot(
     recordsQ,
     (snapshot) => {
-      const patch = parseRecordsSnapshot(snapshot, orgId);
+      const patch = parseRecordsSnapshot(snapshot, orgId, patchedLegacyPollDocs);
       if (patch) onRecordsUpdate(patch);
     },
     (err) => {
@@ -1108,9 +1134,9 @@ export function subscribeLinkedKidCloud(
                     break;
                   }
                   case 'poll': {
-                    const poll = d.payload as unknown as SecretPoll;
-                    if (poll?.id !== 'poll_weekend_activity') {
-                      polls.push(poll);
+                    const rawPoll = d.payload as unknown as SecretPoll;
+                    if (rawPoll?.id !== 'poll_weekend_activity') {
+                      polls.push(sanitizeSaturdayLatePenaltyPoll(rawPoll).poll);
                     }
                     break;
                   }
@@ -1239,6 +1265,12 @@ export function subscribeLinkedKidCloud(
                   customPenaltyPresets: Array.isArray(d.customPenaltyPresets)
                     ? d.customPenaltyPresets.filter((x): x is string => typeof x === 'string').slice(0, 30)
                     : undefined,
+                  weekendLatePenaltyPreset:
+                    d.weekendLatePenaltyPreset === 'weekend_late_no_freeday_no_711'
+                      ? 'weekend_late_no_freeday_no_711'
+                      : d.weekendLatePenaltyPreset === 'weekend_late_no_phone_no_711'
+                      ? 'weekend_late_no_phone_no_711'
+                      : undefined,
                   kidAwaySecretCode:
                     typeof d.kidAwaySecretCode === 'string'
                       ? d.kidAwaySecretCode.slice(0, 8)

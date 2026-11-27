@@ -29,7 +29,12 @@ import {
   getShiftCoverageAtDateTime,
 } from '../data/staffSchedule';
 import { downloadKidsSummaryCsv } from '../utils/csvExport';
-import { KioskResult, playKioskChime } from '../utils/expressKiosk';
+import {
+  applyWeekendHolidayLatePenaltyToMember,
+  getEffectiveWeekendLatePenaltyPreset,
+  KioskResult,
+  playKioskChime,
+} from '../utils/expressKiosk';
 import { getDailyHouseChoreForKid } from '../utils/houseChores';
 import {
   computeGoldenPoolBalance,
@@ -455,6 +460,8 @@ export const StaffView: React.FC<StaffViewProps> = ({
         phoneConfiscatedUntil1830Date: null,
         fridayFreeDayDeductedCount: 0,
         noEveningPhoneTomorrowDate: null,
+        noEveningPhone1830To2245Date: null,
+        noSevenElevenDate: null,
         cartoonPrivilegeActive: true,
         phonePrivilegeActive: true,
       },
@@ -946,6 +953,82 @@ export const StaffView: React.FC<StaffViewProps> = ({
                     </button>
                   );
                 })()}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const label =
+                      now.getDay() === 0 ? 'ตื่นสายวันอาทิตย์' : now.getDay() === 6 ? 'ตื่นสายวันเสาร์' : 'ตื่นสายวันหยุด';
+                    const preview = applyWeekendHolidayLatePenaltyToMember(
+                      selectedQuickKid,
+                      now,
+                      lang,
+                      `พี่เลี้ยง (${loggedInStaff.nickname}) บันทึก${label}`,
+                      'weekend_late_no_phone_no_711'
+                    );
+                    onUpdateKid(
+                      selectedQuickKid.id,
+                      (prev) =>
+                        applyWeekendHolidayLatePenaltyToMember(
+                          prev,
+                          now,
+                          lang,
+                          `พี่เลี้ยง (${loggedInStaff.nickname}) บันทึก${label}`,
+                          'weekend_late_no_phone_no_711'
+                        ).updatedKid,
+                      `Staff Holiday Late (No Phone 18:30-22:45 / No 7-11)`
+                    );
+                    setQuickCheckFeedback(
+                      `⚖️ น้อง${selectedQuickKid.nickname}: ${preview.penaltyText}`
+                    );
+                  }}
+                  className="min-h-[38px] rounded-xl bg-[#FFE4E8] hover:bg-[#FFD2DA] border border-[#F0A4B4] px-3 py-1.5 text-xs font-bold text-[#881337] cursor-pointer"
+                >
+                  📵 {selectedQuickKid.group === 1
+                    ? lang === 'th'
+                      ? 'ตื่นสายวันหยุด: งดสั่งเซเว่น'
+                      : 'Holiday Late: No 7-Eleven'
+                    : lang === 'th'
+                    ? 'ตื่นสายวันหยุด: งดมือถือ 18:30–22:45'
+                    : 'Holiday Late: No Phone 18:30–22:45'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const label =
+                      now.getDay() === 0 ? 'ตื่นสายวันอาทิตย์' : now.getDay() === 6 ? 'ตื่นสายวันเสาร์' : 'ตื่นสายวันหยุด';
+                    const preview = applyWeekendHolidayLatePenaltyToMember(
+                      selectedQuickKid,
+                      now,
+                      lang,
+                      `พี่เลี้ยง (${loggedInStaff.nickname}) บันทึก${label}`,
+                      'weekend_late_no_freeday_no_711'
+                    );
+                    onUpdateKid(
+                      selectedQuickKid.id,
+                      (prev) =>
+                        applyWeekendHolidayLatePenaltyToMember(
+                          prev,
+                          now,
+                          lang,
+                          `พี่เลี้ยง (${loggedInStaff.nickname}) บันทึก${label}`,
+                          'weekend_late_no_freeday_no_711'
+                        ).updatedKid,
+                      `Staff Holiday Late (Free Day -1 / No 7-11)`
+                    );
+                    setQuickCheckFeedback(
+                      `⚖️ น้อง${selectedQuickKid.nickname}: ${preview.penaltyText}`
+                    );
+                  }}
+                  className="min-h-[38px] rounded-xl bg-[#FFF0E5] hover:bg-[#FFE2CC] border border-[#F2BE96] px-3 py-1.5 text-xs font-bold text-[#7A3B10] cursor-pointer"
+                >
+                  🗓️ {selectedQuickKid.group === 1
+                    ? lang === 'th'
+                      ? 'ตื่นสายวันหยุด: งดสั่งเซเว่น'
+                      : 'Holiday Late: No 7-Eleven'
+                    : lang === 'th'
+                    ? 'ตื่นสายวันหยุด: งดฟรีเดย์ 1 วัน'
+                    : 'Holiday Late: No Free Day 1d'}
+                </button>
               </div>
             </div>
 
@@ -1508,6 +1591,61 @@ export const StaffView: React.FC<StaffViewProps> = ({
           </div>
         </div>
 
+        {onUpdateSettings && (() => {
+          const activeHolidayPreset = getEffectiveWeekendLatePenaltyPreset(state.settings);
+          return (
+            <div className="mb-4 rounded-2xl border border-[#F0D3B8] bg-[#FFF8F0] p-3.5 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-extrabold text-[#7A3B10]">
+                  🏖️{' '}
+                  {lang === 'th'
+                    ? 'บทลงโทษอัตโนมัติเมื่อตื่นสายในวันหยุด (เสาร์ · อาทิตย์ · วันหยุดนักขัตฤกษ์/ปิดเทอม)'
+                    : 'Auto Late Wake-up Penalty for Weekends & Holidays'}
+                </div>
+                <div className="text-[11px] text-[#6E5C52] mt-0.5">
+                  {lang === 'th'
+                    ? 'เลือกรูปแบบบทลงโทษหลักเมื่อน้องเช็คอินสายในวันหยุด (กลุ่ม 1 เด็กเล็กงดสั่งเซเว่นอัตโนมัติทั้ง 2 แบบ)'
+                    : 'Select default holiday late penalty for older kids (Group 1 always gets No 7-Eleven today).'}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdateSettings({ weekendLatePenaltyPreset: 'weekend_late_no_phone_no_711' })
+                  }
+                  className={`rounded-xl border px-3 py-1.5 text-xs font-bold cursor-pointer transition-colors ${
+                    activeHolidayPreset === 'weekend_late_no_phone_no_711'
+                      ? 'bg-[#FFE4E8] border-[#E88DA1] text-[#881337]'
+                      : 'bg-white border-[#EBD8C3] text-[#6E5C52] hover:bg-[#FFF5BA]/40'
+                  }`}
+                >
+                  📵{' '}
+                  {lang === 'th'
+                    ? 'งดใช้โทรศัพท์ 18:30–22:45 น. · เด็กเล็กงดสั่งเซเว่น'
+                    : 'No Phone 18:30–22:45 · G1 No 7-Eleven'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdateSettings({ weekendLatePenaltyPreset: 'weekend_late_no_freeday_no_711' })
+                  }
+                  className={`rounded-xl border px-3 py-1.5 text-xs font-bold cursor-pointer transition-colors ${
+                    activeHolidayPreset === 'weekend_late_no_freeday_no_711'
+                      ? 'bg-[#FFE8D6] border-[#E89B64] text-[#7A3B10]'
+                      : 'bg-white border-[#EBD8C3] text-[#6E5C52] hover:bg-[#FFF5BA]/40'
+                  }`}
+                >
+                  🗓️{' '}
+                  {lang === 'th'
+                    ? 'งดฟรีเดย์ 1 วัน · เด็กเล็กงดสั่งเซเว่น'
+                    : 'No Free Day 1d · G1 No 7-Eleven'}
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left border-collapse">
             <thead>
@@ -1524,9 +1662,12 @@ export const StaffView: React.FC<StaffViewProps> = ({
             </thead>
             <tbody>
               {kids.map((kid) => {
+                const phoneBlocked1830To2245 = kid.penalty.noEveningPhone1830To2245Date === todayKey;
+                const sevenElevenBlocked = kid.penalty.noSevenElevenDate === todayKey;
                 const phoneBlocked =
                   kid.penalty.phoneConfiscatedUntil1830Date === todayKey ||
-                  kid.penalty.noEveningPhoneTomorrowDate === todayKey;
+                  kid.penalty.noEveningPhoneTomorrowDate === todayKey ||
+                  phoneBlocked1830To2245;
                 return (
                   <tr key={kid.id} className="border-b border-[#F5ECE2] hover:bg-[#FFF5BA]/20">
                     <td className="py-3 pr-3 whitespace-nowrap">
@@ -1546,12 +1687,24 @@ export const StaffView: React.FC<StaffViewProps> = ({
                     </td>
                     <td className="py-3 px-2 text-xs whitespace-nowrap">
                       {kid.group === 1 ? (
-                        <span className={kid.daily.bossStageUnlocked ? 'text-[#2F685E] font-bold' : 'text-[#7B695F]'}>
-                          📺 {kid.daily.bossStageUnlocked ? 'ปลดล็อกการ์ตูนแล้ว' : 'รอปลดล็อก 20:00'}
-                        </span>
+                        <div className="space-y-0.5">
+                          <div className={kid.daily.bossStageUnlocked ? 'text-[#2F685E] font-bold' : 'text-[#7B695F]'}>
+                            📺 {kid.daily.bossStageUnlocked ? 'ปลดล็อกการ์ตูนแล้ว' : 'รอปลดล็อก 20:00'}
+                          </div>
+                          {sevenElevenBlocked && (
+                            <div className="text-[#B84A39] font-extrabold">
+                              🚫🏪 งดสั่งเซเว่นวันนี้
+                            </div>
+                          )}
+                        </div>
                       ) : (
                         <span className={phoneBlocked ? 'text-[#B84A39] font-bold' : 'text-[#2F685E] font-bold'}>
-                          📱 {phoneBlocked ? 'ติดโทษงดมือถือ' : 'สิทธิ์ปกติ'}
+                          📱{' '}
+                          {phoneBlocked1830To2245
+                            ? 'งดมือถือ 18:30–22:45'
+                            : phoneBlocked
+                            ? 'ติดโทษงดมือถือ'
+                            : 'สิทธิ์ปกติ'}
                         </span>
                       )}
                     </td>
@@ -1654,6 +1807,8 @@ export const StaffView: React.FC<StaffViewProps> = ({
                                 phoneConfiscatedUntil1830Date: null,
                                 fridayFreeDayDeductedCount: 0,
                                 noEveningPhoneTomorrowDate: null,
+                                noEveningPhone1830To2245Date: null,
+                                noSevenElevenDate: null,
                                 cartoonPrivilegeActive: true,
                                 phonePrivilegeActive: true,
                               },

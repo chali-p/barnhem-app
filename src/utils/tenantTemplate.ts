@@ -1,4 +1,5 @@
 import { pruneWeeklyActivityLogs } from './activityLogRetention';
+import { sanitizeSecretPolls } from './expressKiosk';
 import { createEmptyDaily, INITIAL_APP_STATE } from '../data/initialData';
 import { getOrganizationPreset } from '../data/organizationPresets';
 import {
@@ -72,6 +73,8 @@ function makeStarterMember(params: {
       phoneConfiscatedUntil1830Date: null,
       fridayFreeDayDeductedCount: 0,
       noEveningPhoneTomorrowDate: null,
+      noEveningPhone1830To2245Date: null,
+      noSevenElevenDate: null,
       cartoonPrivilegeActive: true,
       phonePrivilegeActive: true,
     },
@@ -274,6 +277,7 @@ export function loadTenantAppState(
       ...starter,
       ...parsed,
       members,
+      polls: sanitizeSecretPolls(Array.isArray(parsed.polls) ? parsed.polls : []),
       weeklyActivityLogs: pruneWeeklyActivityLogs(
         Array.isArray(parsed.weeklyActivityLogs) ? parsed.weeklyActivityLogs : [],
         new Date()

@@ -17,6 +17,7 @@ import { PlatformPortalView } from './components/PlatformPortalView';
 import { ShortcutManualView } from './components/ShortcutManualView';
 import { StaffSystemGuideView } from './components/StaffSystemGuideView';
 import { StaffView } from './components/StaffView';
+import { TimestampCameraModal } from './components/TimestampCameraModal';
 import { TutorView } from './components/TutorView';
 import { createEmptyDaily } from './data/initialData';
 import { auth, signOutCloud } from './firebase';
@@ -72,6 +73,7 @@ import {
   isCustomCommandDoneForKid,
   isHomeActionDoneForKid,
   playKioskChime,
+  sanitizeSaturdayLatePenaltyPoll,
 } from './utils/expressKiosk';
 import {
   applyDailySchoolDeduction,
@@ -161,6 +163,7 @@ export default function App() {
   const [loggedInManager, setLoggedInManager] = useState<Member | null>(null);
   const [creatorUnlocked, setCreatorUnlocked] = useState(false);
   const [creatorKioskOpen, setCreatorKioskOpen] = useState(false);
+  const [manualTimestampCamOpen, setManualTimestampCamOpen] = useState(false);
 
   const [now, setNow] = useState<Date>(() =>
     getEffectiveNow(state.settings.simulatedTimeIso)
@@ -950,6 +953,10 @@ export default function App() {
                 opt.id === optionId ? { ...opt, votes: opt.votes + 1 } : opt
               ),
               votedKidIds: [...poll.votedKidIds, kidId],
+              kidChoices: {
+                ...(poll.kidChoices ?? {}),
+                [kidId]: optionId,
+              },
             };
           }),
         }),
@@ -1076,12 +1083,13 @@ export default function App() {
 
   const handleCreatePoll = useCallback(
     (poll: SecretPoll) => {
+      const cleanPoll = sanitizeSaturdayLatePenaltyPoll(poll).poll;
       commitStateChange(
         (prev) => ({
           ...prev,
-          polls: [poll, ...prev.polls],
+          polls: [cleanPoll, ...prev.polls],
         }),
-        `Create Secret Poll (${poll.question})`
+        `Create Secret Poll (${cleanPoll.question})`
       );
     },
     [commitStateChange]
@@ -1698,7 +1706,14 @@ export default function App() {
       const isSickToday = currentState.sickReports.some(
         (r) => r.kidId === kid.id && r.dateKey === todayKey && !r.resolved
       );
-      const result = evaluateOneTapGoToSchool(kid, now, lang, currentState.settings, isSickToday);
+      const result = evaluateOneTapGoToSchool(
+        kid,
+        now,
+        lang,
+        currentState.settings,
+        isSickToday,
+        currentState.polls
+      );
       playKioskChime(result.success);
       if (result.updatedKid) {
         commitStateChange((prev) => {
@@ -1707,7 +1722,14 @@ export default function App() {
           const freshSick = prev.sickReports.some(
             (r) => r.kidId === freshKid.id && r.dateKey === todayKey && !r.resolved
           );
-          const freshRes = evaluateOneTapGoToSchool(freshKid, now, lang, prev.settings, freshSick);
+          const freshRes = evaluateOneTapGoToSchool(
+            freshKid,
+            now,
+            lang,
+            prev.settings,
+            freshSick,
+            prev.polls
+          );
           const updated = freshRes.updatedKid;
           if (!updated) return prev;
           const isLate = Boolean(freshRes.fineThb && freshRes.fineThb > 0);
@@ -1992,6 +2014,8 @@ export default function App() {
                   phoneConfiscatedUntil1830Date: null,
                   fridayFreeDayDeductedCount: 0,
                   noEveningPhoneTomorrowDate: null,
+                  noEveningPhone1830To2245Date: null,
+                  noSevenElevenDate: null,
                   cartoonPrivilegeActive: true,
                   phonePrivilegeActive: true,
                 },
@@ -3029,19 +3053,49 @@ export default function App() {
         )}
 
         {mode === 'shortcut_manual' && (
-          <ShortcutManualView
-            orgName={activeTenant?.orgName ?? 'Barnhem Care & Kids'}
-            now={now}
-            lang={lang}
-            onNavigateMode={(targetMode) => {
-              setSelectedKidId(null);
-              setMode(targetMode);
-            }}
-            onBackHome={() => {
-              setMode('magic_door');
-              setSelectedKidId(null);
-            }}
-          />
+          <>
+            <ShortcutManualView
+              orgName={activeTenant?.orgName ?? 'Barnhem Care & Kids'}
+              now={now}
+              lang={lang}
+              onNavigateMode={(targetMode) => {
+                setSelectedKidId(null);
+                setManualTimestampCamOpen(false);
+                setMode(targetMode);
+              }}
+              onOpenTimestampCamera={() => setManualTimestampCamOpen(true)}
+              onBackHome={() => {
+                setManualTimestampCamOpen(false);
+                setMode('magic_door');
+                setSelectedKidId(null);
+              }}
+            />
+            <TimestampCameraModal
+              open={manualTimestampCamOpen}
+              kids={state.members.filter((m) => m.role === 'kid')}
+              staffPins={Array.from(
+                new Set([
+                  ...state.members
+                    .filter((m) => m.role === 'staff' || m.role === 'manager')
+                    .map((m) => m.pin),
+                  ...state.settings.creatorPins,
+                ])
+              )}
+              now={now}
+              lang={lang}
+              orgName={activeTenant?.orgName ?? 'Barnhem Care & Kids'}
+              todayPhotos={(state.returnHomePhotos ?? []).filter(
+                (p) => p.dateKey === getDateKey(now)
+              )}
+              allPhotos={state.returnHomePhotos ?? []}
+              returnHomeDriveUrl={state.settings.returnHomeDriveUrl}
+              syncWebhookUrl={state.settings.syncWebhookUrl}
+              onSavePhoto={handleSaveReturnHomePhoto}
+              onDeletePhoto={handleDeleteReturnHomePhoto}
+              onClose={() => setManualTimestampCamOpen(false)}
+              onShowAlert={showAlert}
+            />
+          </>
         )}
 
         {mode === 'portal' && (

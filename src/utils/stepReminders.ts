@@ -1,4 +1,4 @@
-import { AppSettings, Language, Member, ModalAlertPayload } from '../types/barnhem';
+import { AppSettings, Language, Member, ModalAlertPayload, SecretPoll } from '../types/barnhem';
 import {
   canKidUseCommand,
   doesKidHavePhone,
@@ -6,7 +6,9 @@ import {
   formatThaiCurfewClock,
   getAutoReturnPhoneRuleConfig,
   getEffectiveHomeworkPermissionWindow,
+  getEffectiveWeekendLatePenaltyPreset,
   minsToHHMM,
+  resolveSaturdayLatePenaltyFromPolls,
 } from './expressKiosk';
 import { isKidAwayOnDate } from './piggyBank';
 import { getDateKey, getMinutesOfDay, isPublicHoliday } from './timeRules';
@@ -80,7 +82,8 @@ export function evaluateKidStepReminders(
   now: Date,
   isSickToday: boolean,
   isPublicHolidayToday = false,
-  settings?: Partial<AppSettings>
+  settings?: Partial<AppSettings>,
+  polls?: SecretPoll[]
 ): KidStepReminderSnapshot {
   const mins = getMinutesOfDay(now);
   const day = now.getDay(); // 0 Sun, 5 Fri, 6 Sat
@@ -93,6 +96,24 @@ export function evaluateKidStepReminders(
   const PHONE_RETURN_CEILING = 23 * 60; // 23:00 น. เพดานคืนโทรศัพท์หลัง 22:45
 
   const isFridayFreeDay = day === 5;
+  const weekendPreset = getEffectiveWeekendLatePenaltyPreset(settings);
+  const satVotedResolution = resolveSaturdayLatePenaltyFromPolls(kid, polls, settings);
+  const satOlderPenaltyTh =
+    satVotedResolution.preset === 'weekend_late_no_freeday_no_711'
+      ? `งดฟรีเดย์ 1 วัน (${satVotedResolution.reasonTagTh})`
+      : `งดใช้โทรศัพท์ 18:30–22:45 น. (${satVotedResolution.reasonTagTh})`;
+  const satOlderPenaltyEn =
+    satVotedResolution.preset === 'weekend_late_no_freeday_no_711'
+      ? `deduct 1 Free Day (${satVotedResolution.reasonTagEn})`
+      : `no phone 18:30–22:45 (${satVotedResolution.reasonTagEn})`;
+  const weekendOlderPenaltyTh =
+    weekendPreset === 'weekend_late_no_freeday_no_711'
+      ? 'งดฟรีเดย์ 1 วัน'
+      : 'งดใช้โทรศัพท์ 18:30–22:45 น.';
+  const weekendOlderPenaltyEn =
+    weekendPreset === 'weekend_late_no_freeday_no_711'
+      ? 'deduct 1 Free Day'
+      : 'no phone 18:30–22:45';
   const kidHasPhone = doesKidHavePhone(kid.id, settings);
   const canEveningPhone = kidHasPhone && canKidUseCommand('evening_uniform_phone', kid, settings);
   const canHwPerm = kidHasPhone && canKidUseCommand('night_homework_permission', kid, settings);
@@ -131,111 +152,172 @@ export function evaluateKidStepReminders(
   if (!isAwayToday) {
   // === SHIFT 1: MORNING ===
   if (kid.group === 1) {
-    if (!kid.daily.breakfastChecked && (!isSchoolDay || mins <= SCHOOL_MORNING_CEILING)) {
-      const deadline = 6 * 60 + 40; // 06:40
-      const delta = mins - deadline;
-      pendingSteps.push({
-        id: 'g1_breakfast',
-        shift: 'shift_morning',
-        targetModal: 'shift_morning',
-        urgent: delta > 0,
-        approachingDeadline: delta >= -30 && delta <= 0,
-        deadlineMinutes: deadline,
-        minutesDelta: delta,
-        titleTh: 'กะเช้า (ขั้นที่ 1): ทานข้าวเช้า & ใส่ชุดนักเรียน',
-        titleEn: 'Morning (Step 1): Breakfast & Uniform',
-        instructionTh:
-          delta <= 0
-            ? `ต้องเช็คอินทานข้าวเช้าก่อน 06:40 น. เพื่อรับ +5 ⭐ (เหลือเวลาอีก ${Math.abs(delta)} นาที)`
-            : `เลยเวลา 06:40 น. มาแล้ว ${delta} นาที (เตือนสายวันไปโรงเรียนถึงเพดาน 08:00 น.) รีบเช็คอินทานข้าวเช้าและเตรียมขึ้นรถตู้เลยจ้า`,
-        instructionEn:
-          delta <= 0
-            ? `Check in breakfast before 06:40 for +5 ⭐ (${Math.abs(delta)} min left).`
-            : `Past 06:40 by ${delta} min (school-day morning cap 08:00). Check in breakfast now.`,
-        ctaTh: '🍚 ไปเช็คอินข้าวเช้า',
-        ctaEn: '🍚 Check In Breakfast',
-      });
-    }
-    if (!kid.daily.vanOrMorningChecked && (!isSchoolDay || mins <= SCHOOL_MORNING_CEILING)) {
-      const deadline = 7 * 60 + 1; // 07:01
-      const delta = mins - deadline;
-      pendingSteps.push({
-        id: 'g1_van',
-        shift: 'shift_morning',
-        targetModal: 'shift_morning',
-        urgent: delta > 0,
-        approachingDeadline: delta >= -30 && delta <= 0,
-        deadlineMinutes: deadline,
-        minutesDelta: delta,
-        titleTh: 'กะเช้า (ขั้นที่ 2): ขึ้นรถตู้ไปโรงเรียน',
-        titleEn: 'Morning (Step 2): Board School Van',
-        instructionTh:
-          delta <= 0
-            ? `ขึ้นรถตู้ไปโรงเรียนไม่เกิน 07:01 น. รับ +10 ⭐ (เหลืออีก ${Math.abs(delta)} นาที)`
-            : `เลย 07:01 น. มาแล้ว ${delta} นาที (เพดานเตือนสายวันไปโรงเรียนถึง 08:00 น.) รีบเช็คอินขึ้นรถตู้ด่วนจ้า`,
-        instructionEn:
-          delta <= 0
-            ? `Board the school van by 07:01 for +10 ⭐ (${Math.abs(delta)} min left).`
-            : `Past 07:01 by ${delta} min (school-day late cap 08:00). Please check in for the van.`,
-        ctaTh: '🚐 ไปเช็คอินขึ้นรถตู้',
-        ctaEn: '🚐 Check In Van',
-      });
+    if (!isSchoolDay) {
+      if (!kid.daily.vanOrMorningChecked && mins <= 10 * 60 + 30) {
+        const isSat = day === 6;
+        const isSun = day === 0 && !isHoliday;
+        const deadline = isSat ? 8 * 60 + 35 : 8 * 60 + 15;
+        const graceLimit = isSat ? 8 * 60 + 36 : 8 * 60 + 25;
+        const delta = mins - graceLimit;
+        const dayTitleTh = isSat ? 'วันเสาร์' : isSun ? 'วันอาทิตย์' : 'วันนักขัตฤกษ์';
+        const dayTitleEn = isSat ? 'Saturday' : isSun ? 'Sunday' : 'Public Holiday';
+        pendingSteps.push({
+          id: 'g1_holiday_morning',
+          shift: 'shift_morning',
+          targetModal: 'shift_morning',
+          urgent: mins > graceLimit,
+          approachingDeadline: isSat
+            ? mins >= 8 * 60 + 15 && mins <= graceLimit
+            : mins >= 7 * 60 + 45 && mins <= graceLimit,
+          deadlineMinutes: graceLimit,
+          minutesDelta: delta,
+          titleTh: isSat
+            ? 'กะเช้าวันเสาร์: เปิดตื่น 08:15–08:35 น. (อนุโลมถึง 08:36 น.)'
+            : `กะเช้า${dayTitleTh}: ไม่เกิน 08:15 น. (อนุโลมถึง 08:25 น.)`,
+          titleEn: isSat
+            ? 'Saturday Morning: Opens 08:15–08:35 (Grace to 08:36)'
+            : `${dayTitleEn} Morning: By 08:15 (Grace to 08:25)`,
+          instructionTh: isSat
+            ? mins < 8 * 60 + 15
+              ? 'วันเสาร์ระบบเปิดตื่น 08:15–08:35 น. (อนุโลมได้ไม่เกิน 1 นาที / ถึง 08:36 น.) กดชื่อตัวเองได้เลย ไม่ต้องใส่รหัส · ห้ามกดชื่อแทนเพื่อนเด็ดขาด · เกิน 08:36 น. บทลงโทษตามที่โหวตค่ะ'
+              : mins <= deadline
+              ? `เปิดให้กดชื่อตัวเองแล้ว (08:15–08:35 น.) รับ +10 ⭐ (เหลืออีก ${Math.max(0, deadline - mins)} นาที) · ห้ามกดชื่อแทนเพื่อนเด็ดขาด`
+              : mins <= graceLimit
+              ? '⚠️ ช่วงอนุโลม 1 นาที (ถึง 08:36 น.) รีบกดชื่อตัวเองด่วน! ไม่ต้องใส่รหัส · ห้ามกดชื่อแทนเพื่อนเด็ดขาด'
+              : '🚨 เกิน 08:36 น. แล้ว — บทลงโทษตามที่โหวต: เด็กเล็กงดสั่งเซเว่นวันนี้ค่ะ'
+            : mins <= deadline
+            ? `${dayTitleTh}เช็คอินไม่เกิน 08:15 น. รับ +10 ⭐ (เหลืออีก ${Math.max(0, deadline - mins)} นาที) · กดชื่อตัวเองได้เลย ห้ามกดแทนเพื่อน · พี่เกดเดินปลุกและไขกุญแจ รีบทำเวลานะคะ`
+            : mins <= graceLimit
+            ? `⚠️ ช่วงอนุโลมไม่เกิน 10 นาที (08:16–08:25 น.) เหลือ ${graceLimit - mins} นาที! พี่เกดเดินปลุกและไขกุญแจ รีบกดชื่อตัวเองด่วน (ห้ามกดแทนเพื่อน)`
+            : `🚨 เกิน 08:25 น. แล้ว (${dayTitleTh}) — บทลงโทษตื่นสายวันหยุด: เด็กเล็กงดสั่งเซเว่นวันนี้ค่ะ`,
+          instructionEn: isSat
+            ? mins < 8 * 60 + 15
+              ? 'Saturday check-in opens 08:15–08:35 (1-min grace to 08:36). Tap your own name directly without a PIN — never tap for a friend!'
+              : mins <= deadline
+              ? `Tap your own name now (08:15–08:35) for +10 ⭐ (${Math.max(0, deadline - mins)} min left). Never tap for a friend.`
+              : mins <= graceLimit
+              ? '1-minute grace window (until 08:36) — tap your own name immediately!'
+              : 'Past 08:36! Voted late penalty: no 7-Eleven orders today.'
+            : mins <= deadline
+            ? `${dayTitleEn} check-in by 08:15 for +10 ⭐ (${Math.max(0, deadline - mins)} min left). Tap your own name — P\'Ked wakes kids and unlocks doors, so hurry!`
+            : mins <= graceLimit
+            ? `10-min grace window (08:16–08:25): ${graceLimit - mins} min left! Tap your own name quickly (never tap for a friend).`
+            : `Past 08:25 ${dayTitleEn} cutoff! Late wake-up penalty: no 7-Eleven orders today.`,
+          ctaTh: `☀️ เช็คอินกะเช้า${dayTitleTh}`,
+          ctaEn: `☀️ ${dayTitleEn} Check-In`,
+        });
+      }
+    } else {
+      if (!kid.daily.breakfastChecked && mins <= SCHOOL_MORNING_CEILING) {
+        const deadline = 6 * 60 + 40; // 06:40
+        const delta = mins - deadline;
+        pendingSteps.push({
+          id: 'g1_breakfast',
+          shift: 'shift_morning',
+          targetModal: 'shift_morning',
+          urgent: delta > 0,
+          approachingDeadline: delta >= -30 && delta <= 0,
+          deadlineMinutes: deadline,
+          minutesDelta: delta,
+          titleTh: 'กะเช้า (ขั้นที่ 1): ทานข้าวเช้า & ใส่ชุดนักเรียน',
+          titleEn: 'Morning (Step 1): Breakfast & Uniform',
+          instructionTh:
+            delta <= 0
+              ? `ต้องเช็คอินทานข้าวเช้าก่อน 06:40 น. เพื่อรับ +5 ⭐ (เหลือเวลาอีก ${Math.abs(delta)} นาที)`
+              : `เลยเวลา 06:40 น. มาแล้ว ${delta} นาที (เตือนสายวันไปโรงเรียนถึงเพดาน 08:00 น.) รีบเช็คอินทานข้าวเช้าและเตรียมขึ้นรถตู้เลยจ้า`,
+          instructionEn:
+            delta <= 0
+              ? `Check in breakfast before 06:40 for +5 ⭐ (${Math.abs(delta)} min left).`
+              : `Past 06:40 by ${delta} min (school-day morning cap 08:00). Check in breakfast now.`,
+          ctaTh: '🍚 ไปเช็คอินข้าวเช้า',
+          ctaEn: '🍚 Check In Breakfast',
+        });
+      }
+      if (!kid.daily.vanOrMorningChecked && mins <= SCHOOL_MORNING_CEILING) {
+        const deadline = 7 * 60 + 1; // 07:01
+        const delta = mins - deadline;
+        pendingSteps.push({
+          id: 'g1_van',
+          shift: 'shift_morning',
+          targetModal: 'shift_morning',
+          urgent: delta > 0,
+          approachingDeadline: delta >= -30 && delta <= 0,
+          deadlineMinutes: deadline,
+          minutesDelta: delta,
+          titleTh: 'กะเช้า (ขั้นที่ 2): ขึ้นรถตู้ไปโรงเรียน',
+          titleEn: 'Morning (Step 2): Board School Van',
+          instructionTh:
+            delta <= 0
+              ? `ขึ้นรถตู้ไปโรงเรียนไม่เกิน 07:01 น. รับ +10 ⭐ (เหลืออีก ${Math.abs(delta)} นาที)`
+              : `เลย 07:01 น. มาแล้ว ${delta} นาที (เพดานเตือนสายวันไปโรงเรียนถึง 08:00 น.) รีบเช็คอินขึ้นรถตู้ด่วนจ้า`,
+          instructionEn:
+            delta <= 0
+              ? `Board the school van by 07:01 for +10 ⭐ (${Math.abs(delta)} min left).`
+              : `Past 07:01 by ${delta} min (school-day late cap 08:00). Please check in for the van.`,
+          ctaTh: '🚐 ไปเช็คอินขึ้นรถตู้',
+          ctaEn: '🚐 Check In Van',
+        });
+      }
     }
   } else if (kid.group === 2) {
     if (!kid.daily.vanOrMorningChecked) {
       if (day === 6) {
-        const deadline = 8 * 60 + 30;
-        const hardLimit = 8 * 60 + 31;
+        const deadline = 8 * 60 + 35;
+        const graceLimit = 8 * 60 + 36;
         pendingSteps.push({
           id: 'g2_sat_morning',
           shift: 'shift_morning',
           targetModal: 'shift_morning',
-          urgent: mins > deadline,
-          approachingDeadline: mins >= 7 * 60 + 55 && mins <= hardLimit,
-          deadlineMinutes: hardLimit,
-          minutesDelta: mins - hardLimit,
-          titleTh: 'กะเช้าวันเสาร์: ตื่นมาเช็คอินก่อน 08:30 น.',
-          titleEn: 'Saturday Morning: Check-In Before 08:30',
+          urgent: mins > graceLimit,
+          approachingDeadline: mins >= 8 * 60 + 15 && mins <= graceLimit,
+          deadlineMinutes: graceLimit,
+          minutesDelta: mins - graceLimit,
+          titleTh: 'กะเช้าวันเสาร์: เปิดตื่น 08:15–08:35 น. (อนุโลมถึง 08:36 น.)',
+          titleEn: 'Saturday Morning: Opens 08:15–08:35 (Grace to 08:36)',
           instructionTh:
-            mins <= deadline
-              ? `เช้าวันเสาร์ (หลังคืนวันศุกร์ Free Day): ต้องตื่นมาเช็คอินก่อน 08:30 น. รับ +10 ⭐ (เหลือเวลาอีก ${Math.max(0, deadline - mins)} นาที)`
-              : mins === hardLimit
-              ? '⚠️ เลย 08:30 น. แล้ว — รีบเช็คอินทันที ก่อนถูกยึดมือถือถึง 18:30 น.!'
-              : `🚨 เลยกำหนด 08:30 น. แล้ว — กรุณาเช็คอินเพื่อรับทราบคำสั่งยึดมือถือถึง 18:30 น.`,
+            mins < 8 * 60 + 15
+              ? `วันเสาร์ระบบเปิดตื่น 08:15–08:35 น. (อนุโลมได้ไม่เกิน 1 นาที / ถึง 08:36 น.) กดชื่อตัวเองได้เลย ไม่ต้องใส่รหัส · ห้ามกดชื่อแทนเพื่อนเด็ดขาด · เกิน 08:36 น.: ${satOlderPenaltyTh}`
+              : mins <= deadline
+              ? `เปิดให้กดชื่อตัวเองแล้ว (08:15–08:35 น.) รับ +10 ⭐ (เหลืออีก ${Math.max(0, deadline - mins)} นาที) · ห้ามกดชื่อแทนเพื่อนเด็ดขาด · เกิน 08:36 น.: ${satOlderPenaltyTh}`
+              : mins <= graceLimit
+              ? `⚠️ ช่วงอนุโลม 1 นาที (ถึง 08:36 น.) รีบกดชื่อตัวเองทันที! (ห้ามกดแทนเพื่อน) · เกิน 08:36 น.: ${satOlderPenaltyTh}`
+              : `🚨 เกิน 08:36 น. แล้ว — บทลงโทษตามที่โหวต: ${satOlderPenaltyTh} (กดเช็คอินเพื่อบันทึกเวลา)`,
           instructionEn:
-            mins <= deadline
-              ? `Saturday check-in before 08:30 for +10 ⭐ (${Math.max(0, deadline - mins)} min left).`
-              : mins === hardLimit
-              ? 'Past 08:30! Check in right now to avoid phone hold until 18:30.'
-              : 'Past 08:30 deadline — check in now (phone held until 18:30).',
+            mins < 8 * 60 + 15
+              ? `Saturday opens 08:15–08:35 (1-min grace to 08:36). Tap your own name without PIN (never tap for a friend) · Past 08:36: ${satOlderPenaltyEn}.`
+              : mins <= deadline
+              ? `Tap your own name now (08:15–08:35) for +10 ⭐ (${Math.max(0, deadline - mins)} min left) · Past 08:36: ${satOlderPenaltyEn}.`
+              : mins <= graceLimit
+              ? `1-minute grace (until 08:36) — tap your own name immediately! Past 08:36: ${satOlderPenaltyEn}.`
+              : `Past 08:36 cutoff — voted penalty: ${satOlderPenaltyEn}.`,
           ctaTh: '📱 ไปเช็คอินกะเช้า',
           ctaEn: '📱 Morning Check-In',
         });
-      } else if (day === 0) {
+      } else if (day === 0 && !isHoliday) {
         const deadline = 8 * 60 + 15;
-        const hardLimit = 8 * 60 + 20;
+        const hardLimit = 8 * 60 + 25;
         pendingSteps.push({
           id: 'g2_sun_morning',
           shift: 'shift_morning',
           targetModal: 'shift_morning',
-          urgent: mins > deadline,
+          urgent: mins > hardLimit,
           approachingDeadline: mins >= 7 * 60 + 45 && mins <= hardLimit,
           deadlineMinutes: hardLimit,
           minutesDelta: mins - hardLimit,
-          titleTh: 'กะเช้าวันอาทิตย์: เช็คอินทำเวร + อาบน้ำ + เช็คเวรครัว',
-          titleEn: 'Sunday Morning: Chores + Shower + Kitchen Check',
+          titleTh: 'กะเช้าวันอาทิตย์: ไม่เกิน 08:15 น. (อนุโลมถึง 08:25 น.)',
+          titleEn: 'Sunday Morning: By 08:15 (Grace to 08:25)',
           instructionTh:
             mins <= deadline
-              ? `เช็คอินช่วง 08:00–08:15 น. รับ +15 ⭐ (เหลืออีก ${Math.max(0, deadline - mins)} นาที)`
+              ? `เช็คอินช่วง 08:00–08:15 น. รับ +15 ⭐ (เหลืออีก ${Math.max(0, deadline - mins)} นาที) · กดชื่อตัวเองได้เลย ห้ามกดแทนเพื่อน · พี่เกดเดินปลุกและไขกุญแจ รีบทำเวลานะคะ`
               : mins <= hardLimit
-              ? `⚠️ ช่วงเตือนสาย 08:16–08:20 น. (เหลือ ${hardLimit - mins} นาที ก่อนหัก -5 ⭐)`
-              : `🚨 เลย 08:20 น. แล้ว (ลด -5 ⭐ แทนยึดมือถือ) รีบกดเช็คอิน หรือแจ้งพี่เลี้ยงหากเกิดเหตุสุดวิสัย/ปลุกช้า`,
+              ? `⚠️ ช่วงอนุโลมไม่เกิน 10 นาที (08:16–08:25 น.) เหลือ ${hardLimit - mins} นาที! พี่เกดเดินปลุกและไขกุญแจ รีบกดชื่อตัวเองด่วน (เกิน 08:25 น. ลงโทษ: ${weekendOlderPenaltyTh} และลด -5 ⭐)`
+              : `🚨 เกิน 08:25 น. แล้ว — บทลงโทษตื่นสายวันอาทิตย์: ${weekendOlderPenaltyTh} และลด -5 ⭐ (แจ้งพี่เลี้ยงหากเกิดเหตุสุดวิสัย)`,
           instructionEn:
             mins <= deadline
-              ? `Check in 08:00–08:15 for +15 ⭐ (${Math.max(0, deadline - mins)} min left).`
+              ? `Check in 08:00–08:15 for +15 ⭐ (${Math.max(0, deadline - mins)} min left). Tap your own name — P'Ked wakes kids and unlocks doors, so hurry!`
               : mins <= hardLimit
-              ? `Grace period 08:16–08:20! ${hardLimit - mins} min left before -5 ⭐ deduction.`
-              : `Past 08:20 (-5 ⭐ deduction; notify staff if there was a wakeup accident).`,
+              ? `10-min grace (08:16–08:25): ${hardLimit - mins} min left! P'Ked unlocks doors — tap your own name fast before penalty (${weekendOlderPenaltyEn} & -5 ⭐).`
+              : `Past 08:25 — Sunday late penalty (${weekendOlderPenaltyEn} & -5 ⭐).`,
           ctaTh: '☀️ ไปเช็คอินเช้าวันอาทิตย์',
           ctaEn: '☀️ Sunday Check-In',
         });
@@ -263,19 +345,31 @@ export function evaluateKidStepReminders(
           ctaTh: '🚌 ไปเช็คชื่อไปโรงเรียน',
           ctaEn: '🚌 School Check-In',
         });
-      } else if (!isSchoolDay && mins <= 9 * 60) {
+      } else if (!isSchoolDay && mins <= 10 * 60 + 30) {
+        const deadline = 8 * 60 + 15;
+        const hardLimit = 8 * 60 + 25;
         pendingSteps.push({
           id: 'g2_holiday_morning',
           shift: 'shift_morning',
           targetModal: 'shift_morning',
-          urgent: false,
-          approachingDeadline: false,
-          deadlineMinutes: 8 * 60 + 30,
-          minutesDelta: mins - (8 * 60 + 30),
-          titleTh: 'กะเช้าวันหยุด: เช็คอินตื่นนอน & ทำภารกิจเช้า (+10 ⭐)',
-          titleEn: 'Holiday Morning: Morning Check-In (+10 ⭐)',
-          instructionTh: 'วันนี้วันหยุดราชการ ไม่มีหักสายไปโรงเรียน กดเช็คอินกะเช้าเพื่อรับ +10 ⭐ ค่ะ',
-          instructionEn: 'Public holiday today — no school late penalty! Tap Morning Check-In for +10 ⭐.',
+          urgent: mins > hardLimit,
+          approachingDeadline: mins >= 7 * 60 + 45 && mins <= hardLimit,
+          deadlineMinutes: hardLimit,
+          minutesDelta: mins - hardLimit,
+          titleTh: 'กะเช้าวันหยุดนักขัตฤกษ์: ไม่เกิน 08:15 น. (อนุโลมถึง 08:25 น.) (+10 ⭐)',
+          titleEn: 'Public Holiday Morning: By 08:15 (Grace to 08:25) (+10 ⭐)',
+          instructionTh:
+            mins <= deadline
+              ? `วันนักขัตฤกษ์: กดชื่อตัวเองได้เลยไม่เกิน 08:15 น. รับ +10 ⭐ (เหลืออีก ${Math.max(0, deadline - mins)} นาที) · ห้ามกดแทนเพื่อน · พี่เกดเดินปลุกและไขกุญแจ รีบทำเวลานะคะ`
+              : mins <= hardLimit
+              ? `⚠️ ช่วงอนุโลมไม่เกิน 10 นาที (08:16–08:25 น.) เหลือ ${hardLimit - mins} นาที! พี่เกดเดินปลุกและไขกุญแจ รีบกดชื่อตัวเองด่วน (เกิน 08:25 น.: ${weekendOlderPenaltyTh})`
+              : `🚨 เกิน 08:25 น. แล้ว — บทลงโทษตื่นสายวันหยุด: ${weekendOlderPenaltyTh}`,
+          instructionEn:
+            mins <= deadline
+              ? `Public Holiday: tap your own name by 08:15 for +10 ⭐ (${Math.max(0, deadline - mins)} min left). P'Ked wakes kids and unlocks doors — never tap for a friend!`
+              : mins <= hardLimit
+              ? `10-min grace (08:16–08:25): ${hardLimit - mins} min left! Tap your own name fast before penalty (${weekendOlderPenaltyEn}).`
+              : `Past 08:25 holiday cutoff — late wake-up penalty: ${weekendOlderPenaltyEn}.`,
           ctaTh: '📱 ไปเช็คอินกะเช้า',
           ctaEn: '📱 Morning Check-In',
         });
@@ -284,22 +378,67 @@ export function evaluateKidStepReminders(
   } else {
     // Group 3
     if (!kid.daily.vanOrMorningChecked && (!isSchoolDay || mins <= SCHOOL_MORNING_CEILING)) {
-      const deadline = 8 * 60;
-      const delta = mins - deadline;
+      const isSat = day === 6;
+      const isHolidayMorning = !isSchoolDay && !isSat;
+      const deadline = isSat ? 8 * 60 + 35 : isHolidayMorning ? 8 * 60 + 15 : 8 * 60;
+      const graceLimit = isSat ? 8 * 60 + 36 : isHolidayMorning ? 8 * 60 + 25 : 8 * 60;
+      const delta = mins - graceLimit;
+      const holidayLabelTh = day === 0 && !isHoliday ? 'วันอาทิตย์' : 'วันนักขัตฤกษ์';
+      const holidayLabelEn = day === 0 && !isHoliday ? 'Sunday' : 'Public Holiday';
       pendingSteps.push({
         id: 'g3_morning',
         shift: 'shift_morning',
         targetModal: 'shift_morning',
-        urgent: false,
-        approachingDeadline: mins >= 6 * 60 + 30 && mins <= deadline,
-        deadlineMinutes: deadline,
+        urgent: !isSchoolDay && mins > graceLimit,
+        approachingDeadline: isSat
+          ? mins >= 8 * 60 + 15 && mins <= graceLimit
+          : isHolidayMorning
+          ? mins >= 7 * 60 + 45 && mins <= graceLimit
+          : mins >= 6 * 60 + 30 && mins <= deadline,
+        deadlineMinutes: graceLimit,
         minutesDelta: delta,
-        titleTh: 'กะเช้า: เช็คอินไปโรงเรียน / ฝึกงาน',
-        titleEn: 'Morning: College / Internship Check-In',
-        instructionTh: 'อย่าลืมกดเช็คอินกะเช้าไปเรียนหรือฝึกงาน เพื่อรับ +10 ⭐ (ไม่มีหักสายตอนเช้า) นะคะ',
-        instructionEn: 'Tap Morning Check-In when leaving for college or internship (+10 ⭐).',
-        ctaTh: '🎓 ไปเช็คอินกะเช้า',
-        ctaEn: '🎓 Morning Check-In',
+        titleTh: isSat
+          ? 'กะเช้าวันเสาร์: เปิดตื่น 08:15–08:35 น. (อนุโลมถึง 08:36 น.)'
+          : isHolidayMorning
+          ? `กะเช้า${holidayLabelTh}: ไม่เกิน 08:15 น. (อนุโลมถึง 08:25 น.)`
+          : 'กะเช้า: เช็คอินไปโรงเรียน / ฝึกงาน',
+        titleEn: isSat
+          ? 'Saturday Morning: Opens 08:15–08:35 (Grace to 08:36)'
+          : isHolidayMorning
+          ? `${holidayLabelEn} Morning: By 08:15 (Grace to 08:25)`
+          : 'Morning: College / Internship Check-In',
+        instructionTh: isSat
+          ? mins < 8 * 60 + 15
+            ? `วันเสาร์ระบบเปิดตื่น 08:15–08:35 น. (อนุโลมได้ไม่เกิน 1 นาที / ถึง 08:36 น.) กดชื่อตัวเองได้เลย · ห้ามกดแทนเพื่อน · เกิน 08:36 น.: ${satOlderPenaltyTh}`
+            : mins <= deadline
+            ? `เปิดให้กดชื่อตัวเองแล้ว (08:15–08:35 น.) รับ +10 ⭐ (เหลืออีก ${Math.max(0, deadline - mins)} นาที) · ห้ามกดแทนเพื่อน`
+            : mins <= graceLimit
+            ? `⚠️ ช่วงอนุโลม 1 นาที (ถึง 08:36 น.) รีบกดชื่อตัวเองด่วน! · เกิน 08:36 น.: ${satOlderPenaltyTh}`
+            : `🚨 เกิน 08:36 น. แล้ว — บทลงโทษตามที่โหวต: ${satOlderPenaltyTh}`
+          : isHolidayMorning
+          ? mins <= deadline
+            ? `${holidayLabelTh}เช็คอินไม่เกิน 08:15 น. รับ +10 ⭐ (เหลืออีก ${Math.max(0, deadline - mins)} นาที) · กดชื่อตัวเองได้เลย ห้ามกดแทนเพื่อน · พี่เกดเดินปลุกและไขกุญแจ`
+            : mins <= graceLimit
+            ? `⚠️ ช่วงอนุโลมไม่เกิน 10 นาที (08:16–08:25 น.) เหลือ ${graceLimit - mins} นาที! รีบกดชื่อตัวเองด่วน (เกิน 08:25 น.: ${weekendOlderPenaltyTh})`
+            : `🚨 เกิน 08:25 น. แล้ว — บทลงโทษตื่นสายวันหยุด: ${weekendOlderPenaltyTh}`
+          : 'อย่าลืมกดเช็คอินกะเช้าไปเรียนหรือฝึกงาน เพื่อรับ +10 ⭐ (ไม่มีหักสายตอนเช้า) นะคะ',
+        instructionEn: isSat
+          ? mins < 8 * 60 + 15
+            ? `Saturday check-in opens 08:15–08:35 (1-min grace to 08:36). Tap your own name directly (never tap for a friend).`
+            : mins <= deadline
+            ? `Tap your own name now (08:15–08:35) for +10 ⭐ (${Math.max(0, deadline - mins)} min left).`
+            : mins <= graceLimit
+            ? `1-minute grace (until 08:36) — tap your own name immediately!`
+            : `Past 08:36 cutoff — voted penalty: ${satOlderPenaltyEn}.`
+          : isHolidayMorning
+          ? mins <= deadline
+            ? `${holidayLabelEn}: tap your own name by 08:15 for +10 ⭐ (${Math.max(0, deadline - mins)} min left). P'Ked wakes kids and unlocks doors!`
+            : mins <= graceLimit
+            ? `10-min grace (08:16–08:25): ${graceLimit - mins} min left! Tap your own name quickly.`
+            : `Past 08:25 cutoff — late wake-up penalty: ${weekendOlderPenaltyEn}.`
+          : 'Tap Morning Check-In when leaving for college or internship (+10 ⭐).',
+        ctaTh: isSat ? '☀️ เช็คอินเช้าวันเสาร์' : isHolidayMorning ? `☀️ เช็คอินเช้า${holidayLabelTh}` : '🎓 ไปเช็คอินกะเช้า',
+        ctaEn: isSat ? '☀️ Saturday Check-In' : isHolidayMorning ? `☀️ ${holidayLabelEn} Check-In` : '🎓 Morning Check-In',
       });
     }
   }
@@ -475,9 +614,9 @@ export function evaluateKidStepReminders(
         titleTh: 'คืนวันศุกร์ Free Day: มารับโทรศัพท์มือถือ (18:15–22:45 น.)',
         titleEn: 'Friday Free Day: Pick Up Phone (18:15–22:45)',
         instructionTh:
-          '🎈 คืนวันศุกร์ไม่ต้องเก็บมือถือค่ะ! มารับมือถือได้เวลา 18:15–22:45 น. และตื่นมาเช็คอินเช้าวันเสาร์ก่อน 08:30 น.\nทุกคนที่มีโทรศัพท์จะต้องตั้งปลุกก่อนเวลาเผื่อเดินมาเช็คอินด้วยนะเด็กๆ',
+          '🎈 คืนวันศุกร์ไม่ต้องเก็บมือถือค่ะ! มารับมือถือได้เวลา 18:15–22:45 น. · วันเสาร์เปิดตื่น 08:15–08:35 น. (อนุโลมได้ไม่เกิน 1 นาที / ถึง 08:36 น.) กดชื่อตัวเองได้เลย ไม่ต้องใส่รหัส · ห้ามกดชื่อแทนเพื่อนเด็ดขาด\nทุกคนที่มีโทรศัพท์จะต้องตั้งปลุกก่อนเวลาเผื่อเดินมาเช็คอินด้วยนะเด็กๆ',
         instructionEn:
-          '🎈 Friday Free Day: No phone collection tonight! Pick up phone 18:15–22:45 and check in Saturday morning before 08:30.\nEveryone with a phone must set an alarm ahead of time to walk over and check in!',
+          '🎈 Friday Free Day: No phone collection tonight! Pick up phone 18:15–22:45 · Saturday check-in opens 08:15–08:35 (1-min grace to 08:36), tap your own name directly without PIN (never tap for a friend).\nEveryone with a phone must set an alarm ahead of time to walk over and check in!',
         ctaTh: '📱 ไปรับโทรศัพท์มือถือ',
         ctaEn: '📱 Pick Up Phone',
       });
@@ -663,6 +802,34 @@ export function evaluateKidStepReminders(
     });
   }
 
+  if (kid.penalty.noEveningPhone1830To2245Date === todayKey) {
+    penaltyInstructions.push({
+      id: 'pen_no_phone_1830_2245',
+      severity: 'penalty',
+      titleTh: '📵 ตื่นสายวันหยุด: งดใช้โทรศัพท์ตั้งแต่เวลา 18:30–22:45 น.',
+      titleEn: '📵 Holiday Late Penalty: No Phone 18:30–22:45 Today',
+      ruleInstructionTh:
+        'ทำเวรบ้าน ซัก-ตาก-รีดชุด อาบน้ำและเช็คเวรครัวตามปกติ แต่วันนี้งดใช้โทรศัพท์รอบค่ำ 18:30–22:45 น. 1 วันค่ะ',
+      ruleInstructionEn:
+        'Complete all daily chores as usual, but phone access is suspended from 18:30–22:45 today.',
+      targetModal: 'penalty_status',
+    });
+  }
+
+  if (kid.penalty.noSevenElevenDate === todayKey) {
+    penaltyInstructions.push({
+      id: 'pen_no_seven_eleven',
+      severity: 'penalty',
+      titleTh: '🚫🏪 ตื่นสายวันหยุด: เด็กเล็กงดสั่งเซเว่นวันนี้',
+      titleEn: '🚫🏪 Holiday Late Penalty: No 7-Eleven Today',
+      ruleInstructionTh:
+        'เนื่องจากตื่นสายในวันหยุด เสาร์/อาทิตย์/วันหยุดนักขัตฤกษ์ วันนี้เด็กเล็กงดสั่งเซเว่น 1 วันค่ะ',
+      ruleInstructionEn:
+        'Due to waking up late on the weekend/holiday, 7-Eleven ordering is suspended for today.',
+      targetModal: 'penalty_status',
+    });
+  }
+
   if (kid.penalty.phoneConfiscatedUntil1830Date === todayKey && mins < 18 * 60 + 30) {
     penaltyInstructions.push({
       id: 'pen_confiscated_1830',
@@ -716,8 +883,8 @@ export function evaluateKidStepReminders(
     penaltyInstructions.push({
       id: 'pen_sun_stars',
       severity: 'warning',
-      titleTh: '⏰ วันอาทิตย์เช็คอินเกิน 08:20 น. (ลด -5 ⭐ แทนยึดมือถือ)',
-      titleEn: '⏰ Sunday Check-In Past 08:20 (-5 ⭐)',
+      titleTh: '⏰ วันอาทิตย์เช็คอินเกิน 08:25 น. (ลด -5 ⭐ แทนยึดมือถือ)',
+      titleEn: '⏰ Sunday Check-In Past 08:25 (-5 ⭐)',
       ruleInstructionTh:
         'หากเกิดเหตุสุดวิสัยหรือพี่เลี้ยงไปปลุกช้า แจ้งพี่เลี้ยงให้กดปุ่ม "คืนดาวเหตุสุดวิสัย (+5 ⭐)" ได้เลยค่ะ',
       ruleInstructionEn:

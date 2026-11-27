@@ -345,21 +345,24 @@ export function getDynamicTimeEventAnnouncement(
       windowEn = 'Holiday Morning (08:00–10:00)';
       timeTitleTh =
         day === 6
-          ? '☀️ เช้าวันเสาร์ (หลังคืนวันศุกร์ Free Day): เช็คอินก่อน 08:30 น.'
+          ? '☀️ เช้าวันเสาร์ (หลังคืนวันศุกร์ Free Day): เปิดตื่น 08:15–08:35 น. (อนุโลมถึง 08:36 น.)'
           : day === 0
-          ? '☀️ เช้าวันอาทิตย์: เช็คอินทำเวร อาบน้ำ & เวรครัว 08:00–08:15 น.'
-          : '🏖️ เช้าวันหยุดนักขัตฤกษ์: พักผ่อนและแต่งชุดเทศกาล/ชุดเที่ยวได้ทั้งวัน!';
+          ? '☀️ เช้าวันอาทิตย์: เช็คอินไม่เกิน 08:15 น. (อนุโลมไม่เกิน 10 นาที / ถึง 08:25 น.)'
+          : '🏖️ เช้าวันนักขัตฤกษ์: เช็คอินไม่เกิน 08:15 น. (อนุโลมไม่เกิน 10 นาที / ถึง 08:25 น.)';
       timeTitleEn =
         day === 6
-          ? '☀️ Saturday Morning (After Free Day): Check in before 08:30'
+          ? '☀️ Saturday Morning (After Free Day): Opens 08:15–08:35 (Grace to 08:36)'
           : day === 0
-          ? '☀️ Sunday Morning: Chores & Shower Check-In 08:00–08:15'
-          : '🏖️ Public Holiday Morning: Casual & Festival outfits unlocked all day!';
+          ? '☀️ Sunday Morning: Check-In by 08:15 (10-min grace to 08:25)'
+          : '🏖️ Public Holiday Morning: Check-In by 08:15 (10-min grace to 08:25)';
       timeBodyTh =
         day === 6
-          ? `ตื่นมาเช็คอินก่อน 08:30 น. (+10 ⭐) (เกินเวลา ยึดมือถือถึง 18:30 น.) · เวรบ้าน: ${dailyChoreTitleTh} · เวรครัวเช้า 09:30 น.`
-          : `เวรประจำบ้านวันนี้: ${dailyChoreTitleTh} · เวรห้องครัวเช้า (${day === 0 ? 'อาทิตย์ 09:15 น.' : 'เสาร์/นักขัตฤกษ์ 09:30 น.'})`;
-      timeBodyEn = `Today's house chore: ${dailyChoreTitleEn} · Morning kitchen duty (${day === 0 ? 'Sun 09:15' : 'Sat/Holiday 09:30'}).`;
+          ? `กดเลือกชื่อตัวเองได้เลย ไม่ต้องใส่รหัส (ห้ามกดชื่อแทนเพื่อนเด็ดขาด) · เกิน 08:36 น. บทลงโทษขึ้นอัตโนมัติตามที่โหวต · เวรบ้าน: ${dailyChoreTitleTh} · เวรครัวเช้า 09:30 น.`
+          : `กดชื่อตัวเองได้เลย ไม่ต้องใส่รหัส (ห้ามกดแทนเพื่อน) · พี่เกดต้องเดินปลุกและไขกุญแจ เด็กๆ ต้องรีบทำเวลานะคะ · เวรบ้าน: ${dailyChoreTitleTh} · เวรครัวเช้า (${day === 0 ? 'อาทิตย์ 09:15 น.' : 'นักขัตฤกษ์ 09:30 น.'})`;
+      timeBodyEn =
+        day === 6
+          ? `Tap your own name directly without PIN (never tap for a friend) · Past 08:36 triggers your voted penalty · House chore: ${dailyChoreTitleEn} · Kitchen duty 09:30.`
+          : `Tap your own name directly without PIN (never tap for a friend) · P'Ked wakes kids and unlocks doors, so hurry! House chore: ${dailyChoreTitleEn} · Kitchen duty (${day === 0 ? 'Sun 09:15' : 'Holiday 09:30'}).`;
     } else if (mins < 15 * 60 + 30) {
       windowTh = 'ช่วงกลางวันหยุด (10:00–15:30 น.)';
       windowEn = 'Holiday Afternoon (10:00–15:30)';
@@ -430,9 +433,9 @@ export function getDynamicTimeEventAnnouncement(
       timeTitleTh = '🎈 วันศุกร์ Free Day! วันนี้สามารถสั่งเซเว่นได้นะคะ 🏪';
       timeTitleEn = '🎈 Happy Friday Free Day! 7-Eleven orders available today! 🏪';
       timeBodyTh =
-        'กลับบ้านและเก็บโทรศัพท์มือถือ 15:00–18:00 น. · มารับโทรศัพท์มือถือ 18:15–22:45 น. · คืนวันศุกร์ไม่ต้องเก็บมือถือ แต่ตื่นมาเช็คอินเช้าวันเสาร์ก่อน 08:30 น.\nทุกคนที่มีโทรศัพท์จะต้องตั้งปลุกก่อนเวลาเผื่อเดินมาเช็คอินด้วยนะเด็กๆ';
+        'กลับบ้านและเก็บโทรศัพท์มือถือ 15:00–18:00 น. · มารับโทรศัพท์มือถือ 18:15–22:45 น. · คืนวันศุกร์ไม่ต้องเก็บมือถือ · วันเสาร์เปิดตื่น 08:15–08:35 น. (อนุโลมได้ไม่เกิน 1 นาที / ถึง 08:36 น.) กดชื่อตัวเองได้เลย ไม่ต้องใส่รหัส (ห้ามกดแทนเพื่อน)\nทุกคนที่มีโทรศัพท์จะต้องตั้งปลุกก่อนเวลาเผื่อเดินมาเช็คอินด้วยนะเด็กๆ';
       timeBodyEn =
-        'Return home & store phone 15:00–18:00 · Pick up phone 18:15–22:45 · Keep phone tonight, check in Saturday before 08:30.\nEveryone with a phone must set an alarm ahead of time to walk over and check in!';
+        'Return home & store phone 15:00–18:00 · Pick up phone 18:15–22:45 · Keep phone tonight · Saturday check-in opens 08:15–08:35 (1-min grace to 08:36), tap your own name directly without PIN (never tap for a friend).\nEveryone with a phone must set an alarm ahead of time to walk over and check in!';
       badgeTh = '🎈 วันศุกร์ Free Day';
       badgeEn = '🎈 Friday Free Day';
     } else if (mins < 18 * 60 + 30) {

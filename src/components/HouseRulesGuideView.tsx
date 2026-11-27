@@ -4,9 +4,11 @@ import {
   formatThaiCurfewClock,
   getAutoReturnPhoneRuleConfig,
   getEffectiveHomeworkPermissionWindow,
+  getEffectiveWeekendLatePenaltyPreset,
   minsToHHMM,
 } from '../utils/expressKiosk';
 import { formatDigitalClock } from '../utils/timeRules';
+import { HolidayCheckInNoticeCard } from './HolidayCheckInNoticeCard';
 
 export type RulesShiftTab = 'morning' | 'evening' | 'night' | 'all';
 export type RulesGroupFilter = 'all' | 'older' | 'younger' | 'senior';
@@ -43,6 +45,7 @@ export const HouseRulesGuideView: React.FC<HouseRulesGuideViewProps> = ({
 
   const hwPermWin = useMemo(() => getEffectiveHomeworkPermissionWindow(settings), [settings]);
   const autoReturnRule = useMemo(() => getAutoReturnPhoneRuleConfig(settings), [settings]);
+  const weekendPreset = useMemo(() => getEffectiveWeekendLatePenaltyPreset(settings), [settings]);
 
   const noHwDeadlineTh = formatThaiCurfewClock(autoReturnRule.noHomeworkDeadlineMins);
   const noHwDeadlineEn = minsToHHMM(autoReturnRule.noHomeworkDeadlineMins);
@@ -452,6 +455,98 @@ export const HouseRulesGuideView: React.FC<HouseRulesGuideViewProps> = ({
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* 🏖️ บทลงโทษตื่นสายวันหยุด (เสาร์ · อาทิตย์ · วันหยุดนักขัตฤกษ์) */}
+            <div className="rounded-2xl border-2 border-[#FB7185] bg-[#FFF1F2] overflow-hidden shadow-2xs">
+              <div className="bg-[#FFE4E6] border-b border-[#FDA4AF] px-4 py-2.5 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-lg bg-[#BE123C] px-2.5 py-0.5 text-xs font-extrabold text-white">
+                    🏖️ {lang === 'th' ? 'วันเสาร์ · วันอาทิตย์ · วันหยุด' : 'Sat · Sun · Public Holidays'}
+                  </span>
+                  <span className="font-extrabold text-sm sm:text-base text-[#881337]">
+                    {lang === 'th'
+                      ? 'บทลงโทษสำหรับคนที่ตื่นสายในวันหยุด'
+                      : 'Late Wake-Up Penalties on Weekends & Holidays'}
+                  </span>
+                </div>
+                <span className="rounded-lg bg-white border border-[#FDA4AF] px-2.5 py-0.5 text-[11px] font-extrabold text-[#9F1239] tabular-nums">
+                  {lang === 'th'
+                    ? 'เสาร์ 08:15–08:35 น. (อนุโลมถึง 08:36 น.) · อาทิตย์ & นักขัตฤกษ์ ≤ 08:15 น. (อนุโลมถึง 08:25 น.)'
+                    : 'Sat 08:15–08:35 (grace to 08:36) · Sun & Hol ≤ 08:15 (grace to 08:25)'}
+                </span>
+              </div>
+
+              <div className="px-4 pt-3">
+                <HolidayCheckInNoticeCard lang={lang} variant="rules" defaultExpanded />
+              </div>
+
+              <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs sm:text-sm">
+                <div
+                  className={`rounded-xl border p-3.5 space-y-1.5 bg-white ${
+                    weekendPreset === 'weekend_late_no_phone_no_711'
+                      ? 'border-[#F43F5E] ring-2 ring-[#FFE4E6]'
+                      : 'border-[#FBCFE8]'
+                  }`}
+                >
+                  <div className="font-extrabold text-[#9F1239] flex items-center justify-between gap-2">
+                    <span>
+                      📵 {lang === 'th' ? 'แบบที่ 1 (กำลังใช้งานเป็นหลัก):' : 'Option 1 (Active Default):'}
+                    </span>
+                    {weekendPreset === 'weekend_late_no_phone_no_711' && (
+                      <span className="rounded-md bg-[#BE123C] px-2 py-0.5 text-[10px] font-extrabold text-white">
+                        {lang === 'th' ? 'ใช้งานอยู่' : 'ACTIVE'}
+                      </span>
+                    )}
+                  </div>
+                  <p className="font-bold text-[#3D322C]">
+                    {lang === 'th'
+                      ? '• เด็กโต/พี่ใหญ่: งดใช้โทรศัพท์ตั้งแต่เวลา 18:30–22:45 น. วันนี้'
+                      : '• Older/Senior: No phone use from 18:30–22:45 today'}
+                  </p>
+                  <p className="font-bold text-[#92400E]">
+                    {lang === 'th'
+                      ? '• เด็กเล็ก: งดสั่งเซเว่นวันนี้ 1 วัน'
+                      : '• Younger Kids: No 7-Eleven orders today'}
+                  </p>
+                </div>
+
+                <div
+                  className={`rounded-xl border p-3.5 space-y-1.5 bg-white ${
+                    weekendPreset === 'weekend_late_no_freeday_no_711'
+                      ? 'border-[#F43F5E] ring-2 ring-[#FFE4E6]'
+                      : 'border-[#FBCFE8]'
+                  }`}
+                >
+                  <div className="font-extrabold text-[#9F1239] flex items-center justify-between gap-2">
+                    <span>
+                      🗓️ {lang === 'th' ? 'แบบที่ 2 (เลือกสลับได้ในหน้าพี่เลี้ยง):' : 'Option 2 (Selectable by Staff):'}
+                    </span>
+                    {weekendPreset === 'weekend_late_no_freeday_no_711' && (
+                      <span className="rounded-md bg-[#BE123C] px-2 py-0.5 text-[10px] font-extrabold text-white">
+                        {lang === 'th' ? 'ใช้งานอยู่' : 'ACTIVE'}
+                      </span>
+                    )}
+                  </div>
+                  <p className="font-bold text-[#3D322C]">
+                    {lang === 'th'
+                      ? '• เด็กโต/พี่ใหญ่: งดฟรีเดย์ 1 วัน'
+                      : '• Older/Senior: Deduct 1 Friday Free Day'}
+                  </p>
+                  <p className="font-bold text-[#92400E]">
+                    {lang === 'th'
+                      ? '• เด็กเล็ก: งดสั่งเซเว่นวันนี้ 1 วัน'
+                      : '• Younger Kids: No 7-Eleven orders today'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="px-4 pb-3.5 text-xs font-semibold text-[#881337]">
+                ⏰{' '}
+                {lang === 'th'
+                  ? 'ทุกคนที่มีโทรศัพท์จะต้องตั้งปลุกก่อนเวลาเผื่อเดินมาเช็คอินด้วยนะเด็กๆ (แจ้งป่วย/ลาพัก ระบบยกเว้นโทษให้อัตโนมัติค่ะ)'
+                  : 'Everyone with a phone must set an alarm ahead of time to walk over and check in! (Waived if sick or on leave.)'}
+              </div>
             </div>
           </div>
         </section>

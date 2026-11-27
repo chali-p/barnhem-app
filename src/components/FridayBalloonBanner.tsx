@@ -108,15 +108,25 @@ export const FridayBalloonBanner: React.FC<FridayBalloonBannerProps> = ({
       ? '🏪 วันนี้สามารถสั่งเซเว่นได้นะคะ'
       : '🏪 You can order from 7-Eleven today!';
 
-  const scheduleSummary =
+  const scheduleLine1 =
     lang === 'th'
-      ? 'กลับบ้าน & เก็บมือถือ 15:00–18:00 น. · มารับมือถือ 18:15–22:45 น. · คืนวันศุกร์ไม่ต้องเก็บมือถือ · เช้าวันเสาร์เช็คอินก่อน 08:30 น.'
-      : 'Return home & store phone 15:00–18:00 · Pick up phone 18:15–22:45 · Keep phone tonight · Saturday check-in before 08:30.';
+      ? 'กลับบ้าน & เก็บมือถือ 15:00–18:00 น. · มารับมือถือ 18:15–22:45 น. · คืนวันศุกร์ไม่ต้องเก็บมือถือ'
+      : 'Return home & store phone 15:00–18:00 · Pick up phone 18:15–22:45 · Keep phone tonight';
+
+  const scheduleLine2 =
+    lang === 'th'
+      ? 'วันเสาร์เปิดตื่น 08:15–08:35 น. (อนุโลมได้ไม่เกิน 1 นาที / ถึง 08:36 น.)'
+      : 'Saturday check-in opens 08:15–08:35 (1-min grace to 08:36)';
 
   const alarmNotice =
     lang === 'th'
       ? '⏰ ทุกคนที่มีโทรศัพท์จะต้องตั้งปลุกก่อนเวลาเผื่อเดินมาเช็คอินด้วยนะเด็กๆ'
       : '⏰ Everyone with a phone must set an alarm early enough to walk over and check in, kids!';
+
+  const holidayPenaltyNotice =
+    lang === 'th'
+      ? '⚠️ วันเสาร์กดเลือกชื่อตัวเองได้เลย ไม่ต้องใส่รหัส · เกิน 08:36 น. บทลงโทษตามที่ตัวเองโหวตขึ้นโชว์ที่หน้าจออัตโนมัติ'
+      : '⚠️ Saturday: tap your own name directly without a PIN · Past 08:36 automatically shows your voted penalty.';
 
   return (
     <section
@@ -160,9 +170,10 @@ export const FridayBalloonBanner: React.FC<FridayBalloonBannerProps> = ({
           <p
             className={`${
               isCompact ? 'text-[10px]' : 'text-[11px] sm:text-xs'
-            } font-semibold text-[#634E44] leading-relaxed tabular-nums`}
+            } font-semibold text-[#634E44] leading-relaxed tabular-nums space-y-0.5`}
           >
-            {scheduleSummary}
+            <span className="block">{scheduleLine1}</span>
+            <span className="block">{scheduleLine2}</span>
           </p>
 
           <p
@@ -171,6 +182,14 @@ export const FridayBalloonBanner: React.FC<FridayBalloonBannerProps> = ({
             } font-extrabold text-[#8A3B12] leading-snug`}
           >
             {alarmNotice}
+          </p>
+
+          <p
+            className={`${
+              isCompact ? 'text-[10px]' : 'text-[11px] sm:text-xs'
+            } font-bold text-[#9F1239] leading-snug`}
+          >
+            {holidayPenaltyNotice}
           </p>
         </div>
 

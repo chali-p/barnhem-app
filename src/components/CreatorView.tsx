@@ -1286,6 +1286,8 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
           kid.penalty.lateFineThb > 0 ||
           Boolean(kid.penalty.phoneConfiscatedUntil1830Date) ||
           Boolean(kid.penalty.noEveningPhoneTomorrowDate) ||
+          Boolean(kid.penalty.noEveningPhone1830To2245Date) ||
+          Boolean(kid.penalty.noSevenElevenDate) ||
           kid.penalty.fridayFreeDayDeductedCount > 0 ||
           !kid.penalty.cartoonPrivilegeActive ||
           !kid.penalty.phonePrivilegeActive;
@@ -1314,6 +1316,20 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
                 : lang === 'th'
                 ? `ยึดมือถือ (${kid.penalty.phoneConfiscatedUntil1830Date})`
                 : `Phone held (${kid.penalty.phoneConfiscatedUntil1830Date})`
+            );
+          }
+          if (kid.penalty.noEveningPhone1830To2245Date) {
+            items.push(
+              lang === 'th'
+                ? `งดมือถือ 18:30–22:45 (${kid.penalty.noEveningPhone1830To2245Date})`
+                : `No phone 18:30–22:45 (${kid.penalty.noEveningPhone1830To2245Date})`
+            );
+          }
+          if (kid.penalty.noSevenElevenDate) {
+            items.push(
+              lang === 'th'
+                ? `งดสั่งเซเว่น (${kid.penalty.noSevenElevenDate})`
+                : `No 7-Eleven (${kid.penalty.noSevenElevenDate})`
             );
           }
           if (kid.penalty.noEveningPhoneTomorrowDate) {
@@ -1349,6 +1365,8 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
                 phoneConfiscatedUntil1830Date: null,
                 fridayFreeDayDeductedCount: 0,
                 noEveningPhoneTomorrowDate: null,
+                noEveningPhone1830To2245Date: null,
+                noSevenElevenDate: null,
                 cartoonPrivilegeActive: true,
                 phonePrivilegeActive: true,
               },
@@ -1393,6 +1411,8 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
                         phoneConfiscatedUntil1830Date: null,
                         fridayFreeDayDeductedCount: 0,
                         noEveningPhoneTomorrowDate: null,
+                        noEveningPhone1830To2245Date: null,
+                        noSevenElevenDate: null,
                         cartoonPrivilegeActive: true,
                         phonePrivilegeActive: true,
                       },

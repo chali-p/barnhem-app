@@ -13,6 +13,11 @@ import {
   SickReport,
   SupplyRequest,
 } from '../types/barnhem';
+import {
+  isOtherSuggestionPollOptionLabel,
+  isSaturdayLatePenaltyPollQuestion,
+  sanitizeSaturdayLatePenaltyPoll,
+} from '../utils/expressKiosk';
 import { getDateKey } from '../utils/timeRules';
 
 interface CareCommunityPanelProps {
@@ -100,7 +105,8 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
 
   // Secret Poll form state
   const [pollQuestion, setPollQuestion] = useState('');
-  const [pollOptionsInput, setPollOptionsInput] = useState<string[]>(['', '', '']);
+  const [pollOptionsInput, setPollOptionsInput] = useState<string[]>(['', '']);
+  const isSaturdayPenaltyPollDraft = isSaturdayLatePenaltyPollQuestion(pollQuestion);
 
   // Trip form state
   const [tripTitle, setTripTitle] = useState('');
@@ -139,17 +145,31 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
 
   const handlePublishPoll = (e: React.FormEvent) => {
     e.preventDefault();
-    const cleaned = pollOptionsInput.map((o) => o.trim()).filter(Boolean);
+    const isSatPenalty = isSaturdayLatePenaltyPollQuestion(pollQuestion);
+    const activeInputs = isSatPenalty ? pollOptionsInput.slice(0, 2) : pollOptionsInput;
+    const cleaned = activeInputs
+      .map((o) => o.trim())
+      .filter((o) => Boolean(o) && (!isSatPenalty || !isOtherSuggestionPollOptionLabel(o)));
     if (!pollQuestion.trim() || cleaned.length < 2) {
       onShowAlert({
         icon: '🗳️',
-        title: lang === 'th' ? 'กรุณาใส่คำถามและตัวเลือกอย่างน้อย 2 ข้อ' : 'Need Question & 2+ Options',
-        message: lang === 'th' ? 'ระบุหัวข้อโหวตและตัวเลือกให้น้องกดอย่างน้อย 2 ข้อ' : 'Provide question and at least 2 options.',
+        title:
+          lang === 'th'
+            ? isSatPenalty
+              ? 'กรุณาใส่คำถามและตัวเลือกบทลงโทษ 2 ข้อ'
+              : 'กรุณาใส่คำถามและตัวเลือกอย่างน้อย 2 ข้อ'
+            : 'Need Question & 2+ Options',
+        message:
+          lang === 'th'
+            ? isSatPenalty
+              ? 'โหวตบทลงโทษตื่นสายมี 2 ตัวเลือกเท่านั้น (ไม่มีตัวเลือก "อื่นๆ" ให้น้องเสนอค่ะ)'
+              : 'ระบุหัวข้อโหวตและตัวเลือกให้น้องกดอย่างน้อย 2 ข้อ'
+            : 'Provide question and at least 2 options.',
         tone: 'yellow',
       });
       return;
     }
-    onCreatePoll({
+    const createdPoll = sanitizeSaturdayLatePenaltyPoll({
       id: `poll_${Date.now()}`,
       question: pollQuestion.trim(),
       options: cleaned.map((label, idx) => ({
@@ -161,9 +181,10 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
       closed: false,
       authorName,
       createdAt: new Date().toISOString(),
-    });
+    }).poll;
+    onCreatePoll(createdPoll);
     setPollQuestion('');
-    setPollOptionsInput(['', '', '']);
+    setPollOptionsInput(['', '']);
     onShowAlert({
       icon: '🗳️🔒',
       title: lang === 'th' ? 'เปิดหัวข้อโหวตลับแล้ว!' : 'Secret Poll Created!',
@@ -294,26 +315,47 @@ export const CareCommunityPanel: React.FC<CareCommunityPanelProps> = ({
               placeholder={lang === 'th' ? 'คำถามโหวต เช่น อยากไปเที่ยวที่ไหน?' : 'Poll question...'}
               className="w-full rounded-xl border border-[#EBD8C3] bg-white px-3 py-2"
             />
-            {pollOptionsInput.map((opt, idx) => (
-              <input
-                key={idx}
-                type="text"
-                value={opt}
-                onChange={(e) =>
-                  setPollOptionsInput((prev) => prev.map((v, i) => (i === idx ? e.target.value : v)))
-                }
-                placeholder={`${lang === 'th' ? 'ตัวเลือกที่' : 'Option'} ${idx + 1}`}
-                className="w-full rounded-xl border border-[#EBD8C3] bg-white px-3 py-2 text-xs"
-              />
+            {(isSaturdayPenaltyPollDraft ? pollOptionsInput.slice(0, 2) : pollOptionsInput).map((opt, idx) => (
+              <div key={idx} className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={opt}
+                  onChange={(e) =>
+                    setPollOptionsInput((prev) => prev.map((v, i) => (i === idx ? e.target.value : v)))
+                  }
+                  placeholder={`${lang === 'th' ? 'ตัวเลือกที่' : 'Option'} ${idx + 1}`}
+                  className="flex-1 rounded-xl border border-[#EBD8C3] bg-white px-3 py-2 text-xs"
+                />
+                {idx >= 2 && !isSaturdayPenaltyPollDraft && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPollOptionsInput((prev) => prev.filter((_, i) => i !== idx))
+                    }
+                    className="rounded-xl border border-[#FADADD] bg-[#FFF5F6] px-2.5 py-2 text-xs font-bold text-[#7B2E3B] cursor-pointer"
+                    title={lang === 'th' ? 'ลบตัวเลือกนี้' : 'Remove option'}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
             ))}
-            {pollOptionsInput.length < 5 && (
-              <button
-                type="button"
-                onClick={() => setPollOptionsInput((prev) => [...prev, ''])}
-                className="rounded-xl bg-[#DCEEF8] px-3 py-1.5 text-xs font-bold text-[#28445A] cursor-pointer"
-              >
-                + {lang === 'th' ? 'เพิ่มตัวเลือก' : 'Add Option'}
-              </button>
+            {isSaturdayPenaltyPollDraft ? (
+              <p className="text-[11px] font-semibold text-[#7B5D4A]">
+                {lang === 'th'
+                  ? '📌 โหวตบทลงโทษตื่นสายมี 2 ตัวเลือกเท่านั้น (ไม่มีตัวเลือก "อื่นๆ")'
+                  : 'Saturday penalty poll strictly has 2 options (no "Other" option).'}
+              </p>
+            ) : (
+              pollOptionsInput.length < 5 && (
+                <button
+                  type="button"
+                  onClick={() => setPollOptionsInput((prev) => [...prev, ''])}
+                  className="rounded-xl bg-[#DCEEF8] px-3 py-1.5 text-xs font-bold text-[#28445A] cursor-pointer"
+                >
+                  + {lang === 'th' ? 'เพิ่มตัวเลือก' : 'Add Option'}
+                </button>
+              )
             )}
             <button
               type="submit"

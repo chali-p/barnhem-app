@@ -62,6 +62,7 @@ import {
   SHORTCUT_MANUAL_PIN,
   STAFF_SYSTEM_GUIDE_PIN,
   SUPPLY_REQUEST_PIN,
+  TIMESTAMP_CAMERA_PIN,
   formatPinAttemptsHint,
   formatPinLockoutMessage,
   getActiveKidAwaySecretCode,
@@ -72,6 +73,7 @@ import {
   formatReadableDate,
   getDateKey,
   getLaundryQueueInfo,
+  isPublicHoliday,
 } from '../utils/timeRules';
 import {
   getMemberTrashDutyStatusForDate,
@@ -577,6 +579,12 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
       onAutoLoginRole('house_rules_guide');
       return 'logged_in';
     }
+    if (pin === TIMESTAMP_CAMERA_PIN) {
+      pinGuard.recordSuccess();
+      setQuickInput('');
+      setTimestampCamOpen(true);
+      return 'logged_in';
+    }
     if (pin === SHORTCUT_MANUAL_PIN) {
       pinGuard.recordSuccess();
       onAutoLoginRole('shortcut_manual');
@@ -895,25 +903,6 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                     : lang === 'th'
                     ? 'ตั้งค่า/+เพิ่ม ▾'
                     : 'View / +Add ▾'}
-                </span>
-              </button>
-
-              {/* Clean Timestamp Check-In Camera Button inside Hero Card (Open to Outsiders, Auto-Sends to Google Sheet) */}
-              <button
-                type="button"
-                onClick={() => setTimestampCamOpen(true)}
-                className="min-h-[46px] w-full rounded-2xl border-2 border-[#BEDBF0] bg-[#F2F8FD] hover:bg-[#E4F1FB] px-4 py-2 text-xs sm:text-sm font-extrabold text-[#163B59] flex items-center justify-between gap-2 transition-colors cursor-pointer"
-              >
-                <span className="flex items-center gap-2 min-w-0">
-                  <span className="shrink-0">📸</span>
-                  <span className="truncate">
-                    {lang === 'th'
-                      ? 'กล้องเช็คอินไทม์แสตมป์'
-                      : 'Timestamp Check-In Camera'}
-                  </span>
-                </span>
-                <span className="rounded-xl bg-white/90 border border-[#C6DDF0] px-2.5 py-0.5 text-[11px] font-extrabold text-[#1D4D73] shrink-0">
-                  {lang === 'th' ? 'เปิดกล้อง / ส่ง Sheet →' : 'Open Camera →'}
                 </span>
               </button>
 
@@ -1651,7 +1640,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                     const isPenaltyCmd = cmd.kind === 'penalty';
                     const eligibleKids = kids.filter((k) => canKidUseCommand(cmd.id, k, appState.settings));
                     const doneCount = eligibleKids.filter((k) => isCustomCommandDoneForKid(cmd, k, now)).length;
-                    const permSummary = getCommandPermissionSummary(cmd.id, kids, lang, appState.settings);
+                    const permSummary = getCommandPermissionSummary(cmd.id, kids, lang, appState.settings, now);
                     const authMeta = getCommandAuthModeMeta(permSummary.authMode, lang);
                     return (
                       <div key={cmd.id} className="flex items-stretch gap-1.5">
@@ -1759,7 +1748,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                     canKidUseCommand(action.id, k, appState.settings)
                   );
                   const doneCount = eligibleKids.filter((k) => isHomeActionDoneForKid(action.id, k)).length;
-                  const permSummary = getCommandPermissionSummary(action.id, kids, lang, appState.settings);
+                  const permSummary = getCommandPermissionSummary(action.id, kids, lang, appState.settings, now);
                   const authMeta = getCommandAuthModeMeta(permSummary.authMode, lang);
                   return (
                     <button
@@ -2041,13 +2030,21 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
       {/* 1-Tap Command Name Board Modal (Supports staff_pin, kid_pin, and self_tap modes) */}
       {schoolBoardOpen && (activeCustomCmd || modalActionConfig) && isModalActionOpen && (() => {
         const activePermCmdId = activeCustomCmd ? activeCustomCmd.id : modalActionConfig!.id;
-        const activeAuthMode = getCommandAuthMode(activePermCmdId, appState.settings);
+        const activeAuthMode = getCommandAuthMode(activePermCmdId, appState.settings, now);
         const activeAuthMeta = getCommandAuthModeMeta(activeAuthMode, lang);
         const isComputerHwBoard =
           !activeCustomCmd && modalActionConfig?.id === 'evening_computer_homework';
         const requiresKidPin =
           isComputerHwBoard || (activeAuthMode === 'kid_pin' && !boardUnlockedByStaff);
         const isReturnPhoneBoard = !activeCustomCmd && modalActionConfig?.id === 'night_return_phone';
+        const isSaturdayBoard =
+          !activeCustomCmd && modalActionConfig?.id === 'morning_school' && now.getDay() === 6;
+        const isHolidayMorningBoard =
+          !activeCustomCmd &&
+          modalActionConfig?.id === 'morning_school' &&
+          (now.getDay() === 6 ||
+            now.getDay() === 0 ||
+            isPublicHoliday(now, Boolean(appState.settings.isPublicHolidayToday)));
         const eligibleAllCount = kids.filter((k) =>
           canKidUseCommand(activePermCmdId, k, appState.settings)
         ).length;
@@ -2243,7 +2240,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                     const cmd = entry.cmd;
                     const isSelected = activeCustomCmd?.id === cmd.id;
                     const cnt = kids.filter((k) => isCustomCommandDoneForKid(cmd, k, now)).length;
-                    const tabMode = getCommandAuthMode(cmd.id, appState.settings);
+                    const tabMode = getCommandAuthMode(cmd.id, appState.settings, now);
                     const needsStaff = tabMode === 'staff_pin' && !boardUnlockedByStaff;
                     return (
                       <button
@@ -2271,7 +2268,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                   const act = entry.action;
                   const isSelected = !activeCustomCmd && modalActionConfig?.id === act.id;
                   const cnt = kids.filter((k) => isHomeActionDoneForKid(act.id, k)).length;
-                  const tabMode = getCommandAuthMode(act.id, appState.settings);
+                  const tabMode = getCommandAuthMode(act.id, appState.settings, now);
                   const needsStaff = tabMode === 'staff_pin' && !boardUnlockedByStaff;
                   return (
                     <button
@@ -2347,6 +2344,28 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                 {lang === 'th'
                   ? `ระบบคำนวณอัตโนมัติ: ไม่ได้ขอทำการบ้านก่อน ${minsToHHMM(hwPermWin.endMins)} น. เล่นได้ถึง ${minsToHHMM(autoReturnRule.noHomeworkDeadlineMins)} น. · ขอทำการบ้านแล้วใช้ได้ถึง ${minsToHHMM(autoReturnRule.homeworkExtendedDeadlineMins)} น. (คืนเกินกำหนดทั้งคู่ถูกลงโทษทันทีค่ะ)`
                   : `Auto Rule: No homework request before ${minsToHHMM(hwPermWin.endMins)} limited to ${minsToHHMM(autoReturnRule.noHomeworkDeadlineMins)} · Registered homework until ${minsToHHMM(autoReturnRule.homeworkExtendedDeadlineMins)} (both penalized past deadline).`}
+              </div>
+            )}
+
+            {/* Weekend & Holiday Self-Tap, Anti-Proxy-Tap & Schedule Banner */}
+            {isHolidayMorningBoard && (
+              <div className="mt-3 rounded-2xl border border-[#F5C58A] bg-[#FFF8EA] px-3.5 py-2.5 text-xs font-bold text-[#6D4C14] space-y-1">
+                <div>
+                  👆{' '}
+                  {isSaturdayBoard
+                    ? lang === 'th'
+                      ? 'วันเสาร์: ระบบเปิด 08:15–08:35 น. (อนุโลมได้ไม่เกิน 1 นาที / ถึง 08:36 น.) · กดเลือกชื่อตัวเองได้เลย ไม่ต้องใส่รหัส (+10 ⭐) · เกิน 08:36 น. ลงโทษตามที่ตัวเองโหวตค่ะ'
+                      : 'Saturday: Opens 08:15–08:35 (1-min grace to 08:36) · Tap your own name directly without PIN (+10 ⭐) · Past 08:36 applies your voted penalty.'
+                    : lang === 'th'
+                    ? 'วันอาทิตย์ & วันนักขัตฤกษ์: เช็คอินไม่เกิน 08:15 น. (อนุโลมได้ไม่เกิน 10 นาที / ถึง 08:25 น. เนื่องจากพี่เกดเดินปลุกและไขกุญแจ) · กดเลือกชื่อตัวเองได้เลย ไม่ต้องใส่รหัส'
+                    : "Sunday & Public Holidays: By 08:15 (10-min grace to 08:25 as P'Ked wakes kids & unlocks) · Tap your own name directly without PIN."}
+                </div>
+                <div className="text-[#9F1239]">
+                  🚫{' '}
+                  {lang === 'th'
+                    ? 'ห้ามกดชื่อแทนเพื่อนเด็ดขาด! หากพบการกดแทนกันจะกลับไปใช้ระบบใส่รหัสยืนยันตามเดิม · ⏰ ตั้งนาฬิกาปลุกและรีบลุกมากดชื่อด้วยตัวเองให้ทันเวลา'
+                    : 'Never tap for a friend! Proxy tapping will revert to PIN verification. Set your alarm and check in on time.'}
+                </div>
               </div>
             )}
 

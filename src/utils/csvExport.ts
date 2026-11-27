@@ -42,11 +42,15 @@ export function downloadKidsSummaryCsv(state: AppState, now: Date): void {
     );
     const phoneBlocked =
       kid.penalty.phoneConfiscatedUntil1830Date === todayKey ||
-      kid.penalty.noEveningPhoneTomorrowDate === todayKey;
+      kid.penalty.noEveningPhoneTomorrowDate === todayKey ||
+      kid.penalty.noEveningPhone1830To2245Date === todayKey;
+    const sevenElevenBlocked = kid.penalty.noSevenElevenDate === todayKey;
 
     const privilegeLabel =
       kid.group === 1
-        ? kid.daily.bossStageUnlocked
+        ? sevenElevenBlocked
+          ? 'งดสั่งเซเว่นวันนี้'
+          : kid.daily.bossStageUnlocked
           ? 'ปลดล็อกการ์ตูนแล้ว'
           : 'รอปลดล็อก 20:00'
         : phoneBlocked

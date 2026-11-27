@@ -187,6 +187,8 @@ export interface KidPenaltyState {
   phoneConfiscatedUntil1830Date: string | null;
   fridayFreeDayDeductedCount: number;
   noEveningPhoneTomorrowDate: string | null;
+  noEveningPhone1830To2245Date?: string | null;
+  noSevenElevenDate?: string | null;
   cartoonPrivilegeActive: boolean;
   phonePrivilegeActive: boolean;
 }
@@ -375,6 +377,7 @@ export interface SecretPoll {
   question: string;
   options: PollOption[];
   votedKidIds: string[];
+  kidChoices?: Record<string, string>;
   closed: boolean;
   authorName: string;
   createdAt: string;
@@ -527,6 +530,8 @@ export type LoginCommandType = 'routine' | 'penalty';
 
 export type CommandPenaltyPresetId =
   | 'deduct_free_day'
+  | 'weekend_late_no_phone_no_711'
+  | 'weekend_late_no_freeday_no_711'
   | 'deduct_stars'
   | 'fixed_fine_thb'
   | 'per_minute_fine_thb'
@@ -598,6 +603,7 @@ export interface AppSettings {
   kidsWithoutPhoneIds?: string[];
   commandPermissions?: Record<string, CommandAccessRule>;
   customPenaltyPresets?: string[];
+  weekendLatePenaltyPreset?: 'weekend_late_no_phone_no_711' | 'weekend_late_no_freeday_no_711';
   kidAwaySecretCode?: string;
   kidAwaySecretDateKey?: string | null;
 }

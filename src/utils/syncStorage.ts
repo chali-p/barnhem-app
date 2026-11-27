@@ -6,6 +6,7 @@ import {
 } from '../data/initialData';
 import { AppState, ReturnHomePhoto } from '../types/barnhem';
 import { pruneWeeklyActivityLogs } from './activityLogRetention';
+import { sanitizeSecretPolls } from './expressKiosk';
 import { ensureCurrentWeekAllowance } from './piggyBank';
 import { getDateKey } from './timeRules';
 
@@ -115,9 +116,11 @@ export function loadAppState(): AppState {
             (a) => a.id !== 'ann_welcome' && !a.id.startsWith('ann_welcome_')
           )
         : [],
-      polls: Array.isArray(parsed.polls)
-        ? parsed.polls.filter((p) => p.id !== 'poll_weekend_activity')
-        : [],
+      polls: sanitizeSecretPolls(
+        Array.isArray(parsed.polls)
+          ? parsed.polls.filter((p) => p.id !== 'poll_weekend_activity')
+          : []
+      ),
       trips: Array.isArray(parsed.trips)
         ? parsed.trips.filter((t) => t.id !== 'trip_weekend_park')
         : [],

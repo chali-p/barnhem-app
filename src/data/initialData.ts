@@ -931,6 +931,8 @@ function makeMember(
       phoneConfiscatedUntil1830Date: null,
       fridayFreeDayDeductedCount: 0,
       noEveningPhoneTomorrowDate: null,
+      noEveningPhone1830To2245Date: null,
+      noSevenElevenDate: null,
       cartoonPrivilegeActive: true,
       phonePrivilegeActive: true,
     },
@@ -957,6 +959,7 @@ export const TARGET_NOV25_KID_PINS: Record<string, string> = {
 };
 
 export const LEGACY_KID_PIN_MIGRATIONS: Record<string, { oldPin: string; newPin: string }> = {
+  s1: { oldPin: '4829', newPin: '1012' },
   s2: { oldPin: '9153', newPin: '0909' },
   s5: { oldPin: '5296', newPin: '2111' },
   s6: { oldPin: '7418', newPin: '2424' },
@@ -997,7 +1000,7 @@ export const INITIAL_MEMBERS: Member[] = [
   makeMember({ id: 's9', role: 'kid', group: 2, nickname: 'แน็ก', fullName: 'กันตพงษ์ ชูชาติ', gender: 'M', pin: '2855', emoji: '🦊', stars: 85 }),
   makeMember({ id: 's10', role: 'kid', group: 2, nickname: 'ฟา', fullName: 'ยุพา หิรัญ', gender: 'F', pin: '0311', emoji: '🐱', stars: 115 }),
 
-  makeMember({ id: 's1', role: 'kid', group: 3, nickname: 'เสือ', fullName: 'ฉลาม โพธิ์หล้า', gender: 'M', pin: '4829', emoji: '🦈', stars: 150 }),
+  makeMember({ id: 's1', role: 'kid', group: 3, nickname: 'เสือ', fullName: 'ฉลาม โพธิ์หล้า', gender: 'M', pin: '1012', emoji: '🦈', stars: 150 }),
   makeMember({ id: 's2', role: 'kid', group: 3, nickname: 'โบว์', fullName: 'ลภัสพร สีลาน', gender: 'F', pin: '0909', emoji: '🎀', stars: 165 }),
 ];
 

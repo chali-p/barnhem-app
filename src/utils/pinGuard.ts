@@ -132,6 +132,7 @@ export const SECRET_VOTE_PIN = '0004';
 export const SUPPLY_REQUEST_PIN = '0005';
 export const LOST_FOUND_PIN = '0006';
 export const HOUSE_RULES_GUIDE_PIN = '0007';
+export const TIMESTAMP_CAMERA_PIN = '0008';
 export const STAFF_SYSTEM_GUIDE_PIN = '0009';
 
 /**
@@ -199,6 +200,13 @@ export function findPinConflict(
     return {
       conflict: true,
       conflictOwnerLabel: 'รหัส 0007 (ข้อตกลงและขั้นตอนการกดระบบประจำวัน)',
+    };
+  }
+
+  if (clean === TIMESTAMP_CAMERA_PIN) {
+    return {
+      conflict: true,
+      conflictOwnerLabel: 'รหัส 0008 (กล้องเช็คอินไทม์แสตมป์)',
     };
   }
 

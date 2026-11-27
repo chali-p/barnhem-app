@@ -21,6 +21,7 @@ interface ShortcutManualViewProps {
       | 'staff_system_guide'
     >
   ) => void;
+  onOpenTimestampCamera?: () => void;
   onBackHome: () => void;
 }
 
@@ -44,6 +45,7 @@ interface ShortcutPinEntry {
         | 'house_rules_guide'
         | 'staff_system_guide'
       >
+    | 'timestamp_camera'
     | null;
   rowCls: string;
   badgeCls: string;
@@ -144,16 +146,16 @@ const SHORTCUT_ENTRIES: ShortcutPinEntry[] = [
   },
   {
     pin: '0008',
-    emoji: '✨',
-    titleTh: 'รหัส 0008 (ยังไม่ได้กำหนดหัวข้อใช้งาน)',
-    titleEn: 'PIN 0008 (Unassigned)',
-    summaryTh: 'ยังไม่มีหัวข้อย่อยในรหัสนี้',
-    summaryEn: 'No topic assigned yet',
+    emoji: '📸',
+    titleTh: 'กล้องเช็คอินไทม์แสตมป์ (ซ่อนหน้าแรก)',
+    titleEn: 'Timestamp Check-In Camera (Hidden)',
+    summaryTh: 'พิมพ์รหัส 0008 หน้าแรกเพื่อเปิดกล้องเช็คอิน & ส่ง Google Sheet',
+    summaryEn: 'Enter PIN 0008 at home to open timestamp camera & Sheet',
     audience: 'guides_records',
-    targetMode: null,
-    rowCls: 'border-[#E7E5E4] border-l-[#78716C] bg-[#FAFAF9]',
-    badgeCls: 'bg-[#78716C] text-white',
-    btnCls: 'bg-[#F5F5F4] border-[#D6D3D1] text-[#78716C]',
+    targetMode: 'timestamp_camera',
+    rowCls: 'border-[#BEDBF0] border-l-[#1D4D73] bg-[#F2F8FD]',
+    badgeCls: 'bg-[#1D4D73] text-white',
+    btnCls: 'bg-[#E4F1FB] hover:bg-[#CFE6F8] border-[#9BC6EA] text-[#163B59]',
   },
   {
     pin: '0009',
@@ -175,6 +177,7 @@ export const ShortcutManualView: React.FC<ShortcutManualViewProps> = ({
   now,
   lang,
   onNavigateMode,
+  onOpenTimestampCamera,
   onBackHome,
 }) => {
   const [filter, setFilter] = useState<GuideAudienceFilter>('all');
@@ -294,7 +297,13 @@ export const ShortcutManualView: React.FC<ShortcutManualViewProps> = ({
             {item.targetMode ? (
               <button
                 type="button"
-                onClick={() => onNavigateMode(item.targetMode!)}
+                onClick={() => {
+                  if (item.targetMode === 'timestamp_camera') {
+                    onOpenTimestampCamera?.();
+                    return;
+                  }
+                  onNavigateMode(item.targetMode!);
+                }}
                 className={`min-h-[30px] rounded-lg border px-2.5 py-1 text-[11px] font-extrabold cursor-pointer whitespace-nowrap shrink-0 transition-colors ${item.btnCls}`}
               >
                 {lang === 'th' ? 'เปิดดู →' : 'Open →'}

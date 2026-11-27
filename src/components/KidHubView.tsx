@@ -74,6 +74,7 @@ import {
   PET_SPECIES_CATALOG,
 } from '../utils/petCare';
 import {
+  applyWeekendHolidayLatePenaltyToMember,
   canKidUseCommand,
   doesKidHavePhone,
   evaluateKidReturnPhoneSchedule,
@@ -84,15 +85,18 @@ import {
   getEffectiveHomeQuickActions,
   getEffectiveHomeworkPermissionWindow,
   getEffectiveMorningPhoneWindow,
+  getEffectiveWeekendLatePenaltyPreset,
   getPenaltySummaryText,
   isHomeActionOpenAt,
   KioskPenaltyAlert,
   minsToHHMM,
+  resolveSaturdayLatePenaltyFromPolls,
 } from '../utils/expressKiosk';
 import { evaluateKidStepReminders } from '../utils/stepReminders';
 import { PinPadModal } from './CenteredAlertModal';
 import { CustomOutfitStudio } from './CustomOutfitStudio';
 import { FridayBalloonBanner } from './FridayBalloonBanner';
+import { HolidayCheckInNoticeCard } from './HolidayCheckInNoticeCard';
 import { HouseRulesGuideView } from './HouseRulesGuideView';
 import { KidDutySchedulesPanel } from './KidDutySchedulesPanel';
 import { PenaltyNoticeModal } from './PenaltyNoticeModal';
@@ -502,7 +506,14 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   const laundry = getLaundryQueueInfo(now, lang);
   const isSickToday = sickReports.some((r) => r.kidId === kid.id && r.dateKey === todayKey && !r.resolved);
   const isAwayToday = isKidAwayOnDate(kid, todayKey);
-  const stepReminder = evaluateKidStepReminders(kid, now, isSickToday, isPublicHolidayToday, settings);
+  const stepReminder = evaluateKidStepReminders(
+    kid,
+    now,
+    isSickToday,
+    isPublicHolidayToday,
+    settings,
+    polls
+  );
   const kidHasPhone = doesKidHavePhone(kid.id, settings);
   const allowMorningPhonePickup = kidHasPhone && canKidUseCommand('morning_phone_pickup', kid, settings);
   const allowEveningPhone = kidHasPhone && canKidUseCommand('evening_uniform_phone', kid, settings);
@@ -748,13 +759,163 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
     if (kid.daily.vanOrMorningChecked) {
       onShowAlert({
         icon: '🚐',
-        title: lang === 'th' ? 'ขึ้นรถตู้วันนี้แล้ว' : 'School Van Already Checked',
-        message: lang === 'th' ? 'เดินทางปลอดภัย ตั้งใจเรียนนะ!' : 'Have a wonderful school day!',
+        title: lang === 'th' ? 'เช็คอินกะเช้าวันนี้แล้ว' : 'Morning Check-In Done',
+        message: lang === 'th' ? 'บันทึกเช็คอินช่วงเช้าวันนี้เรียบร้อยแล้วค่ะ' : 'Already checked in this morning.',
         tone: 'blue',
       });
       return;
     }
     const mins = getMinutesOfDay(now);
+    const day = now.getDay();
+    const isHolidayToday = isPublicHoliday(now, isPublicHolidayToday);
+    const isWeekendOrHoliday = day === 0 || day === 6 || isHolidayToday;
+
+    if (isWeekendOrHoliday) {
+      const isSat = day === 6;
+      if (isSat && mins < 8 * 60 + 15) {
+        onShowAlert({
+          icon: '⏰',
+          title:
+            lang === 'th'
+              ? 'ยังไม่ถึงเวลาเปิดเช็คอินเช้าวันเสาร์ (เปิด 08:15 น.)'
+              : 'Saturday Check-In Opens at 08:15',
+          message:
+            lang === 'th'
+              ? 'วันเสาร์ระบบจะเปิดตื่นทุก 08:15–08:35 น. ห้ามเกิน 08:36 น. น้องๆ สามารถกดชื่อตัวเองได้เลยค่ะ'
+              : 'Saturday morning check-in opens 08:15–08:35 (strictly no later than 08:36).',
+          tone: 'yellow',
+        });
+        return;
+      }
+      const deadlineMins = isSat ? 8 * 60 + 35 : 8 * 60 + 15;
+      const graceMins = isSat ? 8 * 60 + 36 : 8 * 60 + 25;
+      const dayLabel = isSat ? 'วันเสาร์' : isHolidayToday ? 'วันนักขัตฤกษ์/วันหยุด' : 'วันอาทิตย์';
+      const satResolution = isSat ? resolveSaturdayLatePenaltyFromPolls(kid, polls, settings) : null;
+      const effectivePreset = satResolution
+        ? satResolution.preset
+        : getEffectiveWeekendLatePenaltyPreset(settings);
+
+      if (mins <= deadlineMins) {
+        const applied = addStars(
+          10,
+          `☀️ เช็คอินเช้า${dayLabel}ตรงเวลา (เด็กเล็ก +10 ⭐)`,
+          (prev) => ({
+            daily: { ...prev.daily, vanOrMorningChecked: true },
+          }),
+          (prev) => !prev.daily.vanOrMorningChecked
+        );
+        if (!applied) return;
+        onShowAlert({
+          icon: '☀️🌟',
+          title:
+            lang === 'th'
+              ? `เช็คอินเช้า${dayLabel}สำเร็จ! (+10 ⭐)`
+              : `Holiday/Weekend Check-In (+10 ⭐)`,
+          message:
+            lang === 'th'
+              ? isSat
+                ? 'เก่งมากเลย! ตื่นมาเช็คอินช่วง 08:15–08:35 น. รับ +10 ดาวจ้า'
+                : 'เก่งมากเลย! ตื่นมาเช็คอินไม่เกิน 08:15 น. รับ +10 ดาวจ้า'
+              : `Great job checking in on time! +10 stars added.`,
+          tone: 'mint',
+        });
+        return;
+      }
+
+      if (mins <= graceMins) {
+        const applied = addStars(
+          0,
+          `⚠️ เช็คอินเช้า${dayLabel}ช่วงอนุโลม (${minsToHHMM(mins)} น. · 0 ⭐)`,
+          (prev) => ({
+            daily: { ...prev.daily, vanOrMorningChecked: true },
+          }),
+          (prev) => !prev.daily.vanOrMorningChecked
+        );
+        if (!applied) return;
+        onShowAlert({
+          icon: '⚠️⏰',
+          title:
+            lang === 'th'
+              ? `เช็คอินช่วงอนุโลม (${minsToHHMM(mins)} น.)`
+              : `Grace Window Check-In (${minsToHHMM(mins)})`,
+          message:
+            lang === 'th'
+              ? isSat
+                ? 'อนุโลมได้ไม่เกิน 1 นาที (ถึง 08:36 น. · ยังไม่ลงโทษ) รีบตื่นให้ทันช่วง 08:15–08:35 น. นะคะ'
+                : 'อนุโลมได้ไม่เกิน 10 นาที (ถึง 08:25 น.) เนื่องจากพี่เกดต้องเดินปลุกและไขกุญแจ เด็กๆ ต้องรีบทำเวลาลุกมาเช็คอินนะคะ'
+              : 'Within grace window (no penalty). Please hurry to check in on time!',
+          tone: 'yellow',
+        });
+        return;
+      }
+
+      if (isSickToday || isAwayToday) {
+        const applied = addStars(
+          0,
+          `☀️ เช็คอินเช้า${dayLabel} (${minsToHHMM(mins)} น. · ยกเว้นโทษป่วย/ลาพัก)`,
+          (prev) => ({
+            daily: { ...prev.daily, vanOrMorningChecked: true },
+          }),
+          (prev) => !prev.daily.vanOrMorningChecked
+        );
+        if (!applied) return;
+        onShowAlert({
+          icon: '💚',
+          title: lang === 'th' ? 'ยกเว้นโทษ (แจ้งป่วย / ลาพัก)' : 'Penalty Waived (Sick / Leave)',
+          message:
+            lang === 'th'
+              ? 'แจ้งป่วยหรือลาพักไว้ ระบบยกเว้นบทลงโทษตื่นสายวันหยุดให้ค่ะ'
+              : 'Weekend/holiday late penalty waived due to sick report or leave.',
+          tone: 'mint',
+        });
+        return;
+      }
+
+      let applied = false;
+      const reasonPrefix = isSat
+        ? `ตื่นสายเช้าวันเสาร์ (${minsToHHMM(mins)} น. · เกิน 08:36 น. · ${satResolution!.reasonTagTh})`
+        : `ตื่นสายเช้า${dayLabel} (${minsToHHMM(mins)} น. · เกิน 08:25 น.)`;
+      const res = applyWeekendHolidayLatePenaltyToMember(
+        kid,
+        now,
+        lang,
+        reasonPrefix,
+        effectivePreset
+      );
+      onUpdateKid(
+        kid.id,
+        (prev) => {
+          if (prev.daily.vanOrMorningChecked) return prev;
+          applied = true;
+          const prevApplied = applyWeekendHolidayLatePenaltyToMember(
+            prev,
+            now,
+            lang,
+            reasonPrefix,
+            effectivePreset
+          );
+          return {
+            ...prevApplied.updatedKid,
+            daily: { ...prevApplied.updatedKid.daily, vanOrMorningChecked: true },
+          };
+        },
+        `Group 1 ${dayLabel} Late`
+      );
+      if (!applied) return;
+      onShowAlert({
+        icon: '🚫🏪',
+        title:
+          lang === 'th'
+            ? `ตื่นสาย${dayLabel} — ${res.shortTag}`
+            : `Holiday Late — ${res.shortTag}`,
+        message: satResolution
+          ? `${res.penaltyText} (${lang === 'th' ? satResolution.reasonTagTh : satResolution.reasonTagEn})`
+          : res.penaltyText,
+        tone: 'pink',
+      });
+      return;
+    }
+
     const onTime = mins <= 7 * 60 + 1; // <= 07:01
     const isEarly15 = onTime && mins <= 6 * 60 + 46 && earlyBonus > 0;
     const streakRes = onTime ? applyMorningStreakOnTime(kid, now) : null;
@@ -814,13 +975,29 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
     }
     const day = now.getDay(); // 0 Sun, 6 Sat
     const mins = getMinutesOfDay(now);
+    const isHolidayToday = isPublicHoliday(now, isPublicHolidayToday);
+    const weekendPreset = getEffectiveWeekendLatePenaltyPreset(settings);
 
     if (day === 6) {
-      // Saturday (After Friday Free Day): < 08:30 (+10), 08:31 (1-min grace, 0⭐), >= 08:32 (hold phone until 18:30)
-      if (mins <= 8 * 60 + 30) {
+      if (mins < 8 * 60 + 15) {
+        onShowAlert({
+          icon: '⏰',
+          title:
+            lang === 'th'
+              ? 'ยังไม่ถึงเวลาเปิดเช็คอินเช้าวันเสาร์ (เปิด 08:15 น.)'
+              : 'Saturday Check-In Opens at 08:15',
+          message:
+            lang === 'th'
+              ? 'วันเสาร์ระบบจะเปิดตื่นทุก 08:15–08:35 น. ห้ามเกิน 08:36 น. น้องๆ สามารถกดชื่อตัวเองได้เลยค่ะ'
+              : 'Saturday check-in opens 08:15–08:35 (strictly no later than 08:36).',
+          tone: 'yellow',
+        });
+        return;
+      }
+      if (mins <= 8 * 60 + 35) {
         const applied = addStars(
           10,
-          'เช็คอินเช้าวันเสาร์ตรงเวลา (ก่อน 08:30 น.)',
+          'เช็คอินเช้าวันเสาร์ตรงเวลา (08:15–08:35 น.)',
           (prev) => ({
             daily: { ...prev.daily, vanOrMorningChecked: true },
           }),
@@ -832,14 +1009,14 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
           title: lang === 'th' ? 'เช็คอินเช้าวันเสาร์สำเร็จ (+10 ⭐)' : 'Saturday Check-in On Time (+10 ⭐)',
           message:
             lang === 'th'
-              ? 'รับ +10 ดาว! ตื่นมาเช็คอินก่อน 08:30 น. หลังคืนวันศุกร์ Free Day เรียบร้อยค่ะ'
-              : 'Earned +10 stars! Checked in before 08:30 after Friday Free Day!',
+              ? 'รับ +10 ดาว! ตื่นมาเช็คอินช่วง 08:15–08:35 น. เรียบร้อยค่ะ'
+              : 'Earned +10 stars! Checked in during 08:15–08:35!',
           tone: 'mint',
         });
-      } else if (mins === 8 * 60 + 31) {
+      } else if (mins <= 8 * 60 + 36) {
         const applied = addStars(
           0,
-          'เช็คอินเช้าวันเสาร์ (08:31 น. · เลย 08:30 น.)',
+          '⚠️ เช็คอินเช้าวันเสาร์ช่วงอนุโลม (08:36 น. · ไม่เกิน 1 นาที)',
           (prev) => ({
             daily: { ...prev.daily, vanOrMorningChecked: true },
           }),
@@ -848,61 +1025,82 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
         if (!applied) return;
         onShowAlert({
           icon: '⚠️⏰',
-          title: lang === 'th' ? 'เช็คอินเวลา 08:31 น. (เลย 08:30 น.)' : 'Checked In at 08:31 (Past 08:30)',
+          title: lang === 'th' ? 'เช็คอินวันเสาร์ช่วงอนุโลม (08:36 น.)' : 'Saturday 1-Min Grace (08:36)',
           message:
             lang === 'th'
-              ? 'เลยเวลา 08:30 น. แล้ว รอบนี้ไม่ได้รับดาวนะคะ (คราวหน้าตั้งปลุกเผื่อเวลาด้วยนะคะ)'
-              : 'Past 08:30 so no stars awarded. Set an alarm earlier next time!',
+              ? 'อนุโลมได้ไม่เกิน 1 นาที (ถึง 08:36 น. · ยังไม่ลงโทษ) รีบตื่นให้ทันช่วง 08:15–08:35 น. นะคะ'
+              : 'Within 1-min grace (until 08:36, no penalty). Aim for 08:15–08:35!',
           tone: 'yellow',
         });
+      } else if (isSickToday || isAwayToday) {
+        const applied = addStars(
+          0,
+          `☀️ เช็คอินเช้าวันเสาร์ (${minsToHHMM(mins)} น. · ยกเว้นโทษป่วย/ลาพัก)`,
+          (prev) => ({
+            daily: { ...prev.daily, vanOrMorningChecked: true },
+          }),
+          (prev) => !prev.daily.vanOrMorningChecked
+        );
+        if (!applied) return;
+        onShowAlert({
+          icon: '💚',
+          title: lang === 'th' ? 'ยกเว้นโทษ (แจ้งป่วย / ลาพัก)' : 'Penalty Waived (Sick / Leave)',
+          message:
+            lang === 'th'
+              ? 'ระบบยกเว้นบทลงโทษให้อัตโนมัติค่ะ'
+              : 'Penalties are automatically waived.',
+          tone: 'mint',
+        });
       } else {
+        const satResolution = resolveSaturdayLatePenaltyFromPolls(kid, polls, settings);
         let applied = false;
+        const satReason = `ตื่นสายเช้าวันเสาร์ (${minsToHHMM(mins)} น. · เกิน 08:36 น. · ${satResolution.reasonTagTh})`;
+        const preview = applyWeekendHolidayLatePenaltyToMember(
+          kid,
+          now,
+          lang,
+          satReason,
+          satResolution.preset
+        );
         onUpdateKid(
           kid.id,
           (prev) => {
             if (prev.daily.vanOrMorningChecked) return prev;
             applied = true;
+            const appliedRes = applyWeekendHolidayLatePenaltyToMember(
+              prev,
+              now,
+              lang,
+              satReason,
+              satResolution.preset
+            );
             return {
-              ...prev,
-              penalty: {
-                ...prev.penalty,
-                phoneConfiscatedUntil1830Date: isSickToday || isAwayToday ? prev.penalty.phoneConfiscatedUntil1830Date : todayKey,
-                phonePrivilegeActive: isSickToday || isAwayToday ? prev.penalty.phonePrivilegeActive : false,
-              },
-              daily: { ...prev.daily, vanOrMorningChecked: true },
+              ...appliedRes.updatedKid,
+              daily: { ...appliedRes.updatedKid.daily, vanOrMorningChecked: true },
             };
           },
-          'Saturday Late >08:31'
+          'Saturday Late >=08:36'
         );
         if (!applied) return;
         onShowAlert({
-          icon: isSickToday || isAwayToday ? '💚' : '📵⚖️',
-          title: isSickToday || isAwayToday
-            ? lang === 'th'
-              ? 'ยกเว้นโทษ (แจ้งป่วย / ลาพัก)'
-              : 'Penalty Waived (Sick / Leave)'
-            : lang === 'th'
-            ? 'เลยกำหนด 08:30 น. — ยึดมือถือถึง 18:30 น.'
-            : 'Past 08:30 — Phone Held Until 18:30',
-          message: isSickToday || isAwayToday
-            ? lang === 'th'
-              ? 'ระบบยกเว้นบทลงโทษให้อัตโนมัติค่ะ'
-              : 'Penalties are automatically waived.'
-            : lang === 'th'
-            ? 'เช็คอินเกินกำหนดเช้าวันเสาร์ (08:30 น.) ระบบบันทึกยึดมือถือถึง 18:30 น. ค่ะ'
-            : 'Past Saturday morning deadline (08:30). Phone is held until 18:30.',
-          tone: isSickToday || isAwayToday ? 'mint' : 'pink',
+          icon: '📵⚖️',
+          title:
+            lang === 'th'
+              ? `ตื่นสายวันเสาร์ — ${preview.shortTag}`
+              : `Saturday Late — ${preview.shortTag}`,
+          message: `${preview.penaltyText}\n(${lang === 'th' ? satResolution.reasonTagTh : satResolution.reasonTagEn})`,
+          tone: 'pink',
         });
       }
       return;
     }
 
-    if (day === 0) {
-      // Sunday: 08:00-08:15 (+15), 08:16-08:20 (warn), >08:20 (deduct -5 stars instead of phone confiscation since kids don't hold phones on Sunday morning)
+    if (day === 0 && !isHolidayToday) {
+      // Sunday: <= 08:15 (+15), 08:16-08:25 (10-min grace warn), >08:25 (weekend/holiday penalty + -5 ⭐)
       if (mins <= 8 * 60 + 15) {
         const applied = addStars(
           15,
-          'เช็คอินเช้าวันอาทิตย์ตรงเวลา (ทำเวร+อาบน้ำ+เช็คเวรครัว)',
+          'เช็คอินเช้าวันอาทิตย์ตรงเวลา (ไม่เกิน 08:15 น. +15 ⭐)',
           (prev) => ({
             daily: { ...prev.daily, vanOrMorningChecked: true },
           }),
@@ -914,14 +1112,14 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
           title: lang === 'th' ? 'เช็คอินเช้าวันอาทิตย์สำเร็จ (+15 ⭐)' : 'Sunday Check-in On Time (+15 ⭐)',
           message:
             lang === 'th'
-              ? 'รับ +15 ดาว! ทำเวร+อาบน้ำ+เช็คเวรครัวเรียบร้อย เยี่ยมมากจ้า'
-              : 'Earned +15 stars! Chores, shower & kitchen check done!',
+              ? 'รับ +15 ดาว! เช็คอินไม่เกิน 08:15 น. ทำเวร+อาบน้ำ+เช็คเวรครัวเรียบร้อย เยี่ยมมากจ้า'
+              : 'Earned +15 stars! Chores, shower & kitchen check done by 08:15!',
           tone: 'mint',
         });
-      } else if (mins <= 8 * 60 + 20) {
+      } else if (mins <= 8 * 60 + 25) {
         const applied = addStars(
           0,
-          'เช็คอินเช้าวันอาทิตย์เตือนสาย (08:16-08:20 น.)',
+          'เช็คอินเช้าวันอาทิตย์ช่วงอนุโลม (08:16–08:25 น.)',
           (prev) => ({
             daily: { ...prev.daily, vanOrMorningChecked: true },
           }),
@@ -930,17 +1128,17 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
         if (!applied) return;
         onShowAlert({
           icon: '⚠️⏰',
-          title: lang === 'th' ? 'เตือนสายวันอาทิตย์ (08:16-08:20 น.)' : 'Sunday Grace Warning (08:16-08:20)',
+          title: lang === 'th' ? `ช่วงอนุโลมวันอาทิตย์ (${minsToHHMM(mins)} น.)` : 'Sunday 10-Min Grace (08:16–08:25)',
           message:
             lang === 'th'
-              ? 'เลย 08:15 น. มาไม่เกิน 5 นาที (ยังไม่หักดาว) รีบทำเวรและเช็คเวรครัวด่วนจ้า'
-              : 'Within 5-min grace period (no stars deducted). Please finish chores quickly!',
+              ? 'อนุโลมได้ไม่เกิน 10 นาที (ถึง 08:25 น.) เนื่องจากพี่เกดต้องเดินปลุกและไขกุญแจ เด็กๆ ต้องรีบทำเวลาลุกมาเช็คอินนะคะ'
+              : "Within 10-min grace (until 08:25 as P'Ked walks to wake kids & unlock doors). Hurry to check in!",
           tone: 'yellow',
         });
       } else if (isSickToday || isAwayToday) {
         const applied = addStars(
           0,
-          'เช็คอินเช้าวันอาทิตย์เกิน 08:20 น. (ยกเว้นเพราะแจ้งป่วย/ลาพัก)',
+          'เช็คอินเช้าวันอาทิตย์เกิน 08:25 น. (ยกเว้นเพราะแจ้งป่วย/ลาพัก)',
           (prev) => ({
             daily: { ...prev.daily, vanOrMorningChecked: true },
           }),
@@ -952,14 +1150,62 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
           title: lang === 'th' ? 'ยกเว้นโทษเนื่องจากแจ้งป่วย / ลาพัก' : 'Penalty Waived (Sick / Leave)',
           message:
             lang === 'th'
-              ? 'ระบบยกเว้นการหักดาวให้ในวันแจ้งป่วยหรือลาพัก พักผ่อนเยอะๆ นะ'
-              : 'Star deduction waived due to active sick report or leave today.',
+              ? 'ระบบยกเว้นบทลงโทษให้ในวันแจ้งป่วยหรือลาพัก พักผ่อนเยอะๆ นะ'
+              : 'Penalty waived due to active sick report or leave today.',
           tone: 'mint',
         });
       } else {
+        let applied = false;
+        const preview = applyWeekendHolidayLatePenaltyToMember(
+          kid,
+          now,
+          lang,
+          `ตื่นสายเช้าวันอาทิตย์ (${minsToHHMM(mins)} น. · เกิน 08:25 น.)`,
+          weekendPreset,
+          -5
+        );
+        onUpdateKid(
+          kid.id,
+          (prev) => {
+            if (prev.daily.vanOrMorningChecked) return prev;
+            applied = true;
+            const appliedRes = applyWeekendHolidayLatePenaltyToMember(
+              prev,
+              now,
+              lang,
+              `ตื่นสายเช้าวันอาทิตย์ (${minsToHHMM(mins)} น. · เกิน 08:25 น.)`,
+              weekendPreset,
+              -5
+            );
+            return {
+              ...appliedRes.updatedKid,
+              daily: { ...appliedRes.updatedKid.daily, vanOrMorningChecked: true },
+            };
+          },
+          'Sunday Late >08:25'
+        );
+        if (!applied) return;
+        onShowAlert({
+          icon: '📵⚖️',
+          title:
+            lang === 'th'
+              ? `ตื่นสายวันอาทิตย์ — ${preview.shortTag} (-5 ⭐)`
+              : `Sunday Late — ${preview.shortTag} (-5 ⭐)`,
+          message:
+            lang === 'th'
+              ? `${preview.penaltyText} (และลด -5 ดาว หากเกิดเหตุสุดวิสัยแจ้งพี่เลี้ยงได้ค่ะ)`
+              : `${preview.penaltyText} (-5 stars deducted; staff can waive unexpected accidents).`,
+          tone: 'peach',
+        });
+      }
+      return;
+    }
+
+    if (isHolidayToday) {
+      if (mins <= 8 * 60 + 15) {
         const applied = addStars(
-          -5,
-          'เช็คอินเช้าวันอาทิตย์เกิน 08:20 น. (หัก -5 ⭐ แทนยึดมือถือ)',
+          10,
+          'เช็คอินกะเช้าวันหยุดตรงเวลา (ไม่เกิน 08:15 น. +10 ⭐)',
           (prev) => ({
             daily: { ...prev.daily, vanOrMorningChecked: true },
           }),
@@ -967,38 +1213,91 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
         );
         if (!applied) return;
         onShowAlert({
-          icon: '⭐⏰',
-          title: lang === 'th' ? 'เกิน 08:20 น. — ลดดาว -5 ⭐ (ไม่ยึดมือถือ)' : 'Past 08:20 — Deducted -5 ⭐',
+          icon: '🎉📱',
+          title: lang === 'th' ? 'เช็คอินกะเช้าวันหยุดสำเร็จ (+10 ⭐)' : 'Holiday Check-In (+10 ⭐)',
           message:
             lang === 'th'
-              ? 'วันอาทิตย์น้องไม่ได้ถือมือถือ ระบบจึงลด -5 ดาวแทนการยึดมือถือค่ะ (หากเกิดเหตุสุดวิสัยหรือพี่เลี้ยงปลุกช้า แจ้งพี่เลี้ยงกดคืนดาวให้ได้ทันที)'
-              : 'Kids do not hold phones on Sunday morning, so -5 stars were deducted instead of holding the phone (staff can waive/refund if there was a wake-up delay).',
-          tone: 'peach',
+              ? 'วันหยุดนักขัตฤกษ์/ปิดเทอม — ตื่นเช็คอินไม่เกิน 08:15 น. รับ +10 ดาวจ้า'
+              : 'Public holiday today — checked in by 08:15 (+10 stars)!',
+          tone: 'mint',
+        });
+      } else if (mins <= 8 * 60 + 25) {
+        const applied = addStars(
+          0,
+          `⚠️ เช็คอินกะเช้าวันหยุดช่วงอนุโลม (${minsToHHMM(mins)} น. · 0 ⭐)`,
+          (prev) => ({
+            daily: { ...prev.daily, vanOrMorningChecked: true },
+          }),
+          (prev) => !prev.daily.vanOrMorningChecked
+        );
+        if (!applied) return;
+        onShowAlert({
+          icon: '⚠️⏰',
+          title: lang === 'th' ? `ช่วงอนุโลมวันหยุด (${minsToHHMM(mins)} น.)` : 'Holiday 10-Min Grace (08:16–08:25)',
+          message:
+            lang === 'th'
+              ? 'อนุโลมได้ไม่เกิน 10 นาที (ถึง 08:25 น.) เนื่องจากพี่เกดต้องเดินปลุกและไขกุญแจ เด็กๆ ต้องรีบทำเวลาลุกมาเช็คอินนะคะ'
+              : "Within 10-min grace (until 08:25 as P'Ked wakes kids & unlocks). Hurry to check in!",
+          tone: 'yellow',
+        });
+      } else if (isSickToday || isAwayToday) {
+        const applied = addStars(
+          0,
+          `🎉 เช็คอินเช้าวันหยุด (${minsToHHMM(mins)} น. · ยกเว้นโทษป่วย/ลาพัก)`,
+          (prev) => ({
+            daily: { ...prev.daily, vanOrMorningChecked: true },
+          }),
+          (prev) => !prev.daily.vanOrMorningChecked
+        );
+        if (!applied) return;
+        onShowAlert({
+          icon: '💚',
+          title: lang === 'th' ? 'ยกเว้นโทษ (แจ้งป่วย / ลาพัก)' : 'Penalty Waived (Sick / Leave)',
+          message:
+            lang === 'th'
+              ? 'แจ้งป่วยหรือลาพักไว้ ระบบยกเว้นบทลงโทษตื่นสายวันหยุดให้ค่ะ'
+              : 'Holiday late penalty waived due to sick report or leave.',
+          tone: 'mint',
+        });
+      } else {
+        let applied = false;
+        const preview = applyWeekendHolidayLatePenaltyToMember(
+          kid,
+          now,
+          lang,
+          `ตื่นสายวันนักขัตฤกษ์/วันหยุด (${minsToHHMM(mins)} น. · เกิน 08:25 น.)`,
+          weekendPreset
+        );
+        onUpdateKid(
+          kid.id,
+          (prev) => {
+            if (prev.daily.vanOrMorningChecked) return prev;
+            applied = true;
+            const appliedRes = applyWeekendHolidayLatePenaltyToMember(
+              prev,
+              now,
+              lang,
+              `ตื่นสายวันนักขัตฤกษ์/วันหยุด (${minsToHHMM(mins)} น. · เกิน 08:25 น.)`,
+              weekendPreset
+            );
+            return {
+              ...appliedRes.updatedKid,
+              daily: { ...appliedRes.updatedKid.daily, vanOrMorningChecked: true },
+            };
+          },
+          'Holiday Late >08:25'
+        );
+        if (!applied) return;
+        onShowAlert({
+          icon: '📵⚖️',
+          title:
+            lang === 'th'
+              ? `ตื่นสายวันหยุด — ${preview.shortTag}`
+              : `Holiday Late — ${preview.shortTag}`,
+          message: preview.penaltyText,
+          tone: 'pink',
         });
       }
-      return;
-    }
-
-    const isHolidayToday = isPublicHoliday(now, isPublicHolidayToday);
-    if (isHolidayToday) {
-      const applied = addStars(
-        10,
-        'เช็คอินกะเช้าวันหยุดราชการ (+10 ⭐)',
-        (prev) => ({
-          daily: { ...prev.daily, vanOrMorningChecked: true },
-        }),
-        (prev) => !prev.daily.vanOrMorningChecked
-      );
-      if (!applied) return;
-      onShowAlert({
-        icon: '🎉📱',
-        title: lang === 'th' ? 'เช็คอินกะเช้าวันหยุดสำเร็จ (+10 ⭐)' : 'Holiday Check-In (+10 ⭐)',
-        message:
-          lang === 'th'
-            ? 'วันนี้วันหยุดราชการ ไม่ใช่วันไปโรงเรียน — ไม่มีการปรับสายตอนเช้า และรับ +10 ดาวจ้า'
-            : 'Public holiday today (not a school day) — no school late fine and +10 stars awarded!',
-        tone: 'mint',
-      });
       return;
     }
 
@@ -1137,6 +1436,153 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
       return;
     }
     const mins = getMinutesOfDay(now);
+    const day = now.getDay();
+    const isHolidayToday = isPublicHoliday(now, isPublicHolidayToday);
+    const isWeekendOrHoliday = day === 0 || day === 6 || isHolidayToday;
+
+    if (isWeekendOrHoliday) {
+      const isSat = day === 6;
+      if (isSat && mins < 8 * 60 + 15) {
+        onShowAlert({
+          icon: '⏰',
+          title:
+            lang === 'th'
+              ? 'ยังไม่ถึงเวลาเปิดเช็คอินเช้าวันเสาร์ (เปิด 08:15 น.)'
+              : 'Saturday Check-In Opens at 08:15',
+          message:
+            lang === 'th'
+              ? 'วันเสาร์ระบบจะเปิดตื่นทุก 08:15–08:35 น. ห้ามเกิน 08:36 น. น้องๆ สามารถกดชื่อตัวเองได้เลยค่ะ'
+              : 'Saturday check-in opens 08:15–08:35 (strictly no later than 08:36).',
+          tone: 'yellow',
+        });
+        return;
+      }
+      const deadlineMins = isSat ? 8 * 60 + 35 : 8 * 60 + 15;
+      const graceMins = isSat ? 8 * 60 + 36 : 8 * 60 + 25;
+      const dayLabel = isSat ? 'วันเสาร์' : isHolidayToday ? 'วันนักขัตฤกษ์/วันหยุด' : 'วันอาทิตย์';
+      const satResolution = isSat ? resolveSaturdayLatePenaltyFromPolls(kid, polls, settings) : null;
+      const effectivePreset = satResolution
+        ? satResolution.preset
+        : getEffectiveWeekendLatePenaltyPreset(settings);
+
+      if (mins <= deadlineMins) {
+        const applied = addStars(
+          10,
+          `☀️ เช็คอินกะเช้า${dayLabel}ตรงเวลา (ทีมพี่ใหญ่ +10 ⭐)`,
+          (prev) => ({
+            daily: { ...prev.daily, vanOrMorningChecked: true },
+          }),
+          (prev) => !prev.daily.vanOrMorningChecked
+        );
+        if (!applied) return;
+        onShowAlert({
+          icon: '🎓✨',
+          title: lang === 'th' ? `เช็คอินเช้า${dayLabel}สำเร็จ (+10 ⭐)` : `Holiday Check-in (+10 ⭐)`,
+          message:
+            lang === 'th'
+              ? isSat
+                ? 'ตื่นมาเช็คอินช่วง 08:15–08:35 น. รับ +10 ดาวเรียบร้อยค่ะ'
+                : 'ตื่นมาเช็คอินไม่เกิน 08:15 น. รับ +10 ดาวเรียบร้อยค่ะ'
+              : `Checked in on time! +10 stars awarded.`,
+          tone: 'mint',
+        });
+        return;
+      }
+
+      if (mins <= graceMins) {
+        const applied = addStars(
+          0,
+          `⚠️ เช็คอินกะเช้า${dayLabel}ช่วงอนุโลม (${minsToHHMM(mins)} น. · 0 ⭐)`,
+          (prev) => ({
+            daily: { ...prev.daily, vanOrMorningChecked: true },
+          }),
+          (prev) => !prev.daily.vanOrMorningChecked
+        );
+        if (!applied) return;
+        onShowAlert({
+          icon: '⚠️⏰',
+          title:
+            lang === 'th'
+              ? `เช็คอินช่วงอนุโลม (${minsToHHMM(mins)} น.)`
+              : `Grace Window (${minsToHHMM(mins)})`,
+          message:
+            lang === 'th'
+              ? isSat
+                ? 'อนุโลมได้ไม่เกิน 1 นาที (ถึง 08:36 น. · ยังไม่ลงโทษ) รีบตื่นให้ทันช่วง 08:15–08:35 น. นะคะ'
+                : 'อนุโลมได้ไม่เกิน 10 นาที (ถึง 08:25 น.) เนื่องจากพี่เกดต้องเดินปลุกและไขกุญแจ เด็กๆ ต้องรีบทำเวลาลุกมาเช็คอินนะคะ'
+              : 'Within grace window (no penalty). Please check in on time!',
+          tone: 'yellow',
+        });
+        return;
+      }
+
+      if (isSickToday || isAwayToday) {
+        const applied = addStars(
+          0,
+          `☀️ เช็คอินกะเช้า${dayLabel} (${minsToHHMM(mins)} น. · ยกเว้นโทษป่วย/ลาพัก)`,
+          (prev) => ({
+            daily: { ...prev.daily, vanOrMorningChecked: true },
+          }),
+          (prev) => !prev.daily.vanOrMorningChecked
+        );
+        if (!applied) return;
+        onShowAlert({
+          icon: '💚',
+          title: lang === 'th' ? 'ยกเว้นโทษ (แจ้งป่วย / ลาพัก)' : 'Penalty Waived (Sick / Leave)',
+          message:
+            lang === 'th'
+              ? 'แจ้งป่วยหรือลาพักไว้ ระบบยกเว้นบทลงโทษตื่นสายวันหยุดให้ค่ะ'
+              : 'Weekend/holiday late penalty waived due to sick report or leave.',
+          tone: 'mint',
+        });
+        return;
+      }
+
+      let applied = false;
+      const reasonText = isSat
+        ? `ตื่นสายเช้าวันเสาร์ (${minsToHHMM(mins)} น. · เกิน 08:36 น. · ${satResolution!.reasonTagTh})`
+        : `ตื่นสายเช้า${dayLabel} (${minsToHHMM(mins)} น. · เกิน 08:25 น.)`;
+      const preview = applyWeekendHolidayLatePenaltyToMember(
+        kid,
+        now,
+        lang,
+        reasonText,
+        effectivePreset
+      );
+      onUpdateKid(
+        kid.id,
+        (prev) => {
+          if (prev.daily.vanOrMorningChecked) return prev;
+          applied = true;
+          const res = applyWeekendHolidayLatePenaltyToMember(
+            prev,
+            now,
+            lang,
+            reasonText,
+            effectivePreset
+          );
+          return {
+            ...res.updatedKid,
+            daily: { ...res.updatedKid.daily, vanOrMorningChecked: true },
+          };
+        },
+        `Group 3 ${dayLabel} Late`
+      );
+      if (!applied) return;
+      onShowAlert({
+        icon: '📵⚖️',
+        title:
+          lang === 'th'
+            ? `ตื่นสาย${dayLabel} — ${preview.shortTag}`
+            : `Holiday Late — ${preview.shortTag}`,
+        message: satResolution
+          ? `${preview.penaltyText} (${lang === 'th' ? satResolution.reasonTagTh : satResolution.reasonTagEn})`
+          : preview.penaltyText,
+        tone: 'pink',
+      });
+      return;
+    }
+
     const isEarly15 = mins <= 7 * 60 + 15 && earlyBonus > 0;
     const earned = 10 + (isEarly15 ? earlyBonus : 0);
     const schoolDeduct = applyDailySchoolDeduction(kid, now, settings, false, isSickToday);
@@ -1838,6 +2284,8 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
     (!coinsEnabled || kid.penalty.lateFineThb === 0) &&
     kid.penalty.phoneConfiscatedUntil1830Date !== todayKey &&
     kid.penalty.noEveningPhoneTomorrowDate !== todayKey &&
+    kid.penalty.noEveningPhone1830To2245Date !== todayKey &&
+    kid.penalty.noSevenElevenDate !== todayKey &&
     kid.penalty.fridayFreeDayDeductedCount === 0;
 
   const activeScheduledAnnouncements = announcements.filter(
@@ -2549,6 +2997,9 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
       </div>
       </div>
 
+      {/* Holiday Penalty Voting & New Self-Tap Morning Check-In Info for Kids */}
+      <HolidayCheckInNoticeCard lang={lang} variant="kid_home" defaultExpanded />
+
       {/* ---------------- SUB-MODALS ---------------- */}
       {subModal && (
         <div
@@ -3246,33 +3697,69 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                   </button>
                 )}
 
-                {kid.group === 1 && (
-                  <>
-                    <div className="rounded-2xl bg-[#FFF5BA]/70 p-4 text-sm text-[#53433A]">
-                      {lang === 'th'
-                        ? 'กติกาน้องเล็ก (วันไปโรงเรียน จ–ศ): กินข้าวเช้าก่อน 06:40 น. (+5 ⭐) และขึ้นรถตู้ไม่เกิน 07:01 น. (+10 ⭐) · ตั้งเพดานสายช่วงเช้าถึง 08:00 น.'
-                        : 'Breakfast before 06:40 (+5 ⭐), School van by 07:01 (+10 ⭐). Morning late ceiling 08:00 on school days.'}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleGroup1Breakfast}
-                      className="w-full min-h-[54px] rounded-2xl bg-[#D4F0F0] hover:bg-[#BCE7E7] font-bold text-[#3D322C] px-5 py-3 text-left flex items-center justify-between cursor-pointer"
-                    >
-                      <span>🍚 {lang === 'th' ? 'กินข้าวเช้าเรียบร้อยแล้ว (เปลี่ยนชุดนักเรียน)' : 'Finished Breakfast (Put on Uniform)'}</span>
-                      <span>{kid.daily.breakfastChecked ? '✅' : '+5 ⭐'}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleGroup1Van}
-                      className="w-full min-h-[54px] rounded-2xl bg-[#DCEEF8] hover:bg-[#C6E2F3] font-bold text-[#3D322C] px-5 py-3 text-left flex items-center justify-between cursor-pointer"
-                    >
-                      <span>🚐 {lang === 'th' ? 'ขึ้นรถตู้ไปโรงเรียน' : 'Boarded School Van'}</span>
-                      <span>{kid.daily.vanOrMorningChecked ? '✅' : '+10 ⭐'}</span>
-                    </button>
-                  </>
-                )}
+                {kid.group === 1 && (() => {
+                  const isHolOrWknd =
+                    now.getDay() === 0 ||
+                    now.getDay() === 6 ||
+                    isPublicHoliday(now, isPublicHolidayToday);
+                  return (
+                    <>
+                      <div className="rounded-2xl bg-[#FFF5BA]/70 p-4 text-sm text-[#53433A] space-y-1">
+                        <div>
+                          {lang === 'th'
+                            ? '• วันไปโรงเรียน (จ–ศ): กินข้าวเช้าก่อน 06:40 น. (+5 ⭐) และขึ้นรถตู้ไม่เกิน 07:01 น. (+10 ⭐) · เพดานสายถึง 08:00 น.'
+                            : '• School Days (Mon-Fri): Breakfast before 06:40 (+5 ⭐), School van by 07:01 (+10 ⭐).'}
+                        </div>
+                        <div className="font-bold text-[#9F1239]">
+                          {lang === 'th'
+                            ? '• วันเสาร์: เปิด 08:15–08:35 น. (อนุโลมไม่เกิน 1 นาที / ถึง 08:36 น.) · อาทิตย์ & วันนักขัตฤกษ์: ≤ 08:15 น. (อนุโลมถึง 08:25 น.) · กดชื่อตัวเองได้เลย ห้ามกดแทนเพื่อน'
+                            : '• Saturday: Opens 08:15–08:35 (grace to 08:36) · Sun & Public Holidays: ≤ 08:15 (grace to 08:25) · Direct self-tap without PIN.'}
+                        </div>
+                      </div>
+                      {!isHolOrWknd && (
+                        <button
+                          type="button"
+                          onClick={handleGroup1Breakfast}
+                          className="w-full min-h-[54px] rounded-2xl bg-[#D4F0F0] hover:bg-[#BCE7E7] font-bold text-[#3D322C] px-5 py-3 text-left flex items-center justify-between cursor-pointer"
+                        >
+                          <span>🍚 {lang === 'th' ? 'กินข้าวเช้าเรียบร้อยแล้ว (เปลี่ยนชุดนักเรียน)' : 'Finished Breakfast (Put on Uniform)'}</span>
+                          <span>{kid.daily.breakfastChecked ? '✅' : '+5 ⭐'}</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleGroup1Van}
+                        className="w-full min-h-[54px] rounded-2xl bg-[#DCEEF8] hover:bg-[#C6E2F3] font-bold text-[#3D322C] px-5 py-3 text-left flex items-center justify-between cursor-pointer"
+                      >
+                        <span>
+                          {isHolOrWknd ? '☀️' : '🚐'}{' '}
+                          {isHolOrWknd
+                            ? lang === 'th'
+                              ? 'เช็คอินกะเช้าวันหยุด (เสาร์/อาทิตย์/วันหยุด)'
+                              : 'Weekend / Holiday Morning Check-In'
+                            : lang === 'th'
+                            ? 'ขึ้นรถตู้ไปโรงเรียน'
+                            : 'Boarded School Van'}
+                        </span>
+                        <span>{kid.daily.vanOrMorningChecked ? '✅' : '+10 ⭐'}</span>
+                      </button>
+                    </>
+                  );
+                })()}
 
-                {kid.group === 2 && (
+                {kid.group === 2 && (() => {
+                  const isHolNow = isPublicHoliday(now, isPublicHolidayToday);
+                  const isWkndOrHol = now.getDay() === 0 || now.getDay() === 6 || isHolNow;
+                  const wkndPreset = getEffectiveWeekendLatePenaltyPreset(settings);
+                  const wkndPenaltyDescTh =
+                    wkndPreset === 'weekend_late_no_freeday_no_711'
+                      ? 'งดฟรีเดย์ 1 วัน (เด็กเล็กงดสั่งเซเว่น)'
+                      : 'งดใช้โทรศัพท์ 18:30–22:45 น. (เด็กเล็กงดสั่งเซเว่น)';
+                  const wkndPenaltyDescEn =
+                    wkndPreset === 'weekend_late_no_freeday_no_711'
+                      ? 'no Free Day 1 day (younger kids no 7-Eleven)'
+                      : 'no phone 18:30–22:45 (younger kids no 7-Eleven)';
+                  return (
                   <>
                     <div className="rounded-2xl bg-[#FFF5BA]/70 p-4 text-sm text-[#53433A] space-y-1">
                       <div>
@@ -3282,17 +3769,17 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                       </div>
                       <div>
                         {lang === 'th'
-                          ? '• วันเสาร์ (หลังคืนวันศุกร์ Free Day): เช็คอินก่อน 08:30 น. (+10 ⭐) | เกินเวลา ยึดมือถือถึง 18:30 น.'
-                          : '• Saturday (After Friday Free Day): Check in before 08:30 (+10 ⭐) | Past deadline: phone held until 18:30.'}
+                          ? `• วันเสาร์: เปิด 08:15–08:35 น. (อนุโลมไม่เกิน 1 นาที / ถึง 08:36 น.) (+10 ⭐ · กดชื่อตัวเองได้เลย) | เกิน 08:36 น. ลงโทษตามที่ตัวเองโหวต`
+                          : `• Saturday: Opens 08:15–08:35 (1-min grace to 08:36, +10 ⭐ · direct tap) | Past 08:36: per your vote`}
                       </div>
                       <div>
                         {lang === 'th'
-                          ? '• วันอาทิตย์: 08:00-08:15 น. (+15 ⭐) | 08:16-08:20 น. เตือนสาย | เกิน 08:20 น. ลด -5 ⭐ แทนยึดมือถือ (แจ้งเหตุสุดวิสัยกับพี่เลี้ยงได้)'
-                          : '• Sunday: 08:00-08:15 (+15 ⭐) | 08:16-08:20 warn | After 08:20: -5 ⭐ instead of phone hold (staff can waive accidents).'}
+                          ? `• วันอาทิตย์ & วันนักขัตฤกษ์: ไม่เกิน 08:15 น. (อนุโลมได้ไม่เกิน 10 นาที / ถึง 08:25 น. พี่เกดเดินปลุกและไขกุญแจ) · กดชื่อตัวเองได้เลย ห้ามกดแทนเพื่อน | เกิน 08:25 น.: ${wkndPenaltyDescTh}`
+                          : `• Sunday & Public Holidays: By 08:15 (10-min grace to 08:25 as P'Ked wakes & unlocks) · Direct tap | Past 08:25: ${wkndPenaltyDescEn}.`}
                       </div>
                     </div>
 
-                    {now.getDay() !== 0 && now.getDay() !== 6 && (
+                    {!isWkndOrHol && (
                       <button
                         type="button"
                         disabled={Boolean(kid.daily.morningDressedConfirmed)}
@@ -3366,16 +3853,16 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                     >
                       <div>
                         <div className="text-sm sm:text-base font-bold">
-                          🚌{' '}
-                          {now.getDay() === 0 || now.getDay() === 6
+                          {isWkndOrHol ? '☀️' : '🚌'}{' '}
+                          {isWkndOrHol
                             ? lang === 'th'
-                              ? 'เช็คชื่อไปโรงเรียน / กะเช้าวันหยุด'
-                              : 'Morning / Weekend Check-In'
+                              ? 'เช็คชื่อกะเช้าวันหยุด (เสาร์/อาทิตย์/วันหยุด)'
+                              : 'Weekend / Holiday Morning Check-In'
                             : lang === 'th'
                             ? 'เช็คชื่อไปโรงเรียน'
                             : 'School Check-In'}
                         </div>
-                        {now.getDay() !== 0 && now.getDay() !== 6 && (
+                        {!isWkndOrHol && (
                           <div className="text-xs font-medium text-[#2B5478] mt-0.5">
                             {lang === 'th'
                               ? 'ไม่เกิน 07:21 น. (กดได้ครั้งเดียว)'
@@ -3388,20 +3875,28 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                           ? lang === 'th'
                             ? 'เช็คชื่อแล้ว'
                             : 'Checked In'
-                          : now.getDay() === 0
+                          : now.getDay() === 0 && !isHolNow
                           ? '+15 ⭐'
                           : '+10 ⭐'}
                       </span>
                     </button>
                   </>
-                )}
+                  );
+                })()}
 
                 {kid.group === 3 && (
                   <>
-                    <div className="rounded-2xl bg-[#FFF5BA]/70 p-4 text-sm text-[#53433A]">
-                      {lang === 'th'
-                        ? 'กติกาทีมพี่ใหญ่: เช็คอินไปฝึกงานหรือไปเรียนตามเวลาจริง รับ +10 ⭐ (ไม่มีหักสายตอนเช้า)'
-                        : 'College/Internship check-in at real time: +10 ⭐ (no morning deduction).'}
+                    <div className="rounded-2xl bg-[#FFF5BA]/70 p-4 text-sm text-[#53433A] space-y-1">
+                      <div>
+                        {lang === 'th'
+                          ? '• วันไปเรียน/ฝึกงาน: เช็คอินตามเวลาจริง รับ +10 ⭐ (ไม่มีหักสายตอนเช้า)'
+                          : '• Study/Internship day: real-time check-in +10 ⭐ (no morning deduction).'}
+                      </div>
+                      <div className="font-bold text-[#881337]">
+                        {lang === 'th'
+                          ? '• วันเสาร์: เปิด 08:15–08:35 น. (อนุโลมไม่เกิน 1 นาที / ถึง 08:36 น.) · อาทิตย์ & วันนักขัตฤกษ์: ≤ 08:15 น. (อนุโลมถึง 08:25 น.) · กดชื่อตัวเองได้เลย ห้ามกดแทนเพื่อน'
+                          : '• Saturday: Opens 08:15–08:35 (grace to 08:36) · Sun & Public Holidays: ≤ 08:15 (grace to 08:25) · Direct self-tap without PIN.'}
+                      </div>
                     </div>
                     <button
                       type="button"
@@ -3819,8 +4314,8 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                         </div>
                         <p className="text-xs text-[#2E5D55] leading-relaxed">
                           {lang === 'th'
-                            ? 'คืนวันศุกร์เป็นวันฟรีเดย์ น้องไม่ต้องเก็บมือถือคืนเข้าตู้ค่ะ! แต่ต้องตื่นมาเช็คอินเช้าวันเสาร์ก่อน 08:30 น. (เกินกำหนด ยึดมือถือถึง 18:30 น.)'
-                            : 'Friday night is Free Day — you keep your phone overnight! Check in Saturday morning before 08:30.'}
+                            ? 'คืนวันศุกร์เป็นวันฟรีเดย์ น้องไม่ต้องเก็บมือถือคืนเข้าตู้ค่ะ! เช้าวันเสาร์ระบบเปิด 08:15–08:35 น. (อนุโลมได้ไม่เกิน 1 นาที / ถึง 08:36 น. · กดชื่อตัวเองได้เลย ห้ามกดแทนเพื่อน · เกิน 08:36 น. ลงโทษตามที่ตัวเองโหวต)'
+                            : 'Friday night is Free Day — you keep your phone overnight! Saturday wake-up check-in opens 08:15–08:35 (grace to 08:36, direct self-tap; past 08:36 per your vote).'}
                         </p>
                         <p className="text-xs font-extrabold text-[#8A3B12] leading-snug">
                           {lang === 'th'
@@ -4016,6 +4511,18 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                                   icon: '📵',
                                   title: lang === 'th' ? 'ยังไม่ถึง 18:30 น.' : 'Not 18:30 Yet',
                                   message: lang === 'th' ? 'ติดโทษงดใช้มือถือจนถึง 18:30 น. วันนี้' : 'Phone held until 18:30 today.',
+                                  tone: 'pink',
+                                });
+                                return;
+                              }
+                              if (kid.penalty.noEveningPhone1830To2245Date === todayKey) {
+                                onShowAlert({
+                                  icon: '📵',
+                                  title: lang === 'th' ? 'งดใช้โทรศัพท์ 18:30–22:45 น.' : 'No Phone 18:30–22:45 Today',
+                                  message:
+                                    lang === 'th'
+                                      ? 'ติดโทษตื่นสายวันหยุด วันนี้งดใช้โทรศัพท์ตั้งแต่เวลา 18:30–22:45 น. ค่ะ'
+                                      : 'Holiday late wake-up penalty: no phone use from 18:30–22:45 today.',
                                   tone: 'pink',
                                 });
                                 return;
@@ -4492,6 +4999,22 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                       <div>
                         💸 {lang === 'th' ? 'ค่าปรับสายสะสม:' : 'Accumulated Late Fines:'}{' '}
                         <strong className="tabular-nums">{kid.penalty.lateFineThb} THB</strong>
+                      </div>
+                    )}
+                    {kid.penalty.noEveningPhone1830To2245Date === todayKey && (
+                      <div>
+                        📵{' '}
+                        {lang === 'th'
+                          ? 'ตื่นสายวันหยุด: งดใช้โทรศัพท์ตั้งแต่เวลา 18:30–22:45 น. วันนี้'
+                          : 'Holiday Late: No phone 18:30–22:45 today'}
+                      </div>
+                    )}
+                    {kid.penalty.noSevenElevenDate === todayKey && (
+                      <div>
+                        🚫🏪{' '}
+                        {lang === 'th'
+                          ? 'ตื่นสายวันหยุด: เด็กเล็กงดสั่งเซเว่นวันนี้'
+                          : 'Holiday Late: No 7-Eleven orders today'}
                       </div>
                     )}
                     {kid.penalty.phoneConfiscatedUntil1830Date === todayKey && (
@@ -6086,6 +6609,8 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
             {/* 12. HOUSE ANNOUNCEMENTS MODAL */}
             {subModal === 'announcements_modal' && (
               <div className="space-y-3">
+                <HolidayCheckInNoticeCard lang={lang} variant="announcement" defaultExpanded />
+
                 {/* Live Time, Event & Festival Announcement Card */}
                 <div
                   className={`rounded-2xl border-2 p-4 space-y-2 ${
