@@ -31,6 +31,7 @@ import {
   Member,
   OutingTrip,
   PrivateCareMessage,
+  ReturnHomePhoto,
   SecretPoll,
   ShopItem,
   SickReport,
@@ -60,7 +61,8 @@ type RecordType =
   | 'friend_visit'
   | 'golden_pool_log'
   | 'staff_leave'
-  | 'weekly_activity_log';
+  | 'weekly_activity_log'
+  | 'return_home_photo';
 
 function stripUndefined<T>(value: T): T {
   if (Array.isArray(value)) {
@@ -358,6 +360,10 @@ function extractRecordsMap(
   addList('golden_pool_log', (state.goldenPoolLogs ?? []).filter((g) => isWithinRecentDays(g.createdAt, 14)));
   addList('staff_leave', (state.staffLeaves ?? []).filter((l) => isWithinRecentDays(l.dateKey, 14)));
   addList('weekly_activity_log', (state.weeklyActivityLogs ?? []).filter((w) => isWithinRecentDays(w.createdAt, 7)));
+  addList(
+    'return_home_photo',
+    (state.returnHomePhotos ?? []).filter((p) => isWithinRecentDays(p.capturedAt, 3)).slice(0, 30)
+  );
 
   return map;
 }
@@ -461,6 +467,7 @@ function extractAllRecordDocIds(
   addIds('golden_pool_log', state.goldenPoolLogs);
   addIds('staff_leave', state.staffLeaves);
   addIds('weekly_activity_log', state.weeklyActivityLogs);
+  addIds('return_home_photo', state.returnHomePhotos);
   return ids;
 }
 
@@ -631,6 +638,7 @@ function parseRecordsSnapshot(
   const goldenPoolLogs: GoldenPoolLog[] = [];
   const staffLeaves: StaffLeaveRecord[] = [];
   const weeklyActivityLogs: WeeklyActivityLog[] = [];
+  const returnHomePhotos: ReturnHomePhoto[] = [];
 
   let matchedAny = false;
   snapshot.forEach((docSnap) => {
@@ -710,6 +718,9 @@ function parseRecordsSnapshot(
       case 'weekly_activity_log':
         weeklyActivityLogs.push(d.payload as unknown as WeeklyActivityLog);
         break;
+      case 'return_home_photo':
+        returnHomePhotos.push(d.payload as unknown as ReturnHomePhoto);
+        break;
     }
   });
 
@@ -732,6 +743,7 @@ function parseRecordsSnapshot(
   snackBills.sort(byNewest);
   sickReports.sort((a, b) => b.reportedAt.localeCompare(a.reportedAt));
   kitchenLogs.sort((a, b) => b.verifiedAt.localeCompare(a.verifiedAt));
+  returnHomePhotos.sort((a, b) => b.capturedAt.localeCompare(a.capturedAt));
 
   const shopOrder = new Map(INITIAL_APP_STATE.shopItems.map((item, idx) => [item.id, idx]));
   const hasAnyMinimart = shopItems.some((item) => item.id.startsWith('minimart_'));
@@ -761,6 +773,7 @@ function parseRecordsSnapshot(
     goldenPoolLogs,
     staffLeaves,
     weeklyActivityLogs: pruneWeeklyActivityLogs(weeklyActivityLogs, new Date()),
+    returnHomePhotos,
     ...(effectiveShopItems.length > 0 ? { shopItems: effectiveShopItems } : {}),
   };
 }

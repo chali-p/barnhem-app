@@ -14,6 +14,7 @@ import {
   ModalAlertPayload,
   OutingTrip,
   PrivateCareMessage,
+  ReturnHomePhoto,
   SecretPoll,
   SickReport,
   SnackBill,
@@ -52,6 +53,7 @@ import { GoldenPiggySvg, PinkPiggySvg } from './PiggyBankSvg';
 import { KidDutySchedulesPanel } from './KidDutySchedulesPanel';
 import { StaffLeavePanel } from './StaffLeavePanel';
 import { StaffRosterPanel } from './StaffRosterPanel';
+import { TimestampCameraModal } from './TimestampCameraModal';
 import { WeeklyActivityLogPanel } from './WeeklyActivityLogPanel';
 
 interface StaffViewProps {
@@ -119,6 +121,8 @@ interface StaffViewProps {
   onAddWeeklyActivityLog?: (entry: WeeklyActivityLog) => void;
   onDeleteWeeklyActivityLog?: (logId: string) => void;
   onClearWeeklyActivityLogs?: () => void;
+  onSaveReturnHomePhoto?: (photo: ReturnHomePhoto) => void;
+  onDeleteReturnHomePhoto?: (photoId: string) => void;
 }
 
 export const StaffView: React.FC<StaffViewProps> = ({
@@ -181,10 +185,13 @@ export const StaffView: React.FC<StaffViewProps> = ({
   onAddWeeklyActivityLog,
   onDeleteWeeklyActivityLog,
   onClearWeeklyActivityLogs,
+  onSaveReturnHomePhoto,
+  onDeleteReturnHomePhoto,
 }) => {
   const [pinInput, setPinInput] = useState('');
   const [pinModalOpen, setPinModalOpen] = useState(false);
   const [staffQrOpen, setStaffQrOpen] = useState(false);
+  const [timestampGalleryOpen, setTimestampGalleryOpen] = useState(false);
   const [quickKidSearch, setQuickKidSearch] = useState('');
   const [quickGroupFilter, setQuickGroupFilter] = useState<0 | KidGroup>(0);
   const [selectedQuickKidId, setSelectedQuickKidId] = useState<string | null>(null);
@@ -216,8 +223,15 @@ export const StaffView: React.FC<StaffViewProps> = ({
   const [newRestrictedDocs, setNewRestrictedDocs] = useState(DEFAULT_SYNC_URL);
 
   const staffList = members.filter((m) => m.role === 'staff');
+  const staffPins = Array.from(
+    new Set([
+      ...members.filter((m) => m.role === 'staff' || m.role === 'manager').map((m) => m.pin),
+      ...state.settings.creatorPins,
+    ])
+  );
   const kids = members.filter((m) => m.role === 'kid');
   const todayKey = getDateKey(now);
+  const todayTimestampPhotos = (state.returnHomePhotos ?? []).filter((p) => p.dateKey === todayKey);
   const activeSick = sickReports.filter((r) => !r.resolved);
   const todayBills = snackBills.filter((b) => b.category === 'snack');
   const eco = getEconomyConfig(state.settings);
@@ -497,6 +511,13 @@ export const StaffView: React.FC<StaffViewProps> = ({
           >
             🏖️ {lang === 'th' ? 'แจ้งลางานพี่เลี้ยง' : 'Staff Leave'}
             {todayActiveLeaves.length > 0 ? ` (${todayActiveLeaves.length})` : ''}
+          </button>
+          <button
+            type="button"
+            onClick={() => setTimestampGalleryOpen(true)}
+            className="min-h-[42px] rounded-2xl border border-[#8FD4C6] bg-[#E8FAF6] hover:bg-[#D5F4EC] px-3.5 py-2 text-xs sm:text-sm font-extrabold text-[#114A42] cursor-pointer"
+          >
+            📸 {lang === 'th' ? `คลังภาพเช็คอิน (${todayTimestampPhotos.length}) & Sheet` : `Check-In Photos (${todayTimestampPhotos.length})`}
           </button>
           <button
             type="button"
@@ -2061,6 +2082,25 @@ export const StaffView: React.FC<StaffViewProps> = ({
             });
           }
         }}
+      />
+
+      <TimestampCameraModal
+        open={timestampGalleryOpen}
+        kids={kids}
+        staffPins={staffPins}
+        now={now}
+        lang={lang}
+        orgName={orgName}
+        todayPhotos={todayTimestampPhotos}
+        allPhotos={state.returnHomePhotos ?? []}
+        returnHomeDriveUrl={state.settings.returnHomeDriveUrl}
+        syncWebhookUrl={state.settings.syncWebhookUrl}
+        staffCreatorUnlocked={true}
+        initialTab="gallery"
+        onSavePhoto={(photo) => onSaveReturnHomePhoto?.(photo)}
+        onDeletePhoto={onDeleteReturnHomePhoto}
+        onClose={() => setTimestampGalleryOpen(false)}
+        onShowAlert={onShowAlert}
       />
     </div>
   );

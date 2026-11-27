@@ -338,6 +338,10 @@ export interface ReturnHomePhoto {
   capturedAt: string;
   imageBase64: string;
   driveFolderUrl: string;
+  activityTag?: string;
+  activityLabel?: string;
+  note?: string;
+  confirmedBy?: string;
 }
 
 export interface Announcement {

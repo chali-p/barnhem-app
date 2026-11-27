@@ -92,6 +92,7 @@ import {
 import { evaluateKidStepReminders } from '../utils/stepReminders';
 import { PinPadModal } from './CenteredAlertModal';
 import { CustomOutfitStudio } from './CustomOutfitStudio';
+import { FridayBalloonBanner } from './FridayBalloonBanner';
 import { HouseRulesGuideView } from './HouseRulesGuideView';
 import { KidDutySchedulesPanel } from './KidDutySchedulesPanel';
 import { PenaltyNoticeModal } from './PenaltyNoticeModal';
@@ -532,6 +533,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
   useEffect(() => {
     const isReturnWindowOpen = isHomeActionOpenAt('night_return_phone', now, settings);
     if (
+      now.getDay() === 5 ||
       !isReturnWindowOpen ||
       !allowReturnPhone ||
       kid.daily.phoneReturnedChecked ||
@@ -814,11 +816,11 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
     const mins = getMinutesOfDay(now);
 
     if (day === 6) {
-      // Saturday (After Friday Free Day sleep-in): 08:00-08:30 (+10), 08:31-08:45 (warn), >08:45 (confiscate until 18:30)
+      // Saturday (After Friday Free Day): < 08:30 (+10), 08:31 (1-min grace, 0⭐), >= 08:32 (hold phone until 18:30)
       if (mins <= 8 * 60 + 30) {
         const applied = addStars(
           10,
-          'เช็คอินเช้าวันเสาร์ (วันศุกร์ Free Day น้องขอนอนเพิ่ม) ตรงเวลา (08:00-08:30 น.)',
+          'เช็คอินเช้าวันเสาร์ตรงเวลา (ก่อน 08:30 น.)',
           (prev) => ({
             daily: { ...prev.daily, vanOrMorningChecked: true },
           }),
@@ -830,14 +832,14 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
           title: lang === 'th' ? 'เช็คอินเช้าวันเสาร์สำเร็จ (+10 ⭐)' : 'Saturday Check-in On Time (+10 ⭐)',
           message:
             lang === 'th'
-              ? 'รับ +10 ดาว! ตื่นสดใสหลังคืนวันศุกร์ Free Day น้องขอนอนเพิ่มจ้า'
-              : 'Earned +10 stars! Great start after Friday Free Day!',
+              ? 'รับ +10 ดาว! ตื่นมาเช็คอินก่อน 08:30 น. หลังคืนวันศุกร์ Free Day เรียบร้อยค่ะ'
+              : 'Earned +10 stars! Checked in before 08:30 after Friday Free Day!',
           tone: 'mint',
         });
-      } else if (mins <= 8 * 60 + 45) {
+      } else if (mins === 8 * 60 + 31) {
         const applied = addStars(
           0,
-          'เช็คอินเช้าวันเสาร์เริ่มสาย (08:31-08:45 น.)',
+          'เช็คอินเช้าวันเสาร์ (08:31 น. · เลย 08:30 น.)',
           (prev) => ({
             daily: { ...prev.daily, vanOrMorningChecked: true },
           }),
@@ -846,8 +848,11 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
         if (!applied) return;
         onShowAlert({
           icon: '⚠️⏰',
-          title: lang === 'th' ? 'เตือนเริ่มสาย! (08:31-08:45 น.)' : 'Late Warning! (08:31-08:45)',
-          message: lang === 'th' ? 'เลย 08:30 น. แล้วนะ รีบทำเวรและดูแลตัวเองให้เรียบร้อย' : 'Past 08:30! Hurry up with your chores.',
+          title: lang === 'th' ? 'เช็คอินเวลา 08:31 น. (เลย 08:30 น.)' : 'Checked In at 08:31 (Past 08:30)',
+          message:
+            lang === 'th'
+              ? 'เลยเวลา 08:30 น. แล้ว รอบนี้ไม่ได้รับดาวนะคะ (คราวหน้าตั้งปลุกเผื่อเวลาด้วยนะคะ)'
+              : 'Past 08:30 so no stars awarded. Set an alarm earlier next time!',
           tone: 'yellow',
         });
       } else {
@@ -867,7 +872,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
               daily: { ...prev.daily, vanOrMorningChecked: true },
             };
           },
-          'Saturday Late >08:45'
+          'Saturday Late >08:31'
         );
         if (!applied) return;
         onShowAlert({
@@ -877,15 +882,15 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
               ? 'ยกเว้นโทษ (แจ้งป่วย / ลาพัก)'
               : 'Penalty Waived (Sick / Leave)'
             : lang === 'th'
-            ? 'เกิน 08:45 น. — ยึดมือถือถึง 18:30 น.'
-            : 'Past 08:45 — Phone Held Until 18:30',
+            ? 'เลยกำหนด 08:30 น. — ยึดมือถือถึง 18:30 น.'
+            : 'Past 08:30 — Phone Held Until 18:30',
           message: isSickToday || isAwayToday
             ? lang === 'th'
               ? 'ระบบยกเว้นบทลงโทษให้อัตโนมัติค่ะ'
               : 'Penalties are automatically waived.'
             : lang === 'th'
-            ? 'เช็คอินเกิน 08:45 น. ระบบบันทึกโทษยึดมือถือทันทีและงดใช้ยาวถึง 18:30 น. (ทำเวร+อาบน้ำ+เช็คเวรครัว)'
-            : 'Checked in after 08:45. Phone is held until 18:30 (chores + shower + kitchen check).',
+            ? 'เช็คอินเกินกำหนดเช้าวันเสาร์ (08:30 น.) ระบบบันทึกยึดมือถือถึง 18:30 น. ค่ะ'
+            : 'Past Saturday morning deadline (08:30). Phone is held until 18:30.',
           tone: isSickToday || isAwayToday ? 'mint' : 'pink',
         });
       }
@@ -2007,6 +2012,8 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
         </div>
       </div>
 
+      {now.getDay() === 5 && <FridayBalloonBanner lang={lang} variant="kid" />}
+
       {/* 2-SECTION LAYOUT: LEFT = Profile + Tamagotchi + 3 Pet Buttons | RIGHT = 4 Main Vertical Action Buttons */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-4 sm:gap-5 items-stretch">
       {/* LEFT SECTION: PROFILE + TAMAGOTCHI + 3 PET BUTTONS */}
@@ -2419,10 +2426,20 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
               </span>
               <div className="min-w-0">
                 <div className="text-sm sm:text-base font-extrabold text-[#19534B] leading-tight truncate">
-                  {lang === 'th' ? 'กลับบ้าน' : 'Return Home'}
+                  {now.getDay() === 5
+                    ? lang === 'th'
+                      ? 'กลับบ้านและเก็บโทรศัพท์มือถือ'
+                      : 'Return Home & Store Phone'
+                    : lang === 'th'
+                    ? 'กลับบ้าน'
+                    : 'Return Home'}
                 </div>
                 <p className="text-[11px] font-medium text-[#326E65] mt-0.5 truncate">
-                  {kid.group === 1
+                  {now.getDay() === 5
+                    ? lang === 'th'
+                      ? '🎈 Free Day 15:00–18:00 น. · สั่งเซเว่นได้นะคะ!'
+                      : '🎈 Free Day 15:00–18:00 · 7-Eleven orders open!'
+                    : kid.group === 1
                     ? lang === 'th'
                       ? 'เช็คสุขภาพ · ถ่ายรูป & Speedy Ninja'
                       : 'Health check · Photo & Ninja'
@@ -2448,14 +2465,24 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
           >
             <div className="flex items-center gap-3 min-w-0">
               <span className="h-10 w-10 sm:h-11 sm:w-11 rounded-xl bg-white border border-[#DDD3F2] flex items-center justify-center text-xl sm:text-2xl shrink-0">
-                ✍️
+                {now.getDay() === 5 ? '📱' : '✍️'}
               </span>
               <div className="min-w-0">
                 <div className="text-sm sm:text-base font-extrabold text-[#3E2B63] leading-tight truncate">
-                  {lang === 'th' ? 'ทำการบ้าน' : 'Homework'}
+                  {now.getDay() === 5
+                    ? lang === 'th'
+                      ? 'มารับโทรศัพท์มือถือ'
+                      : 'Pick Up Mobile Phone'
+                    : lang === 'th'
+                    ? 'ทำการบ้าน'
+                    : 'Homework'}
                 </div>
                 <p className="text-[11px] font-medium text-[#5B4782] mt-0.5 truncate">
-                  {kid.group === 1
+                  {now.getDay() === 5
+                    ? lang === 'th'
+                      ? 'Free Day 18:15–22:45 น. · คืนศุกร์ไม่ต้องเก็บมือถือ'
+                      : 'Free Day 18:15–22:45 · Keep phone tonight'
+                    : kid.group === 1
                     ? lang === 'th'
                       ? 'เรียนเสริม ขออนุญาต & ด่านบอส'
                       : 'Study, homework & Boss Stage'
@@ -2469,7 +2496,9 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                 </p>
               </div>
             </div>
-            {(kid.daily.bossStageUnlocked || kid.daily.phoneReturnedChecked) && (
+            {(now.getDay() === 5
+              ? kid.daily.eveningPhoneUnlocked
+              : kid.daily.bossStageUnlocked || kid.daily.phoneReturnedChecked) && (
               <span className="text-sm font-extrabold text-[#2F685E] shrink-0">✓</span>
             )}
           </button>
@@ -3253,8 +3282,8 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                       </div>
                       <div>
                         {lang === 'th'
-                          ? '• วันเสาร์ (วันศุกร์ Free Day น้องขอนอนเพิ่ม): 08:00-08:30 น. (+10 ⭐) | เกิน 08:45 น. ยึดมือถือถึง 18:30 น.'
-                          : '• Saturday (Friday Free Day Sleep-in): 08:00-08:30 (+10 ⭐) | After 08:45: held until 18:30.'}
+                          ? '• วันเสาร์ (หลังคืนวันศุกร์ Free Day): เช็คอินก่อน 08:30 น. (+10 ⭐) | เกินเวลา ยึดมือถือถึง 18:30 น.'
+                          : '• Saturday (After Friday Free Day): Check in before 08:30 (+10 ⭐) | Past deadline: phone held until 18:30.'}
                       </div>
                       <div>
                         {lang === 'th'
@@ -3402,6 +3431,7 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
             {/* 2. AFTERNOON SHIFT */}
             {subModal === 'shift_afternoon' && (
               <div className="space-y-4">
+                {now.getDay() === 5 && <FridayBalloonBanner lang={lang} variant="return_home" />}
                 {/* First Heading: Return-Home Caring Health Check & Sick Report */}
                 <button
                   type="button"
@@ -3771,6 +3801,91 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
 
               return (
                 <div className="space-y-4">
+                  {now.getDay() === 5 ? (
+                    <div className="space-y-3">
+                      <FridayBalloonBanner lang={lang} variant="menu" />
+
+                      <div className="rounded-2xl border-2 border-[#BFE6DE] bg-[#F2FCF9] p-4 space-y-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="font-extrabold text-[#114A42]">
+                            📱{' '}
+                            {lang === 'th'
+                              ? 'มารับโทรศัพท์มือถือ (วันศุกร์ Free Day · 18:15–22:45 น.)'
+                              : 'Pick Up Mobile Phone (Friday Free Day · 18:15–22:45)'}
+                          </div>
+                          <span className="text-xs font-bold text-[#2D6A60] tabular-nums">
+                            {formatDigitalClock(now)} น.
+                          </span>
+                        </div>
+                        <p className="text-xs text-[#2E5D55] leading-relaxed">
+                          {lang === 'th'
+                            ? 'คืนวันศุกร์เป็นวันฟรีเดย์ น้องไม่ต้องเก็บมือถือคืนเข้าตู้ค่ะ! แต่ต้องตื่นมาเช็คอินเช้าวันเสาร์ก่อน 08:30 น. (เกินกำหนด ยึดมือถือถึง 18:30 น.)'
+                            : 'Friday night is Free Day — you keep your phone overnight! Check in Saturday morning before 08:30.'}
+                        </p>
+                        <p className="text-xs font-extrabold text-[#8A3B12] leading-snug">
+                          {lang === 'th'
+                            ? '⏰ ทุกคนที่มีโทรศัพท์จะต้องตั้งปลุกก่อนเวลาเผื่อเดินมาเช็คอินด้วยนะเด็กๆ'
+                            : '⏰ Everyone with a phone must set an alarm early enough to walk over and check in, kids!'}
+                        </p>
+
+                        {!kidHasPhone ? (
+                          <div className="rounded-xl border border-[#DCE5EA] bg-white/80 px-3 py-2 text-xs font-semibold text-[#5A6C7A]">
+                            📵{' '}
+                            {lang === 'th'
+                              ? `น้อง${kid.nickname} ถูกตั้งค่าว่า "ไม่มีมือถือ"`
+                              : `${kid.nickname} is marked as having no mobile phone`}
+                          </div>
+                        ) : kid.daily.eveningPhoneUnlocked ? (
+                          <div className="rounded-xl border border-[#8FD4C6] bg-white px-3.5 py-2.5 text-xs font-extrabold text-[#114A42]">
+                            ✅{' '}
+                            {lang === 'th'
+                              ? 'มารับโทรศัพท์มือถือวันศุกร์ Free Day เรียบร้อยแล้ว! คืนนี้ไม่ต้องเก็บมือถือค่ะ'
+                              : 'Picked up phone for Friday Free Day! Keep your phone tonight.'}
+                          </div>
+                        ) : isHomeActionOpenAt('evening_uniform_phone', now, settings) ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const res = evaluateOneTapHomeAction(
+                                'evening_uniform_phone',
+                                kid,
+                                now,
+                                lang,
+                                settings,
+                                isSickToday
+                              );
+                              if (res.updatedKid) {
+                                onUpdateKid(kid.id, () => res.updatedKid!, 'Friday Free Day Phone Pickup');
+                              }
+                              onShowAlert({
+                                icon: res.emoji,
+                                title: res.bannerTitle,
+                                message: res.bannerSubtitle,
+                                tone: res.success ? 'mint' : 'pink',
+                              });
+                            }}
+                            className="w-full min-h-[54px] rounded-2xl bg-[#114A42] hover:bg-[#0B3A32] text-white font-extrabold px-4 py-3 cursor-pointer flex items-center justify-between gap-2 shadow-sm"
+                          >
+                            <span>
+                              📱{' '}
+                              {lang === 'th'
+                                ? 'มารับโทรศัพท์มือถือ (18:15–22:45 น.)'
+                                : 'Pick Up Mobile Phone (18:15–22:45)'}
+                            </span>
+                            <span className="text-xs font-bold opacity-90">+10 ⭐</span>
+                          </button>
+                        ) : (
+                          <div className="rounded-xl border border-dashed border-[#A7D9CF] bg-white/80 px-3.5 py-2.5 text-xs font-semibold text-[#4B7069]">
+                            ⏰{' '}
+                            {lang === 'th'
+                              ? 'ปุ่มมารับโทรศัพท์มือถือวันศุกร์ Free Day เปิดให้กดเฉพาะเวลา 18:15–22:45 น. ค่ะ'
+                              : 'Friday Free Day phone pickup opens during 18:15–22:45.'}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <>
                   {!kidHasPhone && (
                     <div className="rounded-2xl border-2 border-[#D4E3EE] bg-[#F1F7FB] p-3.5 text-xs font-bold text-[#254B6E]">
                       📵{' '}
@@ -4114,6 +4229,8 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
                         </button>
                       )}
                     </div>
+                  )}
+                    </>
                   )}
                 </div>
               );

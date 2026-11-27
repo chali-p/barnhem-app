@@ -921,6 +921,19 @@ export default function App() {
     [commitStateChange]
   );
 
+  const handleDeleteReturnHomePhoto = useCallback(
+    (photoId: string) => {
+      commitStateChange(
+        (prev) => ({
+          ...prev,
+          returnHomePhotos: prev.returnHomePhotos.filter((p) => p.id !== photoId),
+        }),
+        'Delete Timestamp Check-In Photo'
+      );
+    },
+    [commitStateChange]
+  );
+
   // --- Community Features: Announcements, Secret Polls, Outing Trips & Private Backchannel ---
   const handleCastSecretVote = useCallback(
     (pollId: string, optionId: string, kidId: string) => {
@@ -2334,25 +2347,15 @@ export default function App() {
                 >
                   🚪 {lang === 'th' ? 'ออกจากระบบน้อง' : 'Sign Out Kid'}
                 </button>
-              ) : (
+              ) : activeTenant ? (
                 <button
                   type="button"
                   onClick={() => setMode('portal')}
                   className="min-h-[36px] rounded-xl border border-[#8FD4C6] bg-[#E8FAF6] hover:bg-[#D5F4EE] px-2.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-extrabold text-[#114A42] whitespace-nowrap cursor-pointer transition-colors"
                 >
-                  {activeTenant
-                    ? lang === 'th'
-                      ? '🏛️ พื้นที่มูลนิธิของฉัน'
-                      : '🏛️ My Foundation Portal'
-                    : isMasterAdminEmail(cloudUser?.email)
-                    ? lang === 'th'
-                      ? '🛡️ เปิดสิทธิ์มูลนิธิอื่น'
-                      : '🛡️ Org Approvals'
-                    : lang === 'th'
-                    ? '🏛️ สมัครใช้ระบบฟรี'
-                    : '🏛️ Free Org Trial'}
+                  {lang === 'th' ? '🏛️ พื้นที่มูลนิธิของฉัน' : '🏛️ My Foundation Portal'}
                 </button>
-              )}
+              ) : null}
               <button
                 type="button"
                 onClick={() => setLang((prev) => (prev === 'th' ? 'en' : 'th'))}
@@ -2487,6 +2490,8 @@ export default function App() {
               )
             }
             onShowAlert={showAlert}
+            onSaveReturnHomePhoto={handleSaveReturnHomePhoto}
+            onDeleteReturnHomePhoto={handleDeleteReturnHomePhoto}
             organizationName={activeTenant?.orgName}
             linkedKidSession={linkedKidSession}
             linkedKidMember={
@@ -2666,6 +2671,8 @@ export default function App() {
             onAddWeeklyActivityLog={handleAddWeeklyActivityLog}
             onDeleteWeeklyActivityLog={handleDeleteWeeklyActivityLog}
             onClearWeeklyActivityLogs={handleClearWeeklyActivityLogs}
+            onSaveReturnHomePhoto={handleSaveReturnHomePhoto}
+            onDeleteReturnHomePhoto={handleDeleteReturnHomePhoto}
           />
         )}
 
@@ -2882,6 +2889,8 @@ export default function App() {
                 'Resolve Sick Case'
               )
             }
+            onSaveReturnHomePhoto={handleSaveReturnHomePhoto}
+            onDeleteReturnHomePhoto={handleDeleteReturnHomePhoto}
           />
         )}
 

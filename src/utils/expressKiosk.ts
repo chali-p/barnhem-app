@@ -369,10 +369,129 @@ export function evaluateOneTapGoToSchool(
     ].slice(0, 60),
   });
 
-  // Public Holiday or Weekend
-  if (isHolidayToday || day === 0 || day === 6) {
-    const label = isHolidayToday ? 'วันหยุดราชการ' : day === 6 ? 'เช้าวันเสาร์' : 'เช้าวันอาทิตย์';
-    const stars = isHolidayToday ? 10 : day === 0 && mins <= 8 * 60 + 15 ? 15 : mins <= 8 * 60 + 30 ? 10 : 0;
+  // Saturday Morning Check-in (After Friday Free Day): <= 08:30 (+10 ⭐), 08:31 (late 0⭐), >= 08:32 (hold phone until 18:30)
+  if (day === 6 && !isHolidayToday) {
+    if (mins <= 8 * 60 + 30) {
+      const updated = appendStarTx(kid, 10, '☀️ เช็คอินเช้าวันเสาร์ตรงเวลา (ก่อน 08:30 น. +10 ⭐)', {
+        daily: {
+          ...kid.daily,
+          morningDressedConfirmed: true,
+          vanOrMorningChecked: true,
+        },
+      });
+      return {
+        success: true,
+        emoji: '☀️✨',
+        starsDelta: 10,
+        bannerTitle:
+          lang === 'th'
+            ? `น้อง${kid.nickname} เช็คอินเช้าวันเสาร์สำเร็จ! +10 ⭐`
+            : `${kid.nickname} Saturday Check-In On Time! +10 ⭐`,
+        bannerSubtitle:
+          lang === 'th'
+            ? 'ตื่นเช็คอินก่อน 08:30 น. หลังคืนวันศุกร์ Free Day เรียบร้อยค่ะ'
+            : 'Checked in before 08:30 after Friday Free Day!',
+        updatedKid: updated,
+      };
+    }
+
+    if (mins === 8 * 60 + 31) {
+      const updated = appendStarTx(kid, 0, '⚠️ เช็คอินเช้าวันเสาร์ (08:31 น. · เลย 08:30 น. · 0 ⭐)', {
+        daily: {
+          ...kid.daily,
+          morningDressedConfirmed: true,
+          vanOrMorningChecked: true,
+        },
+      });
+      return {
+        success: true,
+        emoji: '⚠️⏰',
+        starsDelta: 0,
+        bannerTitle:
+          lang === 'th'
+            ? `น้อง${kid.nickname} เช็คอินเวลา 08:31 น. (เลย 08:30 น.)`
+            : `${kid.nickname} Checked In at 08:31 (Past 08:30)`,
+        bannerSubtitle:
+          lang === 'th'
+            ? 'เลยเวลา 08:30 น. แล้ว รอบนี้ไม่ได้รับดาวนะคะ (คราวหน้าตั้งปลุกเผื่อเวลาด้วยนะคะ)'
+            : 'Past 08:30 so no stars awarded. Set an alarm earlier next time!',
+        updatedKid: updated,
+      };
+    }
+
+    const updated = appendStarTx(
+      kid,
+      0,
+      isSickToday || isAwayToday
+        ? `☀️ เช็คอินเช้าวันเสาร์ (${minsToHHMM(mins)} น. · ยกเว้นโทษป่วย/ลาพัก)`
+        : `📵 เช็คอินเช้าวันเสาร์เกิน 08:30 น. (${minsToHHMM(mins)} น. · ยึดมือถือถึง 18:30 น.)`,
+      {
+        penalty:
+          isSickToday || isAwayToday
+            ? kid.penalty
+            : {
+                ...kid.penalty,
+                phoneConfiscatedUntil1830Date: todayKey,
+                phonePrivilegeActive: false,
+              },
+        daily: {
+          ...kid.daily,
+          morningDressedConfirmed: true,
+          vanOrMorningChecked: true,
+        },
+      }
+    );
+    return {
+      success: true,
+      emoji: isSickToday || isAwayToday ? '💚' : '📵⚖️',
+      starsDelta: 0,
+      penaltyAlert:
+        isSickToday || isAwayToday
+          ? undefined
+          : {
+              kidNickname: kid.nickname,
+              kidEmoji: kid.emoji,
+              headline:
+                lang === 'th'
+                  ? 'เลยกำหนดเช็คอินเช้าวันเสาร์ (08:30 น.) แล้ว!'
+                  : 'Past Saturday Morning Deadline (08:30)!',
+              reasonLine:
+                lang === 'th'
+                  ? `เช็คอินเวลา ${minsToHHMM(mins)} น. (กำหนดเช็คอินก่อน 08:30 น.)`
+                  : `Checked in at ${minsToHHMM(mins)} (deadline before 08:30)`,
+              penaltyText:
+                lang === 'th'
+                  ? 'ยึดมือถือถึง 18:30 น. วันนี้'
+                  : 'Phone held until 18:30 today',
+              clockNote:
+                lang === 'th'
+                  ? `บันทึกเวลา ${minsToHHMM(mins)} น.`
+                  : `Recorded at ${minsToHHMM(mins)}`,
+            },
+      bannerTitle:
+        isSickToday || isAwayToday
+          ? lang === 'th'
+            ? `น้อง${kid.nickname} เช็คอินเช้าวันเสาร์แล้ว (ยกเว้นโทษ)`
+            : `${kid.nickname} Saturday Check-In (Waived)`
+          : lang === 'th'
+          ? `น้อง${kid.nickname} เลยกำหนด 08:30 น. — ยึดมือถือถึง 18:30 น.`
+          : `${kid.nickname} Past 08:30 — Phone Held Until 18:30`,
+      bannerSubtitle:
+        isSickToday || isAwayToday
+          ? lang === 'th'
+            ? 'แจ้งป่วย/ลาพักไว้ ระบบยกเว้นบทลงโทษให้ค่ะ'
+            : 'Waived due to sick report / leave.'
+          : lang === 'th'
+          ? 'เช็คอินเกินกำหนดเช้าวันเสาร์ (08:30 น.) ระบบบันทึกยึดมือถือถึง 18:30 น. ค่ะ'
+          : 'Past Saturday morning deadline (08:30) — phone held until 18:30.',
+      updatedKid: updated,
+    };
+  }
+
+  // Public Holiday or Sunday
+  if (isHolidayToday || day === 0) {
+    const label = isHolidayToday ? 'วันหยุดราชการ' : 'เช้าวันอาทิตย์';
+    const stars = isHolidayToday ? 10 : mins <= 8 * 60 + 15 ? 15 : 0;
     const updated = appendStarTx(kid, stars, `🚌 ปุ่มด่วน "ไปโรงเรียน" (${label} +${stars} ⭐)`, {
       daily: {
         ...kid.daily,
@@ -390,8 +509,8 @@ export function evaluateOneTapGoToSchool(
           : `${kid.nickname} Morning Check-in OK ${stars > 0 ? `+${stars} ⭐` : ''}`,
       bannerSubtitle:
         lang === 'th'
-          ? 'วันหยุด/เสาร์-อาทิตย์ ไม่หักค่าไปโรงเรียน 70 ฿ ค่ะ'
-          : 'Holiday/weekend — no daily school allowance deduction.',
+          ? 'วันหยุด/วันอาทิตย์ ไม่หักค่าไปโรงเรียน 70 ฿ ค่ะ'
+          : 'Holiday/Sunday — no daily school allowance deduction.',
       updatedKid: updated,
     };
   }
@@ -1083,13 +1202,30 @@ export function compareLoginCommandsByTime(
 
 export function getEffectiveHomeQuickActions(
   settings?: Partial<AppSettings>,
-  includeHidden = false
+  includeHidden = false,
+  now?: Date
 ): HomeQuickActionConfig[] {
   const overrides = settings?.timedCommandSchedule;
   const curfewHHMM = minsToHHMM(getEffectiveHomeworkCurfewMins(settings));
-  const mapped = HOME_QUICK_ACTIONS.map((action) => {
+  const day = now?.getDay();
+  const isFridayFreeDay = day === 5 && !includeHidden;
+  const isSaturdayMorning = day === 6 && !includeHidden;
+
+  const fridayHiddenIds = new Set<HomeQuickActionId>([
+    'evening_computer_homework',
+    'evening_unlock_cartoon',
+    'night_homework_permission',
+    'night_return_phone',
+    'daily_penalty',
+  ]);
+
+  const baseList = isFridayFreeDay
+    ? HOME_QUICK_ACTIONS.filter((a) => !fridayHiddenIds.has(a.id))
+    : HOME_QUICK_ACTIONS;
+
+  const mapped = baseList.map((action) => {
     const ov = overrides?.[action.id];
-    const startMins =
+    let startMins =
       ov &&
       typeof ov.startMins === 'number' &&
       Number.isFinite(ov.startMins) &&
@@ -1097,7 +1233,7 @@ export function getEffectiveHomeQuickActions(
       ov.startMins < 1440
         ? Math.round(ov.startMins)
         : action.startMins;
-    const endMins =
+    let endMins =
       ov &&
       typeof ov.endMins === 'number' &&
       Number.isFinite(ov.endMins) &&
@@ -1105,7 +1241,7 @@ export function getEffectiveHomeQuickActions(
       ov.endMins < 1440
         ? Math.round(ov.endMins)
         : action.endMins;
-    const earlyGraceMins =
+    let earlyGraceMins =
       ov &&
       typeof ov.earlyGraceMins === 'number' &&
       Number.isFinite(ov.earlyGraceMins) &&
@@ -1113,7 +1249,7 @@ export function getEffectiveHomeQuickActions(
       ov.earlyGraceMins <= 120
         ? Math.round(ov.earlyGraceMins)
         : action.earlyGraceMins;
-    const deadlineMins =
+    let deadlineMins =
       ov &&
       typeof ov.deadlineMins === 'number' &&
       Number.isFinite(ov.deadlineMins) &&
@@ -1127,16 +1263,60 @@ export function getEffectiveHomeQuickActions(
       ov && typeof ov.rewardStars === 'number' && Number.isFinite(ov.rewardStars)
         ? Math.max(0, Math.min(50, Math.round(ov.rewardStars)))
         : action.rewardStars;
-    const emoji = ov?.emoji?.trim() || action.emoji;
-    const titleTh = ov?.titleTh?.trim() || action.titleTh;
-    const titleEn = ov?.titleEn?.trim() || action.titleEn;
-    const descriptionTh = ov?.descriptionTh !== undefined ? ov.descriptionTh : action.descriptionTh;
-    const descriptionEn = ov?.descriptionEn !== undefined ? ov.descriptionEn : action.descriptionEn;
-    const penaltyPreset = ov?.penaltyPreset !== undefined ? ov.penaltyPreset : action.penaltyPreset;
+    let emoji = ov?.emoji?.trim() || action.emoji;
+    let titleTh = ov?.titleTh?.trim() || action.titleTh;
+    let titleEn = ov?.titleEn?.trim() || action.titleEn;
+    let descriptionTh = ov?.descriptionTh !== undefined ? ov.descriptionTh : action.descriptionTh;
+    let descriptionEn = ov?.descriptionEn !== undefined ? ov.descriptionEn : action.descriptionEn;
+    let penaltyPreset = ov?.penaltyPreset !== undefined ? ov.penaltyPreset : action.penaltyPreset;
     const penaltyNote = ov?.penaltyNote !== undefined ? ov.penaltyNote : action.penaltyNote;
     const commandType: LoginCommandType = ov?.commandType ?? action.commandType;
     const enabled = ov?.enabled !== undefined ? Boolean(ov.enabled) : action.enabled;
     const hidden = ov?.hidden !== undefined ? Boolean(ov.hidden) : action.hidden;
+
+    // Friday Free Day exact schedule & labels:
+    // 1) กลับบ้านและเก็บโทรศัพท์มือถือ 15:00-18:00
+    // 2) มารับโทรศัพท์มือถือ 18:15-22:45 (คืนวันศุกร์ไม่ต้องเก็บมือถือ)
+    if (isFridayFreeDay) {
+      if (action.id === 'afternoon_home') {
+        startMins = 15 * 60;
+        endMins = 18 * 60;
+        deadlineMins = 18 * 60;
+        earlyGraceMins = 15;
+        penaltyPreset = 'no_fine_zero_stars';
+        titleTh = 'กลับบ้านและเก็บโทรศัพท์มือถือ';
+        titleEn = 'Return Home & Store Phone';
+        descriptionTh =
+          'วันศุกร์ Free Day · กลับบ้าน เปลี่ยนชุด และเก็บโทรศัพท์มือถือ 15:00–18:00 น. (วันนี้สั่งเซเว่นได้นะคะ)';
+        descriptionEn =
+          'Friday Free Day · Return home and store mobile phone 15:00–18:00 (7-Eleven orders available today!)';
+      } else if (action.id === 'evening_uniform_phone') {
+        emoji = '📱';
+        startMins = 18 * 60 + 15;
+        endMins = 22 * 60 + 45;
+        deadlineMins = 22 * 60 + 45;
+        earlyGraceMins = 0;
+        penaltyPreset = 'no_fine_zero_stars';
+        titleTh = 'มารับโทรศัพท์มือถือ';
+        titleEn = 'Pick Up Mobile Phone';
+        descriptionTh =
+          'วันศุกร์ Free Day · มารับโทรศัพท์มือถือ 18:15–22:45 น. · คืนวันศุกร์ไม่ต้องเก็บมือถือค่ะ (ตื่นเช็คอินเช้าวันเสาร์ก่อน 08:30 น.)\nทุกคนที่มีโทรศัพท์จะต้องตั้งปลุกก่อนเวลาเผื่อเดินมาเช็คอินด้วยนะเด็กๆ';
+        descriptionEn =
+          'Friday Free Day · Pick up phone 18:15–22:45 · Keep phone tonight (Saturday check-in before 08:30). Everyone with a phone must set an alarm ahead of time to walk over and check in!';
+      }
+    } else if (isSaturdayMorning && action.id === 'morning_school') {
+      emoji = '☀️';
+      startMins = 6 * 60 + 30;
+      endMins = 9 * 60;
+      deadlineMins = 8 * 60 + 30;
+      earlyGraceMins = 0;
+      titleTh = 'เช็คอินเช้าวันเสาร์ (หลัง Free Day)';
+      titleEn = 'Saturday Morning Check-In';
+      descriptionTh =
+        'ตื่นมาเช็คอินก่อน 08:30 น. (+10 ⭐) · เกินกำหนด ยึดมือถือถึง 18:30 น.';
+      descriptionEn =
+        'Wake up & check in before 08:30 (+10 ⭐) · Past deadline holds phone until 18:30.';
+    }
 
     const sStr = minsToHHMM(startMins);
     const eStr = minsToHHMM(endMins);
@@ -1163,9 +1343,13 @@ export function getEffectiveHomeQuickActions(
       tapLabelEn: `${emoji} ${titleEn}`,
       windowLabelTh: isReturn
         ? `${sStr}–${eStr} น. (Curfew ${ov?.deadlineMins !== undefined ? dStr : curfewHHMM})`
+        : isSaturdayMorning && action.id === 'morning_school'
+        ? `${sStr}–${eStr} น. (ก่อน 08:30 น.)`
         : `${sStr}–${eStr} น.`,
       windowLabelEn: isReturn
         ? `${sStr}–${eStr} (${ov?.deadlineMins !== undefined ? dStr : curfewHHMM} Curfew)`
+        : isSaturdayMorning && action.id === 'morning_school'
+        ? `${sStr}–${eStr} (Before 08:30)`
         : `${sStr}–${eStr}`,
     };
   });
@@ -1279,7 +1463,7 @@ export function isHomeActionOpenAt(
   now: Date,
   settings?: Partial<AppSettings>
 ): boolean {
-  const cfg = getEffectiveHomeQuickActions(settings).find((a) => a.id === actionId);
+  const cfg = getEffectiveHomeQuickActions(settings, false, now).find((a) => a.id === actionId);
   if (!cfg || !cfg.enabled || cfg.hidden) return false;
   if (actionId === 'night_return_phone') {
     const autoRule = getAutoReturnPhoneRuleConfig(settings);
@@ -1314,7 +1498,7 @@ export function isHomeActionExpiredAt(
   now: Date,
   settings?: Partial<AppSettings>
 ): boolean {
-  const cfg = getEffectiveHomeQuickActions(settings).find((a) => a.id === actionId);
+  const cfg = getEffectiveHomeQuickActions(settings, false, now).find((a) => a.id === actionId);
   if (!cfg || !cfg.enabled || cfg.hidden) return true;
   if (actionId === 'night_return_phone') {
     const autoRule = getAutoReturnPhoneRuleConfig(settings);
@@ -1840,7 +2024,9 @@ export function evaluateOneTapHomeAction(
   isSickToday = false,
   detailOverride?: string
 ): KioskResult {
-  const cfg = getEffectiveHomeQuickActions(settings).find((a) => a.id === actionId)!;
+  const cfg =
+    getEffectiveHomeQuickActions(settings, false, now).find((a) => a.id === actionId) ??
+    getEffectiveHomeQuickActions(settings, true).find((a) => a.id === actionId)!;
   if (!isHomeActionOpenAt(actionId, now, settings)) {
     return {
       success: false,
@@ -1848,7 +2034,7 @@ export function evaluateOneTapHomeAction(
       starsDelta: 0,
       bannerTitle:
         lang === 'th'
-          ? `ปุ่ม "${cfg.titleTh}" ล็อกอยู่นอกเวลา`
+          ? `ปุ่ม "${cfg.titleTh}" ปิดให้บริการในเวลานี้`
           : `"${cfg.titleEn}" is Locked`,
       bannerSubtitle:
         lang === 'th'
@@ -2122,20 +2308,27 @@ export function evaluateOneTapHomeAction(
         },
       }
     );
+    const isFridayFreeDay = now.getDay() === 5;
     return {
       success: true,
-      emoji: kid.group === 1 ? '🥷🏡' : '🏡✨',
+      emoji: isFridayFreeDay ? '🎈📱' : kid.group === 1 ? '🥷🏡' : '🏡✨',
       starsDelta: totalStars,
-      bannerTitle:
-        lang === 'th'
-          ? `น้อง${kid.nickname} กลับบ้านแล้ว! ${totalStars > 0 ? `+${totalStars} ⭐` : ''}`
-          : `${kid.nickname} Back Home! ${totalStars > 0 ? `+${totalStars} ⭐` : ''}`,
-      bannerSubtitle:
-        lang === 'th'
-          ? kid.group === 1
-            ? 'เปลี่ยนเป็นชุดอยู่บ้านและเริ่มภารกิจ Speedy Ninja 20 นาที!'
-            : 'เปลี่ยนเป็นชุดอยู่บ้านเรียบร้อย เตรียมซักชุดนักเรียนตามคิวได้เลยค่ะ'
-          : 'Returned home & changed into lounge wear.',
+      bannerTitle: isFridayFreeDay
+        ? lang === 'th'
+          ? `น้อง${kid.nickname} กลับบ้านและเก็บโทรศัพท์มือถือเรียบร้อย! ${totalStars > 0 ? `+${totalStars} ⭐` : ''}`
+          : `${kid.nickname} Home & Phone Stored! ${totalStars > 0 ? `+${totalStars} ⭐` : ''}`
+        : lang === 'th'
+        ? `น้อง${kid.nickname} กลับบ้านแล้ว! ${totalStars > 0 ? `+${totalStars} ⭐` : ''}`
+        : `${kid.nickname} Back Home! ${totalStars > 0 ? `+${totalStars} ⭐` : ''}`,
+      bannerSubtitle: isFridayFreeDay
+        ? lang === 'th'
+          ? '🎈 คืนวันศุกร์ Free Day: วันนี้สามารถสั่งเซเว่นได้นะคะ! และมารับมือถือได้เวลา 18:15–22:45 น.'
+          : '🎈 Friday Free Day: 7-Eleven orders are available today! Pick up phone 18:15–22:45.'
+        : lang === 'th'
+        ? kid.group === 1
+          ? 'เปลี่ยนเป็นชุดอยู่บ้านและเริ่มภารกิจ Speedy Ninja 20 นาที!'
+          : 'เปลี่ยนเป็นชุดอยู่บ้านเรียบร้อย เตรียมซักชุดนักเรียนตามคิวได้เลยค่ะ'
+        : 'Returned home & changed into lounge wear.',
       updatedKid: updated,
     };
   }
@@ -2227,18 +2420,25 @@ export function evaluateOneTapHomeAction(
         },
       }
     );
+    const isFridayFreeDay = now.getDay() === 5;
     return {
       success: true,
-      emoji: '👔📱✨',
+      emoji: isFridayFreeDay ? '🎈📱✨' : '👔📱✨',
       starsDelta: stars,
-      bannerTitle:
-        lang === 'th'
-          ? `น้อง${kid.nickname} ตรวจชุด & รับมือถือสำเร็จ! +${stars} ⭐`
-          : `${kid.nickname} Uniform OK & Phone Released! +${stars} ⭐`,
-      bannerSubtitle:
-        lang === 'th'
-          ? 'ตรวจชุดนักเรียนเรียบร้อย และบันทึกขอรับโทรศัพท์มือถือรอบค่ำแล้วค่ะ'
-          : 'Uniform checked and evening phone released!',
+      bannerTitle: isFridayFreeDay
+        ? lang === 'th'
+          ? `น้อง${kid.nickname} มารับโทรศัพท์มือถือสำเร็จ!${stars > 0 ? ` +${stars} ⭐` : ''}`
+          : `${kid.nickname} Picked Up Phone!${stars > 0 ? ` +${stars} ⭐` : ''}`
+        : lang === 'th'
+        ? `น้อง${kid.nickname} ตรวจชุด & รับมือถือสำเร็จ! +${stars} ⭐`
+        : `${kid.nickname} Uniform OK & Phone Released! +${stars} ⭐`,
+      bannerSubtitle: isFridayFreeDay
+        ? lang === 'th'
+          ? 'คืนวันศุกร์ Free Day ไม่ต้องเก็บมือถือค่ะ · อย่าลืมตื่นมาเช็คอินเช้าวันเสาร์ก่อน 08:30 น.\nทุกคนที่มีโทรศัพท์จะต้องตั้งปลุกก่อนเวลาเผื่อเดินมาเช็คอินด้วยนะเด็กๆ'
+          : 'Friday Free Day: Keep your phone tonight · Check in Saturday morning before 08:30.\nEveryone with a phone must set an alarm ahead of time to walk over and check in!'
+        : lang === 'th'
+        ? 'ตรวจชุดนักเรียนเรียบร้อย และบันทึกขอรับโทรศัพท์มือถือรอบค่ำแล้วค่ะ'
+        : 'Uniform checked and evening phone released!',
       updatedKid: updated,
     };
   }

@@ -345,17 +345,20 @@ export function getDynamicTimeEventAnnouncement(
       windowEn = 'Holiday Morning (08:00–10:00)';
       timeTitleTh =
         day === 6
-          ? '☀️ เช้าวันเสาร์ (วันศุกร์ Free Day น้องขอนอนเพิ่ม): เช็คอิน 08:00–08:30 น.'
+          ? '☀️ เช้าวันเสาร์ (หลังคืนวันศุกร์ Free Day): เช็คอินก่อน 08:30 น.'
           : day === 0
           ? '☀️ เช้าวันอาทิตย์: เช็คอินทำเวร อาบน้ำ & เวรครัว 08:00–08:15 น.'
           : '🏖️ เช้าวันหยุดนักขัตฤกษ์: พักผ่อนและแต่งชุดเทศกาล/ชุดเที่ยวได้ทั้งวัน!';
       timeTitleEn =
         day === 6
-          ? '☀️ Saturday Morning (Friday Free Day Sleep-In): Check in 08:00–08:30'
+          ? '☀️ Saturday Morning (After Free Day): Check in before 08:30'
           : day === 0
           ? '☀️ Sunday Morning: Chores & Shower Check-In 08:00–08:15'
           : '🏖️ Public Holiday Morning: Casual & Festival outfits unlocked all day!';
-      timeBodyTh = `เวรประจำบ้านวันนี้: ${dailyChoreTitleTh} · เวรห้องครัวเช้า (${day === 0 ? 'อาทิตย์ 09:15 น.' : 'เสาร์/นักขัตฤกษ์ 09:30 น.'})`;
+      timeBodyTh =
+        day === 6
+          ? `ตื่นมาเช็คอินก่อน 08:30 น. (+10 ⭐) (เกินเวลา ยึดมือถือถึง 18:30 น.) · เวรบ้าน: ${dailyChoreTitleTh} · เวรครัวเช้า 09:30 น.`
+          : `เวรประจำบ้านวันนี้: ${dailyChoreTitleTh} · เวรห้องครัวเช้า (${day === 0 ? 'อาทิตย์ 09:15 น.' : 'เสาร์/นักขัตฤกษ์ 09:30 น.'})`;
       timeBodyEn = `Today's house chore: ${dailyChoreTitleEn} · Morning kitchen duty (${day === 0 ? 'Sun 09:15' : 'Sat/Holiday 09:30'}).`;
     } else if (mins < 15 * 60 + 30) {
       windowTh = 'ช่วงกลางวันหยุด (10:00–15:30 น.)';
@@ -421,6 +424,17 @@ export function getDynamicTimeEventAnnouncement(
       timeBodyEn = `After school: 15:30 kitchen shift and house chore "${dailyChoreTitleEn}".`;
       badgeTh = '🏫 เหตุการณ์กลางวัน';
       badgeEn = '🏫 Daytime Event';
+    } else if (day === 5 && mins >= 15 * 60) {
+      windowTh = 'วันศุกร์ Free Day (15:00–22:45 น.)';
+      windowEn = 'Friday Free Day (15:00–22:45)';
+      timeTitleTh = '🎈 วันศุกร์ Free Day! วันนี้สามารถสั่งเซเว่นได้นะคะ 🏪';
+      timeTitleEn = '🎈 Happy Friday Free Day! 7-Eleven orders available today! 🏪';
+      timeBodyTh =
+        'กลับบ้านและเก็บโทรศัพท์มือถือ 15:00–18:00 น. · มารับโทรศัพท์มือถือ 18:15–22:45 น. · คืนวันศุกร์ไม่ต้องเก็บมือถือ แต่ตื่นมาเช็คอินเช้าวันเสาร์ก่อน 08:30 น.\nทุกคนที่มีโทรศัพท์จะต้องตั้งปลุกก่อนเวลาเผื่อเดินมาเช็คอินด้วยนะเด็กๆ';
+      timeBodyEn =
+        'Return home & store phone 15:00–18:00 · Pick up phone 18:15–22:45 · Keep phone tonight, check in Saturday before 08:30.\nEveryone with a phone must set an alarm ahead of time to walk over and check in!';
+      badgeTh = '🎈 วันศุกร์ Free Day';
+      badgeEn = '🎈 Friday Free Day';
     } else if (mins < 18 * 60 + 30) {
       windowTh = 'กะเย็นกลับบ้าน (15:30–18:30 น.)';
       windowEn = 'Afternoon Return (15:30–18:30)';
@@ -439,14 +453,8 @@ export function getDynamicTimeEventAnnouncement(
     } else if (mins < 20 * 60 + 30) {
       windowTh = 'ช่วงค่ำ & เวลาแต่งตัวอิสระ (18:30–20:30 น.)';
       windowEn = 'Evening & Free Dress-Up (18:30–20:30)';
-      timeTitleTh =
-        day === 5
-          ? '🎉 เย็นวันศุกร์ Free Day! ปลดล็อกชุดใส่เที่ยว-ชุดเทศกาล & นอนเพิ่มเช้าวันเสาร์'
-          : '✨ หลัง 18:30 น. ปลดล็อกชุดเที่ยว & ช่วงทำภารกิจรอบค่ำแล้ว!';
-      timeTitleEn =
-        day === 5
-          ? '🎉 Friday Free Day! Casual & festival outfits unlocked!'
-          : '✨ After 18:30: Casual outfits unlocked & evening routine active!';
+      timeTitleTh = '✨ หลัง 18:30 น. ปลดล็อกชุดเที่ยว & ช่วงทำภารกิจรอบค่ำแล้ว!';
+      timeTitleEn = '✨ After 18:30: Casual outfits unlocked & evening routine active!';
       timeBodyTh =
         kid.group === 1
           ? 'เตรียมเข้าด่านบอสภาษาเวลา 20:00 น. ขอ PIN พี่เลี้ยงปลดล็อกการ์ตูนค่ะ'

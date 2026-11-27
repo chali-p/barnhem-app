@@ -4,7 +4,7 @@ import {
   LEGACY_KID_PIN_MIGRATIONS,
   TARGET_NOV25_KID_PINS,
 } from '../data/initialData';
-import { AppState } from '../types/barnhem';
+import { AppState, ReturnHomePhoto } from '../types/barnhem';
 import { pruneWeeklyActivityLogs } from './activityLogRetention';
 import { ensureCurrentWeekAllowance } from './piggyBank';
 import { getDateKey } from './timeRules';
@@ -199,6 +199,47 @@ export async function postSyncToDriveOrSheet(state: AppState, eventLabel: string
   }
 }
 
+export async function postTimestampPhotoToGoogleSheet(
+  webhookUrl: string | undefined | null,
+  photo: ReturnHomePhoto,
+  orgName: string
+): Promise<boolean> {
+  const url = webhookUrl?.trim();
+  if (!url) return false;
+  try {
+    const payload = {
+      app: 'Barnhem Timestamp Check-In',
+      event: 'timestamp_checkin_photo',
+      syncedAt: photo.capturedAt,
+      orgName,
+      timestampCheckIn: {
+        id: photo.id,
+        dateKey: photo.dateKey,
+        capturedAt: photo.capturedAt,
+        capturedAtThai: new Date(photo.capturedAt).toLocaleString('th-TH'),
+        personName: photo.kidNickname,
+        personId: photo.kidId,
+        activityTag: photo.activityTag ?? 'general_checkin',
+        activityLabel: photo.activityLabel ?? 'เช็คอินไทม์แสตมป์',
+        note: photo.note ?? '',
+        driveFolderUrl: photo.driveFolderUrl ?? '',
+        imageBase64: photo.imageBase64,
+      },
+    };
+    await fetch(url, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      body: JSON.stringify(payload),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function downloadJsonBackup(state: AppState): void {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -214,11 +255,29 @@ export function downloadJsonBackup(state: AppState): void {
 export const GOOGLE_APPS_SCRIPT_TEMPLATE = `function doPost(e) {
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    if (body.event === 'timestamp_checkin_photo' && body.timestampCheckIn) {
+      var tsSheet = ss.getSheetByName('TimestampCheckIns') || ss.insertSheet('TimestampCheckIns');
+      if (tsSheet.getLastRow() === 0) {
+        tsSheet.appendRow(['เวลาบันทึก (ไทย)', 'วันที่', 'ชื่อผู้เช็คอิน', 'รหัส', 'กิจกรรม', 'หมายเหตุ', 'องค์กร', 'รูปภาพ Base64']);
+      }
+      var c = body.timestampCheckIn;
+      tsSheet.appendRow([
+        c.capturedAtThai || c.capturedAt || new Date().toISOString(),
+        c.dateKey || '',
+        c.personName || '',
+        c.personId || '',
+        c.activityLabel || '',
+        c.note || '',
+        body.orgName || '',
+        c.imageBase64 || ''
+      ]);
+      return ContentService.createTextOutput(JSON.stringify({ ok: true, sheet: 'TimestampCheckIns' })).setMimeType(ContentService.MimeType.JSON);
+    }
     var sheet = ss.getSheetByName('Logs') || ss.insertSheet('Logs');
     if (sheet.getLastRow() === 0) {
       sheet.appendRow(['เวลาซิงค์', 'เหตุการณ์', 'สมาชิกทั้งหมด', 'จำนวนเด็ก', 'รายงานป่วย', 'ข้อมูลเต็ม (JSON)']);
     }
-    var body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     var sum = body.summary || {};
     sheet.appendRow([
       body.syncedAt || new Date().toISOString(),

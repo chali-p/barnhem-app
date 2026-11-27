@@ -141,6 +141,17 @@
   animation: shake-pin 340ms ease-in-out;
 }
 
+@keyframes floatSlow {
+  0%, 100% { transform: translateY(0px) rotate(-1deg); }
+  50% { transform: translateY(-4px) rotate(1.5deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motion-safe\:animate-\[floatSlow_4\.5s_ease-in-out_infinite\] {
+    animation: none !important;
+  }
+}
+
 .theme-card {
   background-color: var(--theme-surface);
   border-color: var(--theme-border);

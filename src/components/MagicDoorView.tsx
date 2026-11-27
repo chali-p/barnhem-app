@@ -17,6 +17,7 @@ import {
   Member,
   ModalAlertPayload,
   PastelTheme,
+  ReturnHomePhoto,
   SickReport,
   StaffLeaveRecord,
   TimedScheduleSlot,
@@ -81,6 +82,7 @@ import {
 } from '../utils/trashDuty';
 import { PinPadModal, QrScannerModal } from './CenteredAlertModal';
 import { CloudSyncBanner } from './CloudSyncBanner';
+import { FridayBalloonBanner } from './FridayBalloonBanner';
 import { HomeAnnouncementBox } from './HomeAnnouncementBox';
 import { HouseRulesGuideView } from './HouseRulesGuideView';
 import { KidDutySchedulesPanel } from './KidDutySchedulesPanel';
@@ -88,6 +90,7 @@ import { LoginCommandsSettingsCard } from './LoginCommandsSettingsCard';
 import { PenaltyNoticeModal } from './PenaltyNoticeModal';
 import { StaffLeavePanel } from './StaffLeavePanel';
 import { StaffRosterPanel } from './StaffRosterPanel';
+import { TimestampCameraModal } from './TimestampCameraModal';
 
 export interface ThemeSwatchOption {
   id: PastelTheme;
@@ -152,6 +155,8 @@ interface MagicDoorViewProps {
   onToggleStaffTaskDone?: (annId: string, actorName: string) => void;
   onUpdateSettings?: (partial: Partial<AppState['settings']>) => void;
   onShowAlert: (payload: ModalAlertPayload) => void;
+  onSaveReturnHomePhoto?: (photo: ReturnHomePhoto) => void;
+  onDeleteReturnHomePhoto?: (photoId: string) => void;
   organizationName?: string;
   linkedKidSession?: LinkedKidSession | null;
   linkedKidMember?: Member | null;
@@ -194,6 +199,8 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
   onToggleStaffTaskDone,
   onUpdateSettings,
   onShowAlert,
+  onSaveReturnHomePhoto,
+  onDeleteReturnHomePhoto,
   organizationName,
   linkedKidSession = null,
   linkedKidMember = null,
@@ -249,6 +256,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
   } | null>(null);
   const [trashPinInput, setTrashPinInput] = useState('');
   const [penaltyNoticePopup, setPenaltyNoticePopup] = useState<KioskPenaltyAlert | null>(null);
+  const [timestampCamOpen, setTimestampCamOpen] = useState(false);
   const cloudSyncSectionRef = useRef<HTMLDivElement | null>(null);
   const pinGuard = usePinGuard('magic_door');
   const staffBoardPinGuard = usePinGuard('magic_door_staff_board');
@@ -281,6 +289,10 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     [members, creatorPins]
   );
   const todayKey = getDateKey(now);
+  const todayTimestampPhotos = useMemo(
+    () => (appState.returnHomePhotos ?? []).filter((p) => p.dateKey === todayKey),
+    [appState.returnHomePhotos, todayKey]
+  );
   const activeAwaySecretCode = useMemo(
     () => getActiveKidAwaySecretCode(appState.settings, todayKey),
     [appState.settings, todayKey]
@@ -298,8 +310,8 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     [customQuickCommands, now]
   );
   const effectiveHomeActions = useMemo(
-    () => getEffectiveHomeQuickActions(appState.settings).filter((a) => a.enabled),
-    [appState.settings]
+    () => getEffectiveHomeQuickActions(appState.settings, false, now).filter((a) => a.enabled),
+    [appState.settings, now]
   );
   const visibleHomeActions = useMemo(
     () => effectiveHomeActions.filter((a) => !isHomeActionExpiredAt(a.id, now, appState.settings)),
@@ -715,6 +727,8 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
 
   return (
     <div className="max-w-4xl mx-auto space-y-5 pt-2 sm:pt-6">
+      {now.getDay() === 5 && <FridayBalloonBanner lang={lang} variant="home" />}
+
       {/* Main Hero Frame Card with Right Theme Swatch Strip */}
       <div
         className="rounded-[26px] sm:rounded-[34px] border-2 p-3 sm:p-5 pastel-shadow transition-colors"
@@ -881,6 +895,25 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                     : lang === 'th'
                     ? 'ตั้งค่า/+เพิ่ม ▾'
                     : 'View / +Add ▾'}
+                </span>
+              </button>
+
+              {/* Clean Timestamp Check-In Camera Button inside Hero Card (Open to Outsiders, Auto-Sends to Google Sheet) */}
+              <button
+                type="button"
+                onClick={() => setTimestampCamOpen(true)}
+                className="min-h-[46px] w-full rounded-2xl border-2 border-[#BEDBF0] bg-[#F2F8FD] hover:bg-[#E4F1FB] px-4 py-2 text-xs sm:text-sm font-extrabold text-[#163B59] flex items-center justify-between gap-2 transition-colors cursor-pointer"
+              >
+                <span className="flex items-center gap-2 min-w-0">
+                  <span className="shrink-0">📸</span>
+                  <span className="truncate">
+                    {lang === 'th'
+                      ? 'กล้องเช็คอินไทม์แสตมป์'
+                      : 'Timestamp Check-In Camera'}
+                  </span>
+                </span>
+                <span className="rounded-xl bg-white/90 border border-[#C6DDF0] px-2.5 py-0.5 text-[11px] font-extrabold text-[#1D4D73] shrink-0">
+                  {lang === 'th' ? 'เปิดกล้อง / ส่ง Sheet →' : 'Open Camera →'}
                 </span>
               </button>
 
@@ -1563,6 +1596,8 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-3 pr-0.5">
+              {now.getDay() === 5 && <FridayBalloonBanner lang={lang} variant="menu" />}
+
               {/* Unified Login Command Settings Card / Modal (Unlocked via Staff/Creator PIN) */}
               {commandManagerMode === 'manager' && (
                 <LoginCommandsSettingsCard
@@ -3597,6 +3632,23 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
         notice={penaltyNoticePopup}
         lang={lang}
         onClose={() => setPenaltyNoticePopup(null)}
+      />
+
+      <TimestampCameraModal
+        open={timestampCamOpen}
+        kids={kids}
+        staffPins={staffPins}
+        now={now}
+        lang={lang}
+        orgName={organizationName || 'Barnhem Care & Kids'}
+        todayPhotos={todayTimestampPhotos}
+        allPhotos={appState.returnHomePhotos ?? []}
+        returnHomeDriveUrl={appState.settings.returnHomeDriveUrl}
+        syncWebhookUrl={appState.settings.syncWebhookUrl}
+        onSavePhoto={(photo) => onSaveReturnHomePhoto?.(photo)}
+        onDeletePhoto={onDeleteReturnHomePhoto}
+        onClose={() => setTimestampCamOpen(false)}
+        onShowAlert={onShowAlert}
       />
     </div>
   );

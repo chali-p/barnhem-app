@@ -10,6 +10,7 @@ import {
   Member,
   ModalAlertPayload,
   OutingTrip,
+  ReturnHomePhoto,
   SecretPoll,
   ShopCategory,
   ShopItem,
@@ -44,11 +45,11 @@ import { PinPadModal } from './CenteredAlertModal';
 import { CloudSyncBanner } from './CloudSyncBanner';
 import { HomeAnnouncementBox } from './HomeAnnouncementBox';
 import { LoginCommandsSettingsCard } from './LoginCommandsSettingsCard';
-import { AdminRegistrationsPanel } from './PlatformPortalView';
 import { MASTER_ADMIN_EMAIL } from '../services/firestoreSync';
 import { QrBarcodeSheet } from './QrBarcodeSheet';
 import { StaffLeavePanel } from './StaffLeavePanel';
 import { StaffRosterPanel } from './StaffRosterPanel';
+import { TimestampCameraModal } from './TimestampCameraModal';
 import { WeeklyActivityLogPanel } from './WeeklyActivityLogPanel';
 
 interface CreatorViewProps {
@@ -100,6 +101,8 @@ interface CreatorViewProps {
   onClearWeeklyActivityLogs?: () => void;
   onAddSickReport?: (report: SickReport) => void;
   onResolveSick?: (reportId: string) => void;
+  onSaveReturnHomePhoto?: (photo: ReturnHomePhoto) => void;
+  onDeleteReturnHomePhoto?: (photoId: string) => void;
 }
 
 export const CreatorView: React.FC<CreatorViewProps> = ({
@@ -151,9 +154,12 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
   onClearWeeklyActivityLogs,
   onAddSickReport,
   onResolveSick,
+  onSaveReturnHomePhoto,
+  onDeleteReturnHomePhoto,
 }) => {
   const [pinInput, setPinInput] = useState('');
   const [pinModalOpen, setPinModalOpen] = useState(false);
+  const [timestampGalleryOpen, setTimestampGalleryOpen] = useState(false);
 
   // Shop Item Creation State
   const [itemNameTh, setItemNameTh] = useState('');
@@ -486,6 +492,13 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
     staffLeaves,
     state.settings.isPublicHolidayToday
   );
+  const staffPins = Array.from(
+    new Set([
+      ...state.members.filter((m) => m.role === 'staff' || m.role === 'manager').map((m) => m.pin),
+      ...state.settings.creatorPins,
+    ])
+  );
+  const todayTimestampPhotos = (state.returnHomePhotos ?? []).filter((p) => p.dateKey === todayKey);
 
   return (
     <div className="space-y-6">
@@ -528,6 +541,13 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
               👁️ {lang === 'th' ? 'แสดงทั้งหมด' : 'Show All'}
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => setTimestampGalleryOpen(true)}
+            className="min-h-[42px] rounded-2xl border border-[#8FD4C6] bg-[#E8FAF6] hover:bg-[#D5F4EC] px-3.5 py-2 text-xs sm:text-sm font-extrabold text-[#114A42] cursor-pointer"
+          >
+            📸 {lang === 'th' ? `คลังภาพเช็คอิน (${todayTimestampPhotos.length}) & Google Sheet` : `Check-In Photos (${todayTimestampPhotos.length})`}
+          </button>
           {onSwitchToStaffMode && (
             <button
               type="button"
@@ -1722,29 +1742,21 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
         )}
       </div>
 
-      {/* 2C. Platform Sign-Up & Organization Approval Console (Platform Creator Only) */}
+      {/* 2C. Platform Sign-Up & Organization Approval Console (Temporarily Disabled) */}
       {!isExternalTenant && cloudUser?.email === MASTER_ADMIN_EMAIL && (
-        <section className="no-print rounded-[28px] border-2 border-[#9FE2D6] bg-[#FFFDF9] p-5 pastel-shadow space-y-4">
+        <section className="no-print rounded-[28px] border border-[#E5DAD0] bg-[#FAF6F1] p-5 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <h3 className="text-lg font-bold text-[#114A42]">
-                🏛️ {lang === 'th' ? 'ศูนย์เปิดสิทธิ์ให้มูลนิธิ / องค์กรอื่นใช้งาน' : 'External Organization Access Approvals'}
+              <h3 className="text-base sm:text-lg font-bold text-[#5E4E45]">
+                🔒 {lang === 'th' ? 'ปิดการใช้งาน "เปิดสิทธิ์มูลนิธิอื่น" ชั่วคราว' : 'External Organization Approvals Disabled'}
               </h3>
-              <p className="text-xs text-[#6E5C52] mt-0.5">
+              <p className="text-xs text-[#7B695F] mt-0.5">
                 {lang === 'th'
-                  ? 'เห็นเฉพาะคำขอเปิดสิทธิ์และสถานะเท่านั้น — ระบบแยกฐานข้อมูลไม่ให้คุณเข้าดูข้อมูลภายในขององค์กรอื่นค่ะ'
-                  : 'Manage organization access approvals only. Internal data of other foundations remains strictly private.'}
+                  ? 'ระบบเปิดรับและอนุมัติสิทธิ์มูลนิธิ/องค์กรอื่นถูกปิดการใช้งานชั่วคราวตามการตั้งค่าปัจจุบันค่ะ'
+                  : 'External foundation onboarding & approvals are currently disabled.'}
               </p>
             </div>
-            {renderSectionToggleButton('registrations', 'bg-[#E8FAF6] hover:bg-[#DCF7F2] border-[#8FD4C6] text-[#114A42]')}
           </div>
-          {!hiddenSections.registrations && (
-            <AdminRegistrationsPanel
-              cloudUser={cloudUser}
-              lang={lang}
-              onShowAlert={onShowAlert}
-            />
-          )}
         </section>
       )}
 
@@ -2349,6 +2361,25 @@ export const CreatorView: React.FC<CreatorViewProps> = ({
         onShowAlert={onShowAlert}
         collapsed={Boolean(hiddenSections.cloud)}
         onToggleCollapse={() => toggleSection('cloud')}
+      />
+
+      <TimestampCameraModal
+        open={timestampGalleryOpen}
+        kids={state.members.filter((m) => m.role === 'kid')}
+        staffPins={staffPins}
+        now={now}
+        lang={lang}
+        orgName={orgName}
+        todayPhotos={todayTimestampPhotos}
+        allPhotos={state.returnHomePhotos ?? []}
+        returnHomeDriveUrl={state.settings.returnHomeDriveUrl}
+        syncWebhookUrl={state.settings.syncWebhookUrl}
+        staffCreatorUnlocked={true}
+        initialTab="gallery"
+        onSavePhoto={(photo) => onSaveReturnHomePhoto?.(photo)}
+        onDeletePhoto={onDeleteReturnHomePhoto}
+        onClose={() => setTimestampGalleryOpen(false)}
+        onShowAlert={onShowAlert}
       />
     </div>
   );

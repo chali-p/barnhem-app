@@ -92,10 +92,12 @@ export function evaluateKidStepReminders(
   const SCHOOL_MORNING_CEILING = 8 * 60; // 08:00 น. เพดานเวลาสายวันไปโรงเรียน
   const PHONE_RETURN_CEILING = 23 * 60; // 23:00 น. เพดานคืนโทรศัพท์หลัง 22:45
 
+  const isFridayFreeDay = day === 5;
   const kidHasPhone = doesKidHavePhone(kid.id, settings);
   const canEveningPhone = kidHasPhone && canKidUseCommand('evening_uniform_phone', kid, settings);
   const canHwPerm = kidHasPhone && canKidUseCommand('night_homework_permission', kid, settings);
-  const canReturnPhone = kidHasPhone && canKidUseCommand('night_return_phone', kid, settings);
+  const canReturnPhone =
+    !isFridayFreeDay && kidHasPhone && canKidUseCommand('night_return_phone', kid, settings);
 
   // --- 1. Determine completion status of the 3 core daily shifts ---
   const morningDone =
@@ -104,12 +106,18 @@ export function evaluateKidStepReminders(
       : Boolean(kid.daily.vanOrMorningChecked);
 
   const afternoonDone =
-    kid.group === 1
+    isFridayFreeDay
+      ? Boolean(kid.daily.returnedHomeChecked)
+      : kid.group === 1
       ? Boolean(kid.daily.returnedHomeChecked && kid.daily.extraStudyChecked && kid.daily.choresChecked)
       : Boolean(kid.daily.returnedHomeChecked);
 
   const nightDone =
-    kid.group === 1
+    isFridayFreeDay
+      ? canEveningPhone
+        ? Boolean(kid.daily.eveningPhoneUnlocked)
+        : true
+      : kid.group === 1
       ? Boolean(kid.daily.bossStageUnlocked)
       : !canReturnPhone
       ? kid.group === 2
@@ -177,8 +185,7 @@ export function evaluateKidStepReminders(
     if (!kid.daily.vanOrMorningChecked) {
       if (day === 6) {
         const deadline = 8 * 60 + 30;
-        const hardLimit = 8 * 60 + 45;
-        const delta = mins - deadline;
+        const hardLimit = 8 * 60 + 31;
         pendingSteps.push({
           id: 'g2_sat_morning',
           shift: 'shift_morning',
@@ -187,20 +194,20 @@ export function evaluateKidStepReminders(
           approachingDeadline: mins >= 7 * 60 + 55 && mins <= hardLimit,
           deadlineMinutes: hardLimit,
           minutesDelta: mins - hardLimit,
-          titleTh: 'กะเช้าวันเสาร์: เช็คอินกะเช้า / ขอรับมือถือ & ไปโรงเรียน/กิจกรรม',
-          titleEn: 'Saturday Morning: Check-in / Phone Pickup',
+          titleTh: 'กะเช้าวันเสาร์: ตื่นมาเช็คอินก่อน 08:30 น.',
+          titleEn: 'Saturday Morning: Check-In Before 08:30',
           instructionTh:
             mins <= deadline
-              ? `วันเสาร์ (วันศุกร์ Free Day น้องขอนอนเพิ่ม): เช็คอินช่วง 08:00–08:30 น. รับ +10 ⭐ (อีก ${Math.max(0, deadline - mins)} นาที)`
-              : mins <= hardLimit
-              ? `⚠️ ช่วงเตือนสาย 08:31–08:45 น. (เหลือ ${hardLimit - mins} นาที ก่อนครบกำหนดยึดมือถือถึง 18:30 น.) รีบเช็คอินด่วน!`
-              : `🚨 เลย 08:45 น. มาแล้ว ${mins - hardLimit} นาที — กรุณาเช็คอินเพื่อรับทราบคำสั่งยึดมือถือถึง 18:30 น.`,
+              ? `เช้าวันเสาร์ (หลังคืนวันศุกร์ Free Day): ต้องตื่นมาเช็คอินก่อน 08:30 น. รับ +10 ⭐ (เหลือเวลาอีก ${Math.max(0, deadline - mins)} นาที)`
+              : mins === hardLimit
+              ? '⚠️ เลย 08:30 น. แล้ว — รีบเช็คอินทันที ก่อนถูกยึดมือถือถึง 18:30 น.!'
+              : `🚨 เลยกำหนด 08:30 น. แล้ว — กรุณาเช็คอินเพื่อรับทราบคำสั่งยึดมือถือถึง 18:30 น.`,
           instructionEn:
             mins <= deadline
-              ? `Saturday sleep-in window 08:00–08:30 for +10 ⭐ (${Math.max(0, deadline - mins)} min left).`
-              : mins <= hardLimit
-              ? `Warning window 08:31–08:45! Check in within ${hardLimit - mins} min to avoid holding phone until 18:30.`
-              : `Past 08:45 by ${mins - hardLimit} min — check in now (phone held until 18:30).`,
+              ? `Saturday check-in before 08:30 for +10 ⭐ (${Math.max(0, deadline - mins)} min left).`
+              : mins === hardLimit
+              ? 'Past 08:30! Check in right now to avoid phone hold until 18:30.'
+              : 'Past 08:30 deadline — check in now (phone held until 18:30).',
           ctaTh: '📱 ไปเช็คอินกะเช้า',
           ctaEn: '📱 Morning Check-In',
         });
@@ -298,7 +305,33 @@ export function evaluateKidStepReminders(
   }
 
   // === SHIFT 2: AFTERNOON / RETURN HOME ===
-  if (kid.group === 1) {
+  if (isFridayFreeDay) {
+    if (!kid.daily.returnedHomeChecked) {
+      const deadline = 18 * 60;
+      const delta = mins - deadline;
+      pendingSteps.push({
+        id: 'fri_home_store_phone',
+        shift: 'shift_afternoon',
+        targetModal: 'shift_afternoon',
+        urgent: delta > 0,
+        approachingDeadline: mins >= 15 * 60 && delta <= 0,
+        deadlineMinutes: deadline,
+        minutesDelta: delta,
+        titleTh: 'วันศุกร์ Free Day: กลับบ้านและเก็บโทรศัพท์มือถือ (15:00–18:00 น.)',
+        titleEn: 'Friday Free Day: Return Home & Store Phone (15:00–18:00)',
+        instructionTh:
+          delta <= 0
+            ? `🎈 วันศุกร์ Free Day วันนี้สั่งเซเว่นได้นะคะ! กลับถึงบ้านแล้วกด "กลับบ้านและเก็บโทรศัพท์มือถือ" ช่วง 15:00–18:00 น. (อีก ${Math.max(0, -delta)} นาที)`
+            : '🎈 วันศุกร์ Free Day: รีบกดเช็คอินกลับบ้านและเก็บโทรศัพท์มือถือเลยนะคะ (สั่งเซเว่นได้ด้วยนะ!)',
+        instructionEn:
+          delta <= 0
+            ? `🎈 Friday Free Day (7-Eleven orders available!): Check in Return Home & Store Phone 15:00–18:00 (${Math.max(0, -delta)} min left).`
+            : '🎈 Friday Free Day: Check in Return Home & Store Phone now!',
+        ctaTh: '🏡 ไปเช็คอินกลับบ้าน & เก็บมือถือ',
+        ctaEn: '🏡 Return Home & Store Phone',
+      });
+    }
+  } else if (kid.group === 1) {
     if (!kid.daily.returnedHomeChecked) {
       const deadline = 16 * 60 + 30;
       const delta = mins - deadline;
@@ -428,7 +461,28 @@ export function evaluateKidStepReminders(
   }
 
   // === SHIFT 3: NIGHT / HOMEWORK & BEDTIME ===
-  if (kid.group === 1) {
+  if (isFridayFreeDay) {
+    if (canEveningPhone && !kid.daily.eveningPhoneUnlocked) {
+      const pickupEnd = 22 * 60 + 45;
+      pendingSteps.push({
+        id: 'fri_phone_pickup',
+        shift: 'shift_night',
+        targetModal: 'shift_night',
+        urgent: false,
+        approachingDeadline: mins >= 18 * 60 + 15 && mins <= pickupEnd,
+        deadlineMinutes: pickupEnd,
+        minutesDelta: mins - pickupEnd,
+        titleTh: 'คืนวันศุกร์ Free Day: มารับโทรศัพท์มือถือ (18:15–22:45 น.)',
+        titleEn: 'Friday Free Day: Pick Up Phone (18:15–22:45)',
+        instructionTh:
+          '🎈 คืนวันศุกร์ไม่ต้องเก็บมือถือค่ะ! มารับมือถือได้เวลา 18:15–22:45 น. และตื่นมาเช็คอินเช้าวันเสาร์ก่อน 08:30 น.\nทุกคนที่มีโทรศัพท์จะต้องตั้งปลุกก่อนเวลาเผื่อเดินมาเช็คอินด้วยนะเด็กๆ',
+        instructionEn:
+          '🎈 Friday Free Day: No phone collection tonight! Pick up phone 18:15–22:45 and check in Saturday morning before 08:30.\nEveryone with a phone must set an alarm ahead of time to walk over and check in!',
+        ctaTh: '📱 ไปรับโทรศัพท์มือถือ',
+        ctaEn: '📱 Pick Up Phone',
+      });
+    }
+  } else if (kid.group === 1) {
     if (!kid.daily.bossStageUnlocked) {
       const deadline = 20 * 60; // 20:00 Boss stage
       const delta = mins - deadline;
@@ -704,13 +758,13 @@ export function evaluateKidStepReminders(
     },
     {
       key: 'shift_night',
-      emoji: '🌙',
-      labelTh: '3. กะค่ำ (การบ้าน & เข้านอน)',
-      labelEn: '3. Night / Homework',
+      emoji: isFridayFreeDay ? '🎈' : '🌙',
+      labelTh: isFridayFreeDay ? '3. กะค่ำ Free Day (รับมือถือ 18:15–22:45)' : '3. กะค่ำ (การบ้าน & เข้านอน)',
+      labelEn: isFridayFreeDay ? '3. Friday Free Day (18:15–22:45)' : '3. Night / Homework',
       done: nightDone,
       isCurrent: nextStep?.shift === 'shift_night',
       isOverdue: !nightDone && !isSickToday && pendingSteps.some((s) => s.shift === 'shift_night' && s.urgent),
-      summaryTh: nightDone ? 'ครบเรียบร้อย' : 'รอทำภารกิจค่ำ',
+      summaryTh: nightDone ? 'ครบเรียบร้อย' : isFridayFreeDay ? 'รอมารับมือถือ' : 'รอทำภารกิจค่ำ',
       summaryEn: nightDone ? 'Completed' : 'Pending',
     },
   ];

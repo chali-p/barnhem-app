@@ -63,7 +63,8 @@
             "friend_visit",
             "golden_pool_log",
             "staff_leave",
-            "weekly_activity_log"
+            "weekly_activity_log",
+            "return_home_photo"
           ]
         },
         "payload": { "type": "object" },
