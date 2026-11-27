@@ -20,16 +20,20 @@ import { StaffView } from './components/StaffView';
 import { TimestampCameraModal } from './components/TimestampCameraModal';
 import { TutorView } from './components/TutorView';
 import { createEmptyDaily } from './data/initialData';
-import { auth, signOutCloud } from './firebase';
+import { auth, signInWithGoogleCloud, signOutCloud } from './firebase';
 import {
   DEFAULT_ORG_ID,
   isMasterAdminEmail,
   MASTER_ADMIN_EMAIL,
   pullFoundationCloudOnce,
+  pullPublicKioskBoardOnce,
   seedCloudIfEmpty,
   subscribeFoundationCloud,
   subscribeLinkedKidCloud,
+  subscribePublicKioskBoard,
+  syncLinkedKidPollVoteToCloud,
   syncLinkedKidSelfToCloud,
+  syncPublicKioskBoardNow,
   syncStateDiffToCloud,
 } from './services/firestoreSync';
 import { subscribeMyRegistration } from './services/platformRegistrations';
@@ -107,6 +111,39 @@ const THEME_OPTIONS: { id: PastelTheme; swatch: string; labelTh: string; labelEn
 ];
 
 const ACTIVE_TENANT_STORAGE_KEY = 'barnhem_active_tenant_v1';
+
+function mergePollsFromKioskBoard(
+  localPolls: SecretPoll[],
+  cloudPolls: SecretPoll[]
+): SecretPoll[] {
+  const localById = new Map(localPolls.map((p) => [p.id, p]));
+  return cloudPolls.map((cp) => {
+    const lp = localById.get(cp.id);
+    if (!lp) return cp;
+    const localOnlyVoters = lp.votedKidIds.filter(
+      (kidId) => !cp.votedKidIds.includes(kidId)
+    );
+    if (localOnlyVoters.length === 0) {
+      return lp.kidChoices ? { ...cp, kidChoices: lp.kidChoices } : cp;
+    }
+    const optionExtraVotes = new Map<string, number>();
+    for (const kidId of localOnlyVoters) {
+      const chosenOptId = lp.kidChoices?.[kidId];
+      if (chosenOptId) {
+        optionExtraVotes.set(chosenOptId, (optionExtraVotes.get(chosenOptId) ?? 0) + 1);
+      }
+    }
+    return {
+      ...cp,
+      options: cp.options.map((opt) => ({
+        ...opt,
+        votes: opt.votes + (optionExtraVotes.get(opt.id) ?? 0),
+      })),
+      votedKidIds: [...cp.votedKidIds, ...localOnlyVoters],
+      ...(lp.kidChoices ? { kidChoices: lp.kidChoices } : {}),
+    };
+  });
+}
 
 export default function App() {
   const [activeTenant, setActiveTenant] = useState<ActiveTenantContext | null>(() => {
@@ -187,6 +224,8 @@ export default function App() {
   langRef.current = lang;
   const pendingRetryBaseStateRef = useRef<AppState | null>(null);
   const hasMergedInitialCloudMembersRef = useRef(false);
+  const hasMergedInitialCloudRecordsRef = useRef(false);
+  const hasSyncedKioskBoardRef = useRef(false);
   const lastCloudPullAtRef = useRef(0);
 
   const persistActiveStateLocal = useCallback((nextState: AppState, tenant: ActiveTenantContext | null) => {
@@ -252,15 +291,47 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     let unsubCloud: (() => void) | null = null;
+    let unsubKioskBoard: (() => void) | null = null;
+
+    const attachPublicKioskBoard = (orgId: string) => {
+      if (unsubKioskBoard) {
+        unsubKioskBoard();
+        unsubKioskBoard = null;
+      }
+      unsubKioskBoard = subscribePublicKioskBoard(orgId, ({ polls, announcements }) => {
+        if (cancelled) return;
+        setState((prev) => {
+          const mergedPolls = mergePollsFromKioskBoard(prev.polls, polls);
+          const next: AppState = {
+            ...prev,
+            polls: mergedPolls,
+            announcements,
+            lastSyncedAt: new Date().toISOString(),
+          };
+          stateRef.current = next;
+          if (!linkedKidSessionRef.current) {
+            persistActiveStateLocal(next, activeTenantRef.current);
+          }
+          return next;
+        });
+      });
+    };
+
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
       if (cancelled) return;
       setCloudUser(user);
       cloudUserRef.current = user;
       setCloudSyncError(null);
       hasMergedInitialCloudMembersRef.current = false;
+      hasMergedInitialCloudRecordsRef.current = false;
+      hasSyncedKioskBoardRef.current = false;
       if (unsubCloud) {
         unsubCloud();
         unsubCloud = null;
+      }
+      if (unsubKioskBoard) {
+        unsubKioskBoard();
+        unsubKioskBoard = null;
       }
       if (!user) {
         manualLeftTenantRef.current = false;
@@ -282,6 +353,7 @@ export default function App() {
           setState(mainState);
         }
         setCloudSyncing(false);
+        attachPublicKioskBoard(DEFAULT_ORG_ID);
         return;
       }
 
@@ -293,6 +365,7 @@ export default function App() {
       // If user is neither org owner nor master admin, check if they are a linked kid logging in on their own device
       if (!canSyncTenant && !canSyncMain) {
         setCloudSyncing(true);
+        attachPublicKioskBoard(tenant?.orgId ?? DEFAULT_ORG_ID);
         unsubCloud = subscribeLinkedKidCloud(
           user,
           ({ member, session }) => {
@@ -334,6 +407,9 @@ export default function App() {
               const next: AppState = {
                 ...prev,
                 ...patch,
+                ...(patch.polls
+                  ? { polls: mergePollsFromKioskBoard(prev.polls, patch.polls) }
+                  : {}),
                 lastSyncedAt: new Date().toISOString(),
               };
               stateRef.current = next;
@@ -457,17 +533,52 @@ export default function App() {
             }
           },
           (patch) => {
+            const isFirstRecordsMerge = !hasMergedInitialCloudRecordsRef.current;
+            hasMergedInitialCloudRecordsRef.current = true;
             setCloudSyncError(null);
+            const baseLocal = stateRef.current;
+            let resolvedPatch = patch;
+            let shouldPushLocalPolls = false;
+
+            if (
+              isFirstRecordsMerge &&
+              (patch.polls?.length ?? 0) === 0 &&
+              baseLocal.polls.length > 0
+            ) {
+              const sanitizedLocalPolls = baseLocal.polls
+                .filter((p) => p && p.id !== 'poll_weekend_activity')
+                .map((p) => sanitizeSaturdayLatePenaltyPoll(p).poll);
+              if (sanitizedLocalPolls.length > 0) {
+                resolvedPatch = { ...patch, polls: sanitizedLocalPolls };
+                shouldPushLocalPolls = true;
+              }
+            }
+
             setState((prev) => {
               const next: AppState = {
                 ...prev,
-                ...patch,
+                ...resolvedPatch,
                 lastSyncedAt: new Date().toISOString(),
               };
               stateRef.current = next;
               persistActiveStateLocal(next, activeTenantRef.current);
               return next;
             });
+
+            if (shouldPushLocalPolls) {
+              hasSyncedKioskBoardRef.current = true;
+              const cloudOnlyPrev: AppState = { ...baseLocal, polls: [] };
+              void syncStateDiffToCloud(cloudOnlyPrev, stateRef.current, user, orgId).catch((err) => {
+                console.error('Auto-merge local polls sync error:', err);
+                pendingRetryBaseStateRef.current = pendingRetryBaseStateRef.current ?? cloudOnlyPrev;
+                setCloudSyncError(err instanceof Error ? err.message : String(err));
+              });
+            } else if (!hasSyncedKioskBoardRef.current) {
+              hasSyncedKioskBoardRef.current = true;
+              void syncPublicKioskBoardNow(stateRef.current, user, orgId).catch((err) => {
+                console.error('Initial kiosk_board publish error:', err);
+              });
+            }
           },
           (settings) => {
             setCloudSyncError(null);
@@ -501,6 +612,7 @@ export default function App() {
       cancelled = true;
       unsubAuth();
       if (unsubCloud) unsubCloud();
+      if (unsubKioskBoard) unsubKioskBoard();
     };
   }, [activeTenant?.orgId, state.settings.useOwnStorageOnly, persistActiveStateLocal]);
 
@@ -548,8 +660,9 @@ export default function App() {
 
   const pushStateDiffSafely = useCallback(
     async (prev: AppState, next: AppState, user: User, orgId: string) => {
+      const effectivePrev = pendingRetryBaseStateRef.current ?? prev;
       try {
-        await syncStateDiffToCloud(prev, next, user, orgId);
+        await syncStateDiffToCloud(effectivePrev, next, user, orgId);
         pendingRetryBaseStateRef.current = null;
         setCloudSyncError(null);
       } catch (err) {
@@ -585,6 +698,18 @@ export default function App() {
             console.error('Linked kid sync error:', err);
             setCloudSyncError(err instanceof Error ? err.message : String(err));
           });
+        }
+        if (withSyncMeta.polls !== prev.polls) {
+          const changedPolls = withSyncMeta.polls.filter((nextPoll) => {
+            const prevPoll = prev.polls.find((p) => p.id === nextPoll.id);
+            return !prevPoll || JSON.stringify(prevPoll) !== JSON.stringify(nextPoll);
+          });
+          for (const poll of changedPolls) {
+            void syncLinkedKidPollVoteToCloud(poll, kidSession, user).catch((err) => {
+              console.error('Linked kid poll vote sync error:', err);
+              setCloudSyncError(err instanceof Error ? err.message : String(err));
+            });
+          }
         }
         return;
       }
@@ -672,6 +797,94 @@ export default function App() {
     },
     [persistActiveStateLocal, pushStateDiffSafely, showAlert]
   );
+
+  const handleRefreshSecretPolls = useCallback(async () => {
+    const user = cloudUserRef.current;
+    const tenant = activeTenantRef.current;
+    const canSyncTenant = Boolean(user && tenant && tenant.ownerUid === user.uid);
+    const canSyncMain = Boolean(user && !tenant && isMasterAdminEmail(user.email));
+    const orgId = tenant ? tenant.orgId : DEFAULT_ORG_ID;
+
+    if (user && (canSyncMain || canSyncTenant) && !(canSyncTenant && stateRef.current.settings.useOwnStorageOnly)) {
+      await handlePullFromCloud({ silent: true });
+      try {
+        await syncPublicKioskBoardNow(stateRef.current, user, orgId);
+      } catch (err) {
+        console.error('Public kiosk_board manual sync failed:', err);
+      }
+      const openCount = stateRef.current.polls.filter((p) => !p.closed).length;
+      showAlert({
+        icon: '☁️✅',
+        title: langRef.current === 'th' ? 'อัปเดตหัวข้อโหวตล่าสุดแล้ว!' : 'Polls Refreshed!',
+        message:
+          langRef.current === 'th'
+            ? `ซิงค์ข้อมูลจากคลาวด์และเผยแพร่ขึ้นกระดานแท็บเล็ตเรียบร้อย (${openCount} หัวข้อเปิดรับอยู่)`
+            : `Synced from cloud and published to tablet board (${openCount} open).`,
+        tone: 'mint',
+      });
+      return;
+    }
+
+    setCloudSyncing(true);
+    try {
+      const board = await pullPublicKioskBoardOnce(orgId);
+      if (!board) {
+        showAlert({
+          icon: '📲',
+          title:
+            langRef.current === 'th'
+              ? 'ยังไม่มีหัวข้อโหวตบนคลาวด์'
+              : 'No Cloud Polls Found Yet',
+          message:
+            langRef.current === 'th'
+              ? 'กรุณาเปิดหน้าเว็บที่เครื่องหลัก (ที่สร้างหัวข้อโหวตไว้) แล้วรีเฟรชหน้า 1 ครั้ง เพื่อให้หัวข้อถูกส่งขึ้นคลาวด์อัตโนมัติค่ะ'
+              : 'Please open and refresh the app once on the main Creator device so polls publish to the cloud.',
+          tone: 'peach',
+        });
+        return;
+      }
+      setCloudSyncError(null);
+      setState((prev) => {
+        const mergedPolls = mergePollsFromKioskBoard(prev.polls, board.polls);
+        const next: AppState = {
+          ...prev,
+          polls: mergedPolls,
+          announcements: board.announcements,
+          lastSyncedAt: new Date().toISOString(),
+        };
+        stateRef.current = next;
+        if (!linkedKidSessionRef.current) {
+          persistActiveStateLocal(next, activeTenantRef.current);
+        }
+        return next;
+      });
+      const openCount = board.polls.filter((p) => !p.closed).length;
+      showAlert({
+        icon: '☁️✅',
+        title: langRef.current === 'th' ? 'ดึงหัวข้อโหวตล่าสุดแล้ว!' : 'Polls Updated!',
+        message:
+          board.polls.length > 0
+            ? langRef.current === 'th'
+              ? `พบหัวข้อโหวตทั้งหมด ${board.polls.length} หัวข้อ (เปิดรับอยู่ ${openCount} หัวข้อ)`
+              : `Loaded ${board.polls.length} poll(s) (${openCount} open).`
+            : langRef.current === 'th'
+            ? 'เชื่อมต่อคลาวด์สำเร็จ แต่ยังไม่มีหัวข้อโหวตในขณะนี้ค่ะ (รบกวนรีเฟรชหน้าเครื่องหลัก 1 ครั้งหากเพิ่งสร้างหัวข้อไว้)'
+            : 'Connected to cloud, but no polls are posted right now.',
+        tone: 'mint',
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setCloudSyncError(msg);
+      showAlert({
+        icon: '⚠️',
+        title: langRef.current === 'th' ? 'ดึงหัวข้อโหวตไม่สำเร็จ' : 'Refresh Failed',
+        message: msg,
+        tone: 'pink',
+      });
+    } finally {
+      setCloudSyncing(false);
+    }
+  }, [handlePullFromCloud, persistActiveStateLocal, showAlert]);
 
   // Auto-refresh from Firestore when browser wakes/focuses tab or regains internet
   useEffect(() => {
@@ -2972,6 +3185,16 @@ export default function App() {
                 : null
             }
             lang={lang}
+            cloudUserEmail={cloudUser?.email ?? null}
+            cloudSyncing={cloudSyncing}
+            isCloudAuthorizedForVotes={Boolean(
+              cloudUser &&
+                ((activeTenant && activeTenant.ownerUid === cloudUser.uid) ||
+                  (!activeTenant && isMasterAdminEmail(cloudUser.email)) ||
+                  linkedKidSession)
+            )}
+            onRefreshPolls={handleRefreshSecretPolls}
+            onConnectCloud={signInWithGoogleCloud}
             onCastSecretVote={handleCastSecretVote}
             onShowAlert={showAlert}
             onBackHome={() => {

@@ -3,6 +3,7 @@ import {
   collection,
   doc,
   DocumentData,
+  getDocFromServer,
   getDocs,
   getDocsFromServer,
   onSnapshot,
@@ -442,6 +443,12 @@ export async function seedCloudIfEmpty(
       serializeConfigDoc(localState.settings, user, orgId, linkedEmails)
     )
   );
+  ops.push((b) =>
+    b.set(
+      doc(db, 'kiosk_board', orgId),
+      serializePublicKioskBoard(localState, user, orgId, linkedEmails)
+    )
+  );
 
   await commitOperationsBatch(ops, 'members/records/config');
   return true;
@@ -550,6 +557,19 @@ export async function syncStateDiffToCloud(
       b.set(
         doc(db, 'config', configDocId),
         serializeConfigDoc(nextState.settings, user, orgId, nextLinkedEmails)
+      )
+    );
+  }
+
+  // 4. Mirror public non-PII polls & announcements to kiosk_board/{orgId}
+  const pollsChanged = JSON.stringify(prevState.polls) !== JSON.stringify(nextState.polls);
+  const announcementsChanged =
+    JSON.stringify(prevState.announcements) !== JSON.stringify(nextState.announcements);
+  if (pollsChanged || announcementsChanged || linkedEmailsChanged) {
+    ops.push((b) =>
+      b.set(
+        doc(db, 'kiosk_board', orgId),
+        serializePublicKioskBoard(nextState, user, orgId, nextLinkedEmails)
       )
     );
   }
@@ -1312,5 +1332,157 @@ export async function syncLinkedKidSelfToCloud(
     await setDoc(doc(db, 'members', session.memberDocId), docPayload);
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);
+  }
+}
+
+export async function syncLinkedKidPollVoteToCloud(
+  poll: SecretPoll,
+  session: LinkedKidSession,
+  user: User
+): Promise<void> {
+  const docId = buildRecordId('poll', poll.id, session.orgId);
+  const path = `records/${docId}`;
+  const cleanPoll = sanitizeSaturdayLatePenaltyPoll(poll).poll;
+  try {
+    await setDoc(doc(db, 'records', docId), {
+      id: docId,
+      recordType: 'poll',
+      payload: stripUndefined(cleanPoll as unknown as Record<string, unknown>),
+      ownerUid: session.ownerUid || user.uid,
+      sharedEmails: session.sharedEmails,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, path);
+  }
+}
+
+function serializePublicKioskBoard(
+  state: AppState,
+  user: User,
+  orgId: string = DEFAULT_ORG_ID,
+  extraEmails: string[] = []
+) {
+  const publicPolls = (state.polls ?? []).slice(0, 50).map((p) => {
+    const clean = sanitizeSaturdayLatePenaltyPoll(p).poll;
+    return stripUndefined({
+      id: clean.id,
+      question: clean.question,
+      authorName: clean.authorName,
+      createdAt: clean.createdAt,
+      closed: Boolean(clean.closed),
+      options: (clean.options ?? []).map((o) => ({
+        id: o.id,
+        label: o.label,
+        votes: Number(o.votes) || 0,
+      })),
+      votedKidIds: Array.isArray(clean.votedKidIds) ? clean.votedKidIds : [],
+    });
+  });
+
+  const publicAnnouncements = (state.announcements ?? [])
+    .filter(
+      (a) =>
+        a?.id !== 'ann_welcome' &&
+        !a?.id?.startsWith('ann_welcome_') &&
+        a?.audience !== 'staff_only'
+    )
+    .slice(0, 50)
+    .map((a) =>
+      stripUndefined({
+        id: a.id,
+        title: a.title,
+        body: a.body,
+        priority: a.priority ?? 'normal',
+        pinned: Boolean(a.pinned),
+        authorName: a.authorName,
+        authorRole: a.authorRole ?? '',
+        createdAt: a.createdAt,
+        updatedAt: a.updatedAt,
+        startAt: a.startAt,
+        endAt: a.endAt,
+        audience: a.audience,
+        assignedTo: a.assignedTo,
+        taskCompleted: a.taskCompleted,
+        taskCompletedBy: a.taskCompletedBy,
+        taskCompletedAt: a.taskCompletedAt,
+      })
+    );
+
+  return {
+    id: orgId,
+    polls: publicPolls,
+    announcements: publicAnnouncements,
+    ...makeSharedMeta(user, orgId, extraEmails),
+  };
+}
+
+function parseKioskBoardDoc(
+  data: Record<string, unknown> | undefined
+): { polls: SecretPoll[]; announcements: Announcement[] } | null {
+  if (!data) return null;
+  const rawPolls = Array.isArray(data.polls) ? (data.polls as SecretPoll[]) : [];
+  const rawAnnouncements = Array.isArray(data.announcements)
+    ? (data.announcements as Announcement[])
+    : [];
+  const byNewest = (a: { createdAt?: string }, b: { createdAt?: string }) =>
+    (b.createdAt || '').localeCompare(a.createdAt || '');
+
+  const polls = rawPolls
+    .filter((p) => p && p.id !== 'poll_weekend_activity')
+    .map((p) => sanitizeSaturdayLatePenaltyPoll(p).poll)
+    .sort(byNewest);
+  const announcements = rawAnnouncements
+    .filter((a) => a && a.id !== 'ann_welcome' && !a.id.startsWith('ann_welcome_'))
+    .sort(byNewest);
+
+  return { polls, announcements };
+}
+
+export async function syncPublicKioskBoardNow(
+  state: AppState,
+  user: User,
+  orgId: string = DEFAULT_ORG_ID
+): Promise<void> {
+  const linkedEmails = collectMemberLinkedEmails(state.members);
+  try {
+    await setDoc(
+      doc(db, 'kiosk_board', orgId),
+      serializePublicKioskBoard(state, user, orgId, linkedEmails)
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `kiosk_board/${orgId}`);
+  }
+}
+
+export function subscribePublicKioskBoard(
+  orgId: string = DEFAULT_ORG_ID,
+  onUpdate: (data: { polls: SecretPoll[]; announcements: Announcement[] }) => void,
+  onError?: (err: unknown) => void
+): () => void {
+  const ref = doc(db, 'kiosk_board', orgId);
+  return onSnapshot(
+    ref,
+    (snap) => {
+      if (!snap.exists()) return;
+      const parsed = parseKioskBoardDoc(snap.data() as Record<string, unknown>);
+      if (parsed) onUpdate(parsed);
+    },
+    (err) => {
+      console.error('Public kiosk_board listener error:', err);
+      onError?.(err);
+    }
+  );
+}
+
+export async function pullPublicKioskBoardOnce(
+  orgId: string = DEFAULT_ORG_ID
+): Promise<{ polls: SecretPoll[]; announcements: Announcement[] } | null> {
+  try {
+    const snap = await getDocFromServer(doc(db, 'kiosk_board', orgId));
+    if (!snap.exists()) return null;
+    return parseKioskBoardDoc(snap.data() as Record<string, unknown>);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.GET, `kiosk_board/${orgId}`);
   }
 }

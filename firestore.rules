@@ -153,7 +153,7 @@ service cloud.firestore {
           'useOwnStorageOnly', 'enableCoinsAndPiggyBank', 'showHomeAnnouncementBox', 'organizationPreset', 'automationAddons',
           'customQuickCommands', 'timedCommandSchedule', 'homeworkCurfewMins',
           'kidsWithoutPhoneIds', 'commandPermissions', 'customPenaltyPresets', 'kidAwaySecretCode', 'kidAwaySecretDateKey',
-          'ownerUid', 'sharedEmails', 'updatedAt'
+          'weekendLatePenaltyPreset', 'ownerUid', 'sharedEmails', 'updatedAt'
         ]) &&
         isValidId(data.id) &&
         (!('syncWebhookUrl' in data) || (data.syncWebhookUrl is string && data.syncWebhookUrl.size() <= 500)) &&
@@ -183,6 +183,18 @@ service cloud.firestore {
         (!('customPenaltyPresets' in data) || (data.customPenaltyPresets is list && data.customPenaltyPresets.size() <= 30 && (data.customPenaltyPresets.size() == 0 || data.customPenaltyPresets[0] is string))) &&
         (!('kidAwaySecretCode' in data) || data.kidAwaySecretCode == null || (data.kidAwaySecretCode is string && data.kidAwaySecretCode.size() <= 8)) &&
         (!('kidAwaySecretDateKey' in data) || data.kidAwaySecretDateKey == null || (data.kidAwaySecretDateKey is string && data.kidAwaySecretDateKey.size() <= 16)) &&
+        (!('weekendLatePenaltyPreset' in data) || (data.weekendLatePenaltyPreset is string && data.weekendLatePenaltyPreset.size() <= 48)) &&
+        isValidSharedMetadata(data);
+    }
+
+    function isValidKioskBoard(data) {
+      return data.keys().hasAll(['id', 'polls', 'announcements', 'ownerUid', 'sharedEmails', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'polls', 'announcements', 'ownerUid', 'sharedEmails', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.polls is list && data.polls.size() <= 50 &&
+        (data.polls.size() == 0 || data.polls[0] is map) &&
+        data.announcements is list && data.announcements.size() <= 50 &&
+        (data.announcements.size() == 0 || data.announcements[0] is map) &&
         isValidSharedMetadata(data);
     }
 
@@ -327,7 +339,7 @@ service cloud.firestore {
               'useOwnStorageOnly', 'enableCoinsAndPiggyBank', 'showHomeAnnouncementBox', 'organizationPreset', 'automationAddons',
               'customQuickCommands', 'timedCommandSchedule', 'homeworkCurfewMins',
               'kidsWithoutPhoneIds', 'commandPermissions', 'customPenaltyPresets', 'kidAwaySecretCode', 'kidAwaySecretDateKey',
-              'sharedEmails', 'updatedAt'
+              'weekendLatePenaltyPreset', 'sharedEmails', 'updatedAt'
             ])
           )
         );
@@ -379,6 +391,31 @@ service cloud.firestore {
           )
         );
       allow delete: if isValidId(uid) && isMasterAdmin();
+    }
+
+    match /kiosk_board/{boardId} {
+      allow get: if isValidId(boardId);
+      allow create: if isValidId(boardId) &&
+        isVerified() &&
+        isValidKioskBoard(incoming()) &&
+        incoming().id == boardId &&
+        ((!isExternalOrgDocId(boardId) && isAdmin()) || incoming().ownerUid == request.auth.uid);
+      allow update: if isValidId(boardId) &&
+        isVerified() &&
+        isValidKioskBoard(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().ownerUid == existing().ownerUid &&
+        (
+          (!isExternalOrgDocId(boardId) && isAdmin()) ||
+          (
+            isDocSharedWithUser(existing()) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['polls', 'announcements', 'sharedEmails', 'updatedAt'])
+          )
+        );
+      allow delete: if isValidId(boardId) && (
+        (!isExternalOrgDocId(boardId) && isAdmin()) ||
+        (isVerified() && existing().ownerUid == request.auth.uid)
+      );
     }
 
     match /test/connection {

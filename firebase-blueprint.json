@@ -106,6 +106,7 @@
         "customPenaltyPresets": { "type": "array" },
         "kidAwaySecretCode": { "type": "string", "maxLength": 8 },
         "kidAwaySecretDateKey": { "type": "string", "maxLength": 16 },
+        "weekendLatePenaltyPreset": { "type": "string", "maxLength": 48 },
         "ownerUid": { "type": "string", "maxLength": 128 },
         "sharedEmails": { "type": "array" },
         "updatedAt": { "type": "string", "format": "date-time" }
@@ -166,6 +167,20 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "KioskPublicBoard": {
+      "title": "KioskPublicBoard",
+      "description": "Public non-PII bulletin board (anonymous secret polls and public house announcements) readable by shared house tablets",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "polls": { "type": "array" },
+        "announcements": { "type": "array" },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "sharedEmails": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "polls", "announcements", "ownerUid", "sharedEmails", "updatedAt"]
     }
   },
   "firestore": {
@@ -188,6 +203,10 @@
     "/registrations/{uid}": {
       "schema": { "$ref": "#/entities/PlatformRegistration" },
       "description": "Self-service registration applications for opening an isolated home workspace or applying for a staff role"
+    },
+    "/kiosk_board/{boardId}": {
+      "schema": { "$ref": "#/entities/KioskPublicBoard" },
+      "description": "Public non-PII poll and announcement board synced to shared foundation tablets"
     }
   }
 }

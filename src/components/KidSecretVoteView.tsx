@@ -12,6 +12,11 @@ interface KidSecretVoteViewProps {
   polls: SecretPoll[];
   linkedKidMember: Member | null;
   lang: Language;
+  cloudUserEmail?: string | null;
+  cloudSyncing?: boolean;
+  isCloudAuthorizedForVotes?: boolean;
+  onRefreshPolls?: () => Promise<void> | void;
+  onConnectCloud?: () => Promise<void> | void;
   onCastSecretVote: (pollId: string, optionId: string, kidId: string) => void;
   onShowAlert: (payload: ModalAlertPayload) => void;
   onBackHome: () => void;
@@ -23,6 +28,11 @@ export const KidSecretVoteView: React.FC<KidSecretVoteViewProps> = ({
   polls,
   linkedKidMember,
   lang,
+  cloudUserEmail = null,
+  cloudSyncing = false,
+  isCloudAuthorizedForVotes = false,
+  onRefreshPolls,
+  onConnectCloud,
   onCastSecretVote,
   onShowAlert,
   onBackHome,
@@ -233,6 +243,59 @@ export const KidSecretVoteView: React.FC<KidSecretVoteViewProps> = ({
             )}
           </div>
         </div>
+
+        {/* Cloud Sync & Refresh Bar for Tablets */}
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#E6DCD2] bg-[#FAF7F3] px-3.5 py-2.5 text-xs">
+          <div className="flex items-center gap-2 text-[#5E4E45] font-semibold">
+            <span>{isCloudAuthorizedForVotes ? '☁️' : '📲'}</span>
+            <span>
+              {isCloudAuthorizedForVotes
+                ? lang === 'th'
+                  ? `เชื่อมต่อหัวข้อโหวตออนไลน์แล้ว${cloudUserEmail ? ` (${cloudUserEmail})` : ''}`
+                  : `Online vote sync active${cloudUserEmail ? ` (${cloudUserEmail})` : ''}`
+                : lang === 'th'
+                ? 'โหมดดูหัวข้อจากคลาวด์ (กดรีเฟรชเพื่ออัปเดตล่าสุด)'
+                : 'Cloud board view (tap refresh for latest polls)'}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {onRefreshPolls && (
+              <button
+                type="button"
+                disabled={cloudSyncing}
+                onClick={() => void onRefreshPolls()}
+                className="min-h-[34px] rounded-xl border border-[#7CC6B8] bg-[#E8F8F5] hover:bg-[#D4F0F0] disabled:opacity-60 px-3 py-1 text-xs font-extrabold text-[#1A564D] cursor-pointer whitespace-nowrap"
+              >
+                {cloudSyncing
+                  ? lang === 'th'
+                    ? '⏳ กำลังอัปเดต...'
+                    : '⏳ Syncing...'
+                  : lang === 'th'
+                  ? '🔄 รีเฟรชหัวข้อโหวต'
+                  : '🔄 Refresh Polls'}
+              </button>
+            )}
+            {!isCloudAuthorizedForVotes && onConnectCloud && (
+              <button
+                type="button"
+                onClick={() => {
+                  void Promise.resolve(onConnectCloud()).catch((err) => {
+                    onShowAlert({
+                      icon: '⚠️',
+                      title: lang === 'th' ? 'เชื่อมต่อ Google ไม่สำเร็จ' : 'Google Sign-In Failed',
+                      message: err instanceof Error ? err.message : String(err),
+                      tone: 'pink',
+                    });
+                  });
+                }}
+                className="min-h-[34px] rounded-xl border border-[#C8B7EB] bg-white hover:bg-[#F4EFFE] px-3 py-1 text-xs font-extrabold text-[#473174] cursor-pointer whitespace-nowrap"
+              >
+                ☁️ {lang === 'th' ? 'เชื่อมต่อ Google Sync' : 'Connect Google Sync'}
+              </button>
+            )}
+          </div>
+        </div>
       </section>
 
       {/* Polls List */}
@@ -349,10 +412,13 @@ export const KidSecretVoteView: React.FC<KidSecretVoteViewProps> = ({
                             lang === 'th'
                               ? 'ส่งเสียงโหวตลับเรียบร้อย!'
                               : 'Secret Vote Recorded!',
-                          message:
-                            lang === 'th'
+                          message: isCloudAuthorizedForVotes
+                            ? lang === 'th'
                               ? `ขอบคุณน้อง${verifiedKid.nickname} ที่ใช้สิทธิ์ คะแนนถูกนับรวมแบบไม่ระบุตัวตนเรียบร้อยแล้วค่ะ`
-                              : 'Your vote was counted anonymously!',
+                              : 'Your vote was counted anonymously!'
+                            : lang === 'th'
+                            ? `บันทึกโหวตของน้อง${verifiedKid.nickname} บนเครื่องนี้เรียบร้อยแล้วค่ะ (หากต้องการส่งผลโหวตกลับเครื่องหลัก กรุณากดเชื่อมต่อ Google Sync ด้านบนค่ะ)`
+                            : 'Saved on this device. Connect Google Sync above to send votes back to the main computer.',
                           tone: 'mint',
                         });
                       }}
