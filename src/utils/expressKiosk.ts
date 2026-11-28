@@ -322,7 +322,7 @@ export function evaluateOneTapGoToSchool(
   isSickToday = false,
   polls?: SecretPoll[]
 ): KioskResult {
-  if (!canKidUseCommand('morning_school', kid, settings)) {
+  if (!canKidUseCommand('morning_school', kid, settings, now)) {
     const denied = getCommandDenialReason('morning_school', kid, lang, settings);
     return {
       success: false,
@@ -1186,6 +1186,8 @@ export function isOtherSuggestionPollOptionLabel(label: string): boolean {
   );
 }
 
+const SATURDAY_PENALTY_POLL_AUTO_CLOSE_CUTOFF_MS = Date.parse('2026-11-28T13:00:00.000Z');
+
 export function sanitizeSaturdayLatePenaltyPoll(poll: SecretPoll): {
   poll: SecretPoll;
   changed: boolean;
@@ -1200,10 +1202,17 @@ export function sanitizeSaturdayLatePenaltyPoll(poll: SecretPoll): {
   const nextOptions =
     nonOtherOptions.length >= 2 ? nonOtherOptions.slice(0, 2) : poll.options.slice(0, 2);
 
-  if (
-    nextOptions.length === poll.options.length &&
-    nextOptions.every((opt, idx) => opt.id === poll.options[idx]?.id)
-  ) {
+  const optionsChanged =
+    nextOptions.length !== poll.options.length ||
+    !nextOptions.every((opt, idx) => opt.id === poll.options[idx]?.id);
+
+  const createdMs = Date.parse(poll.createdAt || '');
+  const shouldAutoClose =
+    !poll.closed &&
+    !poll.reopenedAfterAutoClose &&
+    (!Number.isFinite(createdMs) || createdMs < SATURDAY_PENALTY_POLL_AUTO_CLOSE_CUTOFF_MS);
+
+  if (!optionsChanged && !shouldAutoClose) {
     return { poll, changed: false };
   }
 
@@ -1233,6 +1242,7 @@ export function sanitizeSaturdayLatePenaltyPoll(poll: SecretPoll): {
       options: nextOptions,
       votedKidIds: nextVotedKidIds,
       ...(poll.kidChoices !== undefined ? { kidChoices: nextKidChoices } : {}),
+      ...(shouldAutoClose ? { closed: true } : {}),
     },
   };
 }
@@ -1761,6 +1771,7 @@ export function getEffectiveHomeQuickActions(
   const isFridayFreeDay = day === 5 && !includeHidden;
   const isSaturdayMorning = day === 6 && !includeHidden;
   const isSundayMorning = day === 0 && !isHolidayToday && !includeHidden;
+  const isWeekendDay = isSaturdayMorning || isSundayMorning;
   const isWeekendOrHolidayMorning =
     isSaturdayMorning || isSundayMorning || (isHolidayToday && !includeHidden);
   const weekendPreset = getEffectiveWeekendLatePenaltyPreset(settings);
@@ -1780,9 +1791,22 @@ export function getEffectiveHomeQuickActions(
     'night_return_phone',
     'daily_penalty',
   ]);
+  const saturdayHiddenIds = new Set<HomeQuickActionId>([
+    'morning_phone_pickup',
+    'morning_breakfast',
+    'evening_computer_homework',
+  ]);
+  const sundayHiddenIds = new Set<HomeQuickActionId>([
+    'morning_phone_pickup',
+    'morning_breakfast',
+  ]);
 
   const baseList = isFridayFreeDay
     ? HOME_QUICK_ACTIONS.filter((a) => !fridayHiddenIds.has(a.id))
+    : isSaturdayMorning
+    ? HOME_QUICK_ACTIONS.filter((a) => !saturdayHiddenIds.has(a.id))
+    : isSundayMorning
+    ? HOME_QUICK_ACTIONS.filter((a) => !sundayHiddenIds.has(a.id))
     : HOME_QUICK_ACTIONS;
 
   const mapped = baseList.map((action) => {
@@ -1821,7 +1845,7 @@ export function getEffectiveHomeQuickActions(
         : action.id === 'night_return_phone' && typeof settings?.homeworkCurfewMins === 'number'
         ? getEffectiveHomeworkCurfewMins(settings)
         : action.deadlineMins;
-    const rewardStars =
+    let rewardStars =
       ov && typeof ov.rewardStars === 'number' && Number.isFinite(ov.rewardStars)
         ? Math.max(0, Math.min(50, Math.round(ov.rewardStars)))
         : action.rewardStars;
@@ -1833,8 +1857,8 @@ export function getEffectiveHomeQuickActions(
     let penaltyPreset = ov?.penaltyPreset !== undefined ? ov.penaltyPreset : action.penaltyPreset;
     const penaltyNote = ov?.penaltyNote !== undefined ? ov.penaltyNote : action.penaltyNote;
     const commandType: LoginCommandType = ov?.commandType ?? action.commandType;
-    const enabled = ov?.enabled !== undefined ? Boolean(ov.enabled) : action.enabled;
-    const hidden = ov?.hidden !== undefined ? Boolean(ov.hidden) : action.hidden;
+    let enabled = ov?.enabled !== undefined ? Boolean(ov.enabled) : action.enabled;
+    let hidden = ov?.hidden !== undefined ? Boolean(ov.hidden) : action.hidden;
 
     // Friday Free Day exact schedule & labels:
     // 1) กลับบ้านและเก็บโทรศัพท์มือถือ 15:00-18:00
@@ -1868,11 +1892,15 @@ export function getEffectiveHomeQuickActions(
       }
     } else if (isWeekendOrHolidayMorning && action.id === 'morning_school') {
       emoji = isHolidayToday && !isSaturdayMorning && !isSundayMorning ? '🎉' : '☀️';
+      enabled = true;
+      hidden = false;
+      penaltyPreset = 'no_fine_zero_stars';
       if (isSaturdayMorning) {
         startMins = 8 * 60 + 15;
-        endMins = 10 * 60 + 30;
+        endMins = 12 * 60;
         deadlineMins = 8 * 60 + 36;
         earlyGraceMins = 0;
+        rewardStars = 10;
         titleTh = 'เช็คอินตื่นเช้าวันเสาร์ (กดชื่อตัวเองได้เลย)';
         titleEn = 'Saturday Morning Check-In (Direct Tap)';
         descriptionTh =
@@ -1881,23 +1909,55 @@ export function getEffectiveHomeQuickActions(
           'Opens 08:15–08:35 (1-min grace to 08:36) · Direct self-tap without PIN · Never tap for friends · Past 08:36 applies your voted penalty.';
       } else if (isSundayMorning) {
         startMins = 6 * 60 + 30;
-        endMins = 10 * 60 + 30;
+        endMins = 12 * 60;
         deadlineMins = 8 * 60 + 25;
         earlyGraceMins = 0;
+        rewardStars = 15;
         titleTh = 'เช็คอินเช้าวันอาทิตย์ (กดชื่อตัวเองได้เลย)';
         titleEn = 'Sunday Morning Check-In (Direct Tap)';
         descriptionTh = `ไม่เกิน 08:15 น. (+15 ⭐ · อนุโลมได้ไม่เกิน 10 นาที / ถึง 08:25 น.) · กดชื่อตัวเองได้เลย ไม่ต้องใส่รหัส · เกิน 08:25 น.: ${weekendPenaltyShortTh}`;
         descriptionEn = `By 08:15 (+15 ⭐ · 10-min grace to 08:25) · Direct self-tap without PIN · Past 08:25: ${weekendPenaltyShortEn}`;
       } else {
         startMins = 6 * 60 + 30;
-        endMins = 10 * 60 + 30;
+        endMins = 12 * 60;
         deadlineMins = 8 * 60 + 25;
         earlyGraceMins = 0;
+        rewardStars = 10;
         titleTh = 'เช็คอินเช้าวันหยุด (กดชื่อตัวเองได้เลย)';
         titleEn = 'Holiday Morning Check-In (Direct Tap)';
         descriptionTh = `ไม่เกิน 08:15 น. (+10 ⭐ · อนุโลมได้ไม่เกิน 10 นาที / ถึง 08:25 น.) · กดชื่อตัวเองได้เลย ไม่ต้องใส่รหัส · เกิน 08:25 น.: ${weekendPenaltyShortTh}`;
         descriptionEn = `By 08:15 (+10 ⭐ · 10-min grace to 08:25) · Direct self-tap without PIN · Past 08:25: ${weekendPenaltyShortEn}`;
       }
+    } else if (isWeekendDay && action.id === 'afternoon_home') {
+      enabled = true;
+      hidden = false;
+      penaltyPreset = 'no_fine_zero_stars';
+      startMins = 12 * 60;
+      endMins = 18 * 60;
+      deadlineMins = 14 * 60;
+      earlyGraceMins = 0;
+      titleTh = 'กลับบ้าน & เก็บมือถือ (เสาร์-อาทิตย์)';
+      titleEn = 'Return Home & Store Phone (Weekend)';
+      descriptionTh =
+        'วันหยุดเสาร์-อาทิตย์ · เช็คอินกลับบ้าน เก็บมือถือ และฝึกนิสัยตรงเวลา (รุ่นโตควรถึงก่อน 14:00 น.)';
+      descriptionEn =
+        'Weekend schedule · Check in arriving home and store phone (Group 2 recommended by 14:00).';
+    } else if (isSaturdayMorning && action.id === 'evening_uniform_phone') {
+      emoji = '📱';
+      enabled = true;
+      hidden = false;
+      penaltyPreset = 'no_fine_zero_stars';
+      startMins = 18 * 60;
+      endMins = 20 * 60 + 30;
+      deadlineMins = 19 * 60 + 30;
+      earlyGraceMins = 10;
+      titleTh = 'อาบน้ำ-งานบ้าน & รับมือถือรอบเย็น';
+      titleEn = 'Chores & Evening Phone';
+      descriptionTh = 'วันเสาร์ · อาบน้ำ ทำงานบ้าน และรับมือถือรอบเย็น (18:00–20:30 น.)';
+      descriptionEn = 'Saturday · Shower, chores and collect evening phone (18:00–20:30).';
+    } else if (isWeekendDay) {
+      enabled = true;
+      hidden = false;
     }
 
     const sStr = minsToHHMM(startMins);
@@ -2208,10 +2268,24 @@ export function doesKidHavePhone(
 export function canKidUseCommand(
   commandId: string,
   kid: Member,
-  settings?: Partial<AppSettings>
+  settings?: Partial<AppSettings>,
+  now?: Date
 ): boolean {
   if (commandId === 'evening_computer_homework' && kid.group !== 2) {
     return false;
+  }
+  const isWeekendOrHolidayNow =
+    now !== undefined &&
+    (now.getDay() === 6 ||
+      now.getDay() === 0 ||
+      isPublicHoliday(now, Boolean(settings?.isPublicHolidayToday)));
+  // On weekends & holidays, wake-up check-in opens cleanly for EVERY child without weekday PIN/group restrictions
+  if (isWeekendOrHolidayNow && commandId === 'morning_school') {
+    return true;
+  }
+  const isWeekendDayNow = now !== undefined && (now.getDay() === 6 || now.getDay() === 0);
+  if (isWeekendDayNow && commandId === 'afternoon_home') {
+    return true;
   }
   const rule = settings?.commandPermissions?.[commandId];
   if (!rule) return true;
@@ -2560,7 +2634,24 @@ export function getCommandPermissionSummary(
 ): { restricted: boolean; eligibleCount: number; badge: string; authMode: CommandAuthMode } {
   const rule = settings?.commandPermissions?.[commandId];
   const authMode = getCommandAuthMode(commandId, settings, now);
-  const eligibleCount = kids.filter((k) => canKidUseCommand(commandId, k, settings)).length;
+  const isWeekendOrHolidayNow =
+    now !== undefined &&
+    (now.getDay() === 6 ||
+      now.getDay() === 0 ||
+      isPublicHoliday(now, Boolean(settings?.isPublicHolidayToday)));
+  const isWeekendDayNow = now !== undefined && (now.getDay() === 6 || now.getDay() === 0);
+  if (
+    (isWeekendOrHolidayNow && commandId === 'morning_school') ||
+    (isWeekendDayNow && commandId === 'afternoon_home')
+  ) {
+    return {
+      restricted: false,
+      eligibleCount: kids.length,
+      badge: lang === 'th' ? 'ทุกคน' : 'All',
+      authMode,
+    };
+  }
+  const eligibleCount = kids.filter((k) => canKidUseCommand(commandId, k, settings, now)).length;
   if (!rule || ((rule.phoneFilter ?? 'all') === 'all' && !rule.restrictToKidIds)) {
     if (commandId === 'evening_computer_homework') {
       return {
@@ -2642,7 +2733,7 @@ export function evaluateOneTapHomeAction(
     };
   }
 
-  if (!canKidUseCommand(actionId, kid, settings)) {
+  if (!canKidUseCommand(actionId, kid, settings, now)) {
     const denied = getCommandDenialReason(actionId, kid, lang, settings);
     return {
       success: false,
@@ -3564,7 +3655,7 @@ export function evaluateOneTapCustomCommand(
     };
   }
 
-  if (!canKidUseCommand(cmd.id, kid, settings)) {
+  if (!canKidUseCommand(cmd.id, kid, settings, now)) {
     const denied = getCommandDenialReason(cmd.id, kid, lang, settings);
     return {
       success: false,

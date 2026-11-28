@@ -16,6 +16,7 @@ import {
   StaffLeaveSpan,
 } from '../types/barnhem';
 import { getDateKey, getTomorrowDateKey } from '../utils/timeRules';
+import { TimeAmPmInput } from './TimeAmPmInput';
 
 interface StaffLeavePanelProps {
   actorName: string;
@@ -436,11 +437,12 @@ export const StaffLeavePanel: React.FC<StaffLeavePanelProps> = ({
                   </div>
                   {leaveSpan === 'afternoon_from_time' && (
                     <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                      <input
-                        type="time"
+                      <TimeAmPmInput
                         value={leaveFromTime}
-                        onChange={(e) => setLeaveFromTime(e.target.value)}
-                        className="rounded-xl border border-[#C8B7EB] bg-white px-2.5 py-1 text-xs font-extrabold tabular-nums"
+                        tone="lavender"
+                        compact
+                        lang={lang}
+                        onChange={setLeaveFromTime}
                       />
                       {['11:00', '13:00', '15:00', '17:00'].map((t) => (
                         <button

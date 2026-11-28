@@ -115,10 +115,10 @@ export function evaluateKidStepReminders(
       ? 'deduct 1 Free Day'
       : 'no phone 18:30–22:45';
   const kidHasPhone = doesKidHavePhone(kid.id, settings);
-  const canEveningPhone = kidHasPhone && canKidUseCommand('evening_uniform_phone', kid, settings);
-  const canHwPerm = kidHasPhone && canKidUseCommand('night_homework_permission', kid, settings);
+  const canEveningPhone = kidHasPhone && canKidUseCommand('evening_uniform_phone', kid, settings, now);
+  const canHwPerm = kidHasPhone && canKidUseCommand('night_homework_permission', kid, settings, now);
   const canReturnPhone =
-    !isFridayFreeDay && kidHasPhone && canKidUseCommand('night_return_phone', kid, settings);
+    !isFridayFreeDay && kidHasPhone && canKidUseCommand('night_return_phone', kid, settings, now);
 
   // --- 1. Determine completion status of the 3 core daily shifts ---
   const morningDone =

@@ -379,6 +379,7 @@ export interface SecretPoll {
   votedKidIds: string[];
   kidChoices?: Record<string, string>;
   closed: boolean;
+  reopenedAfterAutoClose?: boolean;
   authorName: string;
   createdAt: string;
 }

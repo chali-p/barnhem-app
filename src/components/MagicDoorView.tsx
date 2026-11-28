@@ -462,6 +462,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     setSchoolBoardResult(null);
     setSchoolBoardSearch('');
     setSchoolBoardGroup(0);
+    setShowOnlyEligibleKids(false);
     setActiveCustomCmdId(null);
     setCustomSubjectInput('');
   };
@@ -472,6 +473,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
     setBoardUnlockedByStaff(unlockedByStaff);
     setPendingKidPinAction(null);
     setBoardKidPinInput('');
+    setShowOnlyEligibleKids(false);
     if (target.type === 'custom') {
       setActiveCustomCmdId(target.cmdId);
       const foundCmd = customQuickCommands.find((c) => c.id === target.cmdId);
@@ -494,6 +496,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
       setBoardKidPinInput('');
       setSchoolBoardResult(null);
       setSchoolBoardSearch('');
+      setShowOnlyEligibleKids(false);
       setActiveCustomCmdId(null);
       setCustomSubjectInput('');
     }
@@ -1638,7 +1641,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                     const cmd = entry.cmd;
                     const isOpen = isCustomCommandOpenAt(cmd, now);
                     const isPenaltyCmd = cmd.kind === 'penalty';
-                    const eligibleKids = kids.filter((k) => canKidUseCommand(cmd.id, k, appState.settings));
+                    const eligibleKids = kids.filter((k) => canKidUseCommand(cmd.id, k, appState.settings, now));
                     const doneCount = eligibleKids.filter((k) => isCustomCommandDoneForKid(cmd, k, now)).length;
                     const permSummary = getCommandPermissionSummary(cmd.id, kids, lang, appState.settings, now);
                     const authMeta = getCommandAuthModeMeta(permSummary.authMode, lang);
@@ -1745,7 +1748,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                   const isOpen = isHomeActionOpenAt(action.id, now, appState.settings);
                   const isPenaltyBtn = action.commandType === 'penalty';
                   const eligibleKids = kids.filter((k) =>
-                    canKidUseCommand(action.id, k, appState.settings)
+                    canKidUseCommand(action.id, k, appState.settings, now)
                   );
                   const doneCount = eligibleKids.filter((k) => isHomeActionDoneForKid(action.id, k)).length;
                   const permSummary = getCommandPermissionSummary(action.id, kids, lang, appState.settings, now);
@@ -2046,11 +2049,11 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
             now.getDay() === 0 ||
             isPublicHoliday(now, Boolean(appState.settings.isPublicHolidayToday)));
         const eligibleAllCount = kids.filter((k) =>
-          canKidUseCommand(activePermCmdId, k, appState.settings)
+          canKidUseCommand(activePermCmdId, k, appState.settings, now)
         ).length;
         const displayedBoardKids = showOnlyEligibleKids
           ? filteredSchoolKids.filter((k) =>
-              canKidUseCommand(activePermCmdId, k, appState.settings)
+              canKidUseCommand(activePermCmdId, k, appState.settings, now)
             )
           : filteredSchoolKids;
 
@@ -2156,7 +2159,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
           }
           kidCmdPinGuard.recordSuccess();
           setBoardKidPinInput('');
-          if (!canKidUseCommand(activePermCmdId, matchedKid, appState.settings)) {
+          if (!canKidUseCommand(activePermCmdId, matchedKid, appState.settings, now)) {
             const denied = getCommandDenialReason(activePermCmdId, matchedKid, lang, appState.settings);
             onShowAlert({
               icon: '🚫',
@@ -2484,7 +2487,7 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
             <div className="flex-1 overflow-y-auto pr-1">
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 pb-2">
                 {displayedBoardKids.map((kid) => {
-                  const isEligible = canKidUseCommand(activePermCmdId, kid, appState.settings);
+                  const isEligible = canKidUseCommand(activePermCmdId, kid, appState.settings, now);
                   const kidHasPhone = doesKidHavePhone(kid.id, appState.settings);
                   const denialReason = isEligible
                     ? null
@@ -2627,8 +2630,23 @@ export const MagicDoorView: React.FC<MagicDoorViewProps> = ({
                 })}
               </div>
               {displayedBoardKids.length === 0 && (
-                <div className="py-10 px-4 text-center text-sm font-semibold text-[#7B695F]">
-                  {lang === 'th' ? 'ไม่พบรายชื่อที่ค้นหา / มีสิทธิ์ในเงื่อนไขนี้' : 'No matching names'}
+                <div className="py-10 px-4 text-center space-y-3">
+                  <div className="text-sm font-semibold text-[#7B695F]">
+                    {lang === 'th' ? 'ไม่พบรายชื่อที่ค้นหา / มีสิทธิ์ในเงื่อนไขนี้' : 'No matching names'}
+                  </div>
+                  {(showOnlyEligibleKids || schoolBoardGroup !== 0 || schoolBoardSearch.trim() !== '') && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowOnlyEligibleKids(false);
+                        setSchoolBoardGroup(0);
+                        setSchoolBoardSearch('');
+                      }}
+                      className="rounded-xl border border-[#7CC6B8] bg-[#E8F8F5] hover:bg-[#D4F0F0] px-4 py-2 text-xs font-extrabold text-[#114A42] cursor-pointer"
+                    >
+                      🔄 {lang === 'th' ? 'แสดงรายชื่อน้องทั้งหมด' : 'Show All Kids'}
+                    </button>
+                  )}
                 </div>
               )}
             </div>

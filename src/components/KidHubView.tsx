@@ -515,11 +515,11 @@ export const KidHubView: React.FC<KidHubViewProps> = ({
     polls
   );
   const kidHasPhone = doesKidHavePhone(kid.id, settings);
-  const allowMorningPhonePickup = kidHasPhone && canKidUseCommand('morning_phone_pickup', kid, settings);
-  const allowEveningPhone = kidHasPhone && canKidUseCommand('evening_uniform_phone', kid, settings);
-  const allowComputerHomework = canKidUseCommand('evening_computer_homework', kid, settings);
-  const allowHwPerm = kidHasPhone && canKidUseCommand('night_homework_permission', kid, settings);
-  const allowReturnPhone = kidHasPhone && canKidUseCommand('night_return_phone', kid, settings);
+  const allowMorningPhonePickup = kidHasPhone && canKidUseCommand('morning_phone_pickup', kid, settings, now);
+  const allowEveningPhone = kidHasPhone && canKidUseCommand('evening_uniform_phone', kid, settings, now);
+  const allowComputerHomework = canKidUseCommand('evening_computer_homework', kid, settings, now);
+  const allowHwPerm = kidHasPhone && canKidUseCommand('night_homework_permission', kid, settings, now);
+  const allowReturnPhone = kidHasPhone && canKidUseCommand('night_return_phone', kid, settings, now);
   const computerHwConfig =
     getEffectiveHomeQuickActions(settings, true).find((a) => a.id === 'evening_computer_homework')!;
   const isComputerHwOpen = isHomeActionOpenAt('evening_computer_homework', now, settings);

@@ -12,6 +12,7 @@ import {
 } from '../data/staffSchedule';
 import { Language, StaffLeaveRecord } from '../types/barnhem';
 import { getDateKey } from '../utils/timeRules';
+import { TimeAmPmInput } from './TimeAmPmInput';
 
 interface StaffRosterPanelProps {
   now: Date;
@@ -164,20 +165,19 @@ export const StaffRosterPanel: React.FC<StaffRosterPanelProps> = ({
               className="bg-transparent font-bold outline-none"
             />
           </label>
-          <label className="inline-flex items-center gap-1.5 rounded-xl bg-white border border-[#B9E2DA] px-2.5 py-1 font-bold text-[#114A42]">
+          <div className="inline-flex flex-wrap items-center gap-1.5 rounded-xl bg-white border border-[#B9E2DA] px-2.5 py-1 font-bold text-[#114A42]">
             <span>⏰ {lang === 'th' ? 'เวลา:' : 'Time:'}</span>
-            <input
-              type="time"
+            <TimeAmPmInput
               value={useCustomDateTime ? inspectTimeStr : coverage.timeLabel}
-              onChange={(e) => {
-                if (e.target.value) {
-                  setInspectTimeStr(e.target.value);
-                  setUseCustomDateTime(true);
-                }
+              tone="mint"
+              compact
+              lang={lang}
+              onChange={(nextHHMM) => {
+                setInspectTimeStr(nextHHMM);
+                setUseCustomDateTime(true);
               }}
-              className="bg-transparent font-bold outline-none tabular-nums"
             />
-          </label>
+          </div>
           <div className="flex flex-wrap items-center gap-1.5 ml-auto">
             <span className="font-bold text-[#114A42]">
               ✅ {lang === 'th' ? 'ผู้เข้าเวร ณ เวลานี้:' : 'On Duty:'}

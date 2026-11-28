@@ -26,6 +26,7 @@ import {
   minsToHHMM,
   PENALTY_PRESET_OPTIONS,
 } from '../utils/expressKiosk';
+import { formatHHMMAs12Hour, TimeAmPmInput } from './TimeAmPmInput';
 
 interface LoginCommandsSettingsCardProps {
   members: Member[];
@@ -490,6 +491,75 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
     });
   };
 
+  const handleResetWeekendCommands = () => {
+    onShowAlert({
+      icon: '🧹',
+      title:
+        lang === 'th'
+          ? 'ล้างคำสั่งเสาร์–อาทิตย์ใหม่ (คงวันศุกร์)?'
+          : 'Reset Saturday–Sunday Commands (Keep Friday)?',
+      message:
+        lang === 'th'
+          ? 'ล้างค่าทับซ้อนและสิทธิ์เฉพาะกิจของคำสั่งเสาร์–อาทิตย์ (เช็คอินตื่นเช้า · กลับบ้าน & เก็บมือถือ · รับมือถือรอบเย็น) พร้อมลบคำสั่งสร้างเองที่เกี่ยวกับเสาร์–อาทิตย์ เพื่อให้ขึ้นรายชื่อน้องทุกคนกดเช็คอินได้ตามปกติ โดยไม่กระทบวันศุกร์ค่ะ'
+          : 'Clears stale overrides & kid restrictions for Saturday/Sunday check-ins and removes weekend-only custom shortcuts while keeping Friday intact.',
+      tone: 'mint',
+      confirmLabel: lang === 'th' ? '🧹 ยืนยันล้างคำสั่งเสาร์–อาทิตย์' : '🧹 Reset Weekend',
+      onConfirm: () => {
+        const weekendCoreIds: HomeQuickActionId[] = [
+          'morning_school',
+          'afternoon_home',
+          'evening_uniform_phone',
+          'evening_computer_homework',
+        ];
+        const nextSchedule: Record<string, TimedScheduleSlot> = {
+          ...(settings.timedCommandSchedule ?? {}),
+        };
+        const nextPerms: Record<string, CommandAccessRule> = {
+          ...(settings.commandPermissions ?? {}),
+        };
+        for (const id of weekendCoreIds) {
+          delete nextSchedule[id];
+          delete nextPerms[id];
+        }
+        const isWeekendCustom = (c: CustomQuickCommand) => {
+          const text = `${c.titleTh} ${c.titleEn} ${c.descriptionTh ?? ''}`.toLowerCase();
+          return (
+            text.includes('เสาร์') ||
+            text.includes('อาทิตย์') ||
+            text.includes('วันหยุด') ||
+            text.includes('saturday') ||
+            text.includes('sunday') ||
+            text.includes('weekend')
+          );
+        };
+        const nextCustoms = customCommands.filter((c) => {
+          if (isWeekendCustom(c)) {
+            delete nextPerms[c.id];
+            return false;
+          }
+          return true;
+        });
+        onUpdateSettings({
+          timedCommandSchedule: nextSchedule,
+          commandPermissions: nextPerms,
+          customQuickCommands: nextCustoms,
+        });
+        onShowAlert({
+          icon: '✨',
+          title:
+            lang === 'th'
+              ? 'ล้างคำสั่งเสาร์–อาทิตย์เรียบร้อย!'
+              : 'Weekend Commands Reset!',
+          message:
+            lang === 'th'
+              ? 'คำสั่งเช็คอินวันเสาร์และวันอาทิตย์เปิดรายชื่อน้องทุกคนสำหรับกดเช็คอินเรียบร้อยแล้วค่ะ (วันศุกร์ยังคงเดิม)'
+              : 'Saturday and Sunday commands are reset with all kids visible for check-in (Friday untouched).',
+          tone: 'mint',
+        });
+      },
+    });
+  };
+
   const handleResetStandardButtons = () => {
     onShowAlert({
       icon: '🔄',
@@ -709,6 +779,13 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
               className="rounded-xl border border-[#E7C67D] bg-[#FFF4DF] hover:bg-[#FFE9C2] px-3 py-2 text-xs font-extrabold text-[#6E4905] cursor-pointer transition-colors"
             >
               ⏰ {lang === 'th' ? 'ตั้งค่าคืนมือถือ (21:00)' : 'Auto Phone Curfew (21:00)'}
+            </button>
+            <button
+              type="button"
+              onClick={handleResetWeekendCommands}
+              className="rounded-xl border border-[#7ED3C0] bg-[#EDFBF7] hover:bg-[#D8F6EE] px-3 py-2 text-xs font-extrabold text-[#114A42] cursor-pointer transition-colors"
+            >
+              🧹 {lang === 'th' ? 'ล้างคำสั่งเสาร์–อาทิตย์' : 'Reset Weekend'}
             </button>
             <button
               type="button"
@@ -1065,20 +1142,19 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
                 </div>
               </div>
 
-              {/* 3. 4-Column Time Box */}
+              {/* 3. Time Box with AM/PM Picker */}
               <div className="rounded-2xl border border-[#EADCCB] bg-white p-3.5">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="block text-[11px] font-extrabold text-[#3D322C]">
-                      {lang === 'th' ? 'เวลาเริ่มเปิด' : 'Open Time'}
+                      {lang === 'th' ? 'เวลาเริ่มเปิด (AM / PM)' : 'Open Time (AM / PM)'}
                     </label>
-                    <input
-                      type="time"
+                    <TimeAmPmInput
                       value={draft.startHHMM}
-                      onChange={(e) =>
-                        setDraft((prev) => (prev ? { ...prev, startHHMM: e.target.value } : prev))
+                      lang={lang}
+                      onChange={(nextHHMM) =>
+                        setDraft((prev) => (prev ? { ...prev, startHHMM: nextHHMM } : prev))
                       }
-                      className="w-full rounded-xl border border-[#DFD2C3] bg-[#FFFDF9] px-2.5 py-2 text-xs font-extrabold tabular-nums text-[#3D322C]"
                     />
                   </div>
 
@@ -1096,35 +1172,34 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
                           prev ? { ...prev, earlyGraceMins: Number(e.target.value) } : prev
                         )
                       }
-                      className="w-full rounded-xl border-2 border-[#A8D5EE] bg-white px-3 py-2 text-xs font-extrabold tabular-nums text-[#3D322C] focus:outline-none"
+                      className="w-full rounded-xl border-2 border-[#A8D5EE] bg-white px-3 py-2 text-xs sm:text-sm font-extrabold tabular-nums text-[#3D322C] focus:outline-none"
                     />
                   </div>
 
                   <div className="space-y-1">
                     <label className="block text-[11px] font-extrabold text-[#9D174D]">
-                      {lang === 'th' ? 'เส้นตายห้ามเกินเวลา' : 'Deadline'}
+                      {lang === 'th' ? 'เส้นตายห้ามเกินเวลา (AM / PM)' : 'Deadline (AM / PM)'}
                     </label>
-                    <input
-                      type="time"
+                    <TimeAmPmInput
                       value={draft.deadlineHHMM}
-                      onChange={(e) =>
-                        setDraft((prev) => (prev ? { ...prev, deadlineHHMM: e.target.value } : prev))
+                      tone="pink"
+                      lang={lang}
+                      onChange={(nextHHMM) =>
+                        setDraft((prev) => (prev ? { ...prev, deadlineHHMM: nextHHMM } : prev))
                       }
-                      className="w-full rounded-xl border-2 border-[#E7B5C2] bg-[#FFF9FB] px-2.5 py-2 text-xs font-extrabold tabular-nums text-[#3D322C]"
                     />
                   </div>
 
                   <div className="space-y-1">
                     <label className="block text-[11px] font-extrabold text-[#3D322C]">
-                      {lang === 'th' ? 'เวลาปิดปุ่ม' : 'Close Time'}
+                      {lang === 'th' ? 'เวลาปิดปุ่ม (AM / PM)' : 'Close Time (AM / PM)'}
                     </label>
-                    <input
-                      type="time"
+                    <TimeAmPmInput
                       value={draft.endHHMM}
-                      onChange={(e) =>
-                        setDraft((prev) => (prev ? { ...prev, endHHMM: e.target.value } : prev))
+                      lang={lang}
+                      onChange={(nextHHMM) =>
+                        setDraft((prev) => (prev ? { ...prev, endHHMM: nextHHMM } : prev))
                       }
-                      className="w-full rounded-xl border border-[#DFD2C3] bg-[#FFFDF9] px-2.5 py-2 text-xs font-extrabold tabular-nums text-[#3D322C]"
                     />
                   </div>
                 </div>
@@ -1548,17 +1623,17 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
               <div className="rounded-2xl border border-[#EADCCB] bg-white p-4 grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div className="space-y-1">
                   <label className="block text-xs font-extrabold text-[#9D174D]">
-                    ⏰ {lang === 'th' ? 'ไม่ได้กดขอทำการบ้าน → เล่นได้ถึง (เส้นตาย)' : 'No Homework Deadline'}
+                    ⏰ {lang === 'th' ? 'ไม่ได้กดขอทำการบ้าน → เล่นได้ถึง (AM / PM)' : 'No Homework Deadline'}
                   </label>
-                  <input
-                    type="time"
+                  <TimeAmPmInput
                     value={autoReturnDraft.noHomeworkDeadlineHHMM}
-                    onChange={(e) =>
+                    tone="pink"
+                    lang={lang}
+                    onChange={(nextHHMM) =>
                       setAutoReturnDraft((prev) =>
-                        prev ? { ...prev, noHomeworkDeadlineHHMM: e.target.value } : prev
+                        prev ? { ...prev, noHomeworkDeadlineHHMM: nextHHMM } : prev
                       )
                     }
-                    className="w-full rounded-xl border-2 border-[#E7B5C2] bg-[#FFF9FB] px-3 py-2 text-sm font-extrabold tabular-nums text-[#3D322C]"
                   />
                   <p className="text-[11px] text-[#6E5C52]">
                     {lang === 'th'
@@ -1569,19 +1644,19 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
 
                 <div className="space-y-1">
                   <label className="block text-xs font-extrabold text-[#0F4C42]">
-                    📝 {lang === 'th' ? 'กดขอทำการบ้านแล้ว → ต่อเวลาคืนได้ถึง' : 'With Homework Deadline'}
+                    📝 {lang === 'th' ? 'กดขอทำการบ้านแล้ว → ต่อเวลาคืนได้ถึง (AM / PM)' : 'With Homework Deadline'}
                   </label>
-                  <input
-                    type="time"
+                  <TimeAmPmInput
                     value={autoReturnDraft.homeworkExtendedDeadlineHHMM}
-                    onChange={(e) =>
+                    tone="mint"
+                    lang={lang}
+                    onChange={(nextHHMM) =>
                       setAutoReturnDraft((prev) =>
                         prev
-                          ? { ...prev, homeworkExtendedDeadlineHHMM: e.target.value }
+                          ? { ...prev, homeworkExtendedDeadlineHHMM: nextHHMM }
                           : prev
                       )
                     }
-                    className="w-full rounded-xl border-2 border-[#8FD4C6] bg-[#F3FCFA] px-3 py-2 text-sm font-extrabold tabular-nums text-[#3D322C]"
                   />
                   <p className="text-[11px] text-[#6E5C52]">
                     {lang === 'th'
@@ -1597,8 +1672,8 @@ export const LoginCommandsSettingsCard: React.FC<LoginCommandsSettingsCardProps>
                   <label className="text-xs font-extrabold text-[#9D174D]">
                     ⚖️{' '}
                     {lang === 'th'
-                      ? `บทลงโทษทันทีเมื่อคืนหลัง ${autoReturnDraft.noHomeworkDeadlineHHMM} น. (กรณีไม่ได้ขอทำการบ้าน)`
-                      : `Immediate Penalty Past ${autoReturnDraft.noHomeworkDeadlineHHMM} (No Homework)`}
+                      ? `บทลงโทษทันทีเมื่อคืนหลัง ${autoReturnDraft.noHomeworkDeadlineHHMM} น. / ${formatHHMMAs12Hour(autoReturnDraft.noHomeworkDeadlineHHMM)} (กรณีไม่ได้ขอทำการบ้าน)`
+                      : `Immediate Penalty Past ${formatHHMMAs12Hour(autoReturnDraft.noHomeworkDeadlineHHMM)} (No Homework)`}
                   </label>
                   <button
                     type="button"

@@ -6,6 +6,7 @@ import {
   getEffectiveHomeworkCurfewMins,
   minsToHHMM,
 } from '../utils/expressKiosk';
+import { TimeAmPmInput } from './TimeAmPmInput';
 
 interface TimedScheduleEditorCardProps {
   settings?: Partial<AppSettings>;
@@ -115,29 +116,29 @@ export const TimedScheduleEditorCard: React.FC<TimedScheduleEditorCardProps> = (
                   {lang === 'th' ? act.titleTh : act.titleEn}
                 </span>
               </div>
-              <div className="flex items-center gap-1.5 text-xs">
-                <input
-                  type="time"
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                <TimeAmPmInput
                   value={slot.start}
-                  onChange={(e) =>
+                  compact
+                  lang={lang}
+                  onChange={(nextHHMM) =>
                     setDraftSlots((prev) => ({
                       ...prev,
-                      [act.id]: { ...slot, start: e.target.value },
+                      [act.id]: { ...slot, start: nextHHMM },
                     }))
                   }
-                  className="rounded-lg border border-[#D4C5B4] bg-[#FFFDF9] px-2 py-1 font-bold tabular-nums text-[#3D322C]"
                 />
                 <span className="font-bold text-[#7B695F]">–</span>
-                <input
-                  type="time"
+                <TimeAmPmInput
                   value={slot.end}
-                  onChange={(e) =>
+                  compact
+                  lang={lang}
+                  onChange={(nextHHMM) =>
                     setDraftSlots((prev) => ({
                       ...prev,
-                      [act.id]: { ...slot, end: e.target.value },
+                      [act.id]: { ...slot, end: nextHHMM },
                     }))
                   }
-                  className="rounded-lg border border-[#D4C5B4] bg-[#FFFDF9] px-2 py-1 font-bold tabular-nums text-[#3D322C]"
                 />
               </div>
             </div>
@@ -151,14 +152,15 @@ export const TimedScheduleEditorCard: React.FC<TimedScheduleEditorCardProps> = (
               ⚖️ {lang === 'th' ? 'เส้นตายเก็บมือถือ (เกินเวลานี้งดใช้โทรศัพท์วัน Free Day 1 วัน)' : 'Curfew Deadline (Free Day Forfeit)'}
             </div>
             <div className="text-[11px] text-[#7A3547]">
-              {lang === 'th' ? 'ค่าเริ่มต้น: 21:00 น. (3 ทุ่ม)' : 'Default: 21:00'}
+              {lang === 'th' ? 'ค่าเริ่มต้น: 21:00 น. (09:00 PM / 3 ทุ่ม)' : 'Default: 21:00 (09:00 PM)'}
             </div>
           </div>
-          <input
-            type="time"
+          <TimeAmPmInput
             value={draftCurfew}
-            onChange={(e) => setDraftCurfew(e.target.value)}
-            className="rounded-lg border border-[#F3B7C0] bg-white px-2.5 py-1 text-xs font-extrabold tabular-nums text-[#8B1D36]"
+            tone="pink"
+            compact
+            lang={lang}
+            onChange={setDraftCurfew}
           />
         </div>
       </div>

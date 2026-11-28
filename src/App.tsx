@@ -568,14 +568,16 @@ export default function App() {
             if (shouldPushLocalPolls) {
               hasSyncedKioskBoardRef.current = true;
               const cloudOnlyPrev: AppState = { ...baseLocal, polls: [] };
-              void syncStateDiffToCloud(cloudOnlyPrev, stateRef.current, user, orgId).catch((err) => {
+              const nextStateForPush: AppState = { ...baseLocal, ...resolvedPatch };
+              void syncStateDiffToCloud(cloudOnlyPrev, nextStateForPush, user, orgId).catch((err) => {
                 console.error('Auto-merge local polls sync error:', err);
                 pendingRetryBaseStateRef.current = pendingRetryBaseStateRef.current ?? cloudOnlyPrev;
                 setCloudSyncError(err instanceof Error ? err.message : String(err));
               });
             } else if (!hasSyncedKioskBoardRef.current) {
               hasSyncedKioskBoardRef.current = true;
-              void syncPublicKioskBoardNow(stateRef.current, user, orgId).catch((err) => {
+              const nextStateForKiosk: AppState = { ...baseLocal, ...resolvedPatch };
+              void syncPublicKioskBoardNow(nextStateForKiosk, user, orgId).catch((err) => {
                 console.error('Initial kiosk_board publish error:', err);
               });
             }
@@ -1313,9 +1315,15 @@ export default function App() {
       commitStateChange(
         (prev) => ({
           ...prev,
-          polls: prev.polls.map((p) =>
-            p.id === pollId ? { ...p, closed: !p.closed } : p
-          ),
+          polls: prev.polls.map((p) => {
+            if (p.id !== pollId) return p;
+            const nextClosed = !p.closed;
+            return {
+              ...p,
+              closed: nextClosed,
+              reopenedAfterAutoClose: !nextClosed ? true : p.reopenedAfterAutoClose,
+            };
+          }),
         }),
         'Toggle Poll Closed'
       );
